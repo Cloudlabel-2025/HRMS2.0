@@ -5,12 +5,13 @@ import { ok, fail } from '@/lib/jwt';
 
 export async function PUT(req, { params }) {
   try {
+    const { id } = await params;
     const { user, error } = await requireAuth(req);
     if (error) return error;
     await connectDB();
 
     const { action } = await req.json(); // 'like'
-    const ann = await Announcement.findById(params.id);
+    const ann = await Announcement.findById(id);
     if (!ann) return fail('Not found', 404);
 
     if (action === 'like') {

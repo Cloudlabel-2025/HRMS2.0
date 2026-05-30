@@ -1,13 +1,13 @@
 'use client';
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 
-const DEPARTMENTS  = ['Engineering', 'HR', 'Finance', 'Design', 'Marketing', 'Operations', 'Sales'];
 const DESIGNATIONS = ['Software Engineer', 'Senior Engineer', 'Team Lead', 'Manager', 'HR Executive', 'Designer', 'Analyst', 'Intern'];
 const SHIFTS       = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
-const EMPTY_FORM   = { name: '', email: '', phone: '', department: 'Engineering', designation: 'Software Engineer', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '' };
+const EMPTY_FORM   = { name: '', email: '', phone: '', department: '', designation: 'Software Engineer', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '' };
 
 export default function EmployeesPage() {
   const { user } = useAuth();
@@ -24,7 +24,18 @@ export default function EmployeesPage() {
   const [form, setForm]             = useState(EMPTY_FORM);
   const [toast, setToast]           = useState({ msg: '', type: 'success' });
 
+  const [tempPasswordModal, setTempPasswordModal] = useState(null);
+  const [departments, setDepartments] = useState([]);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [showNewDept, setShowNewDept] = useState(false);
+
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg: '', type: 'success' }), 3000); };
+
+  const loadDepartments = () => {
+    api.get('/api/settings?type=departments')
+      .then(data => setDepartments(data.map(d => d.name)))
+      .catch(() => {});
+  };
 
   const load = () => {
     setLoading(true);
@@ -34,7 +45,7 @@ export default function EmployeesPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadDepartments(); }, []);
 
   const filtered = employees.filter(e => {
     const q = search.toLowerCase();
@@ -51,18 +62,24 @@ export default function EmployeesPage() {
 
   const handleSave = async () => {
     if (!form.name || !form.email) return showToast('Name and email are required', 'error');
+    if (!form.department) return showToast('Department is required', 'error');
     setSaving(true);
     try {
       const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean) };
       if (editEmp) {
         await api.put(`/api/employees/${editEmp._id}`, payload);
         showToast('Employee updated');
+        setShowModal(false);
       } else {
-        await api.post('/api/employees', payload);
+        const res = await api.post('/api/employees', payload);
         showToast('Employee added');
+        setShowModal(false);
+        if (res.tempPassword) {
+          setTempPasswordModal({ email: res.employee.email, password: res.tempPassword });
+        }
       }
-      setShowModal(false);
       load();
+      loadDepartments();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -81,7 +98,8 @@ export default function EmployeesPage() {
   };
 
   const canManage = user?.role === 'super_admin' || user?.role === 'admin_full';
-  const deptGroups = DEPARTMENTS.map(d => ({ dept: d, members: employees.filter(e => e.department === d && e.status === 'active') })).filter(g => g.members.length > 0);
+  const allDepts = [...new Set([...departments, ...employees.map(e => e.department).filter(Boolean)])];
+  const deptGroups = allDepts.map(d => ({ dept: d, members: employees.filter(e => e.department === d && e.status === 'active') })).filter(g => g.members.length > 0);
 
   return (
     <AppShell title="Employees">
@@ -128,7 +146,7 @@ export default function EmployeesPage() {
               <div className="col-md-2">
                 <select className="form-select" style={{ fontSize: 13 }} value={filterDept} onChange={e => setFilterDept(e.target.value)}>
                   <option value="">All Departments</option>
-                  {DEPARTMENTS.map(d => <option key={d}>{d}</option>)}
+                  {allDepts.map(d => <option key={d}>{d}</option>)}
                 </select>
               </div>
               <div className="col-md-2">
@@ -170,15 +188,17 @@ export default function EmployeesPage() {
                     ) : filtered.map(emp => (
                       <tr key={emp._id}>
                         <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                              {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
+                          <Link href={`/employees/${emp._id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div style={{ width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                                {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: 13 }} className="text-primary text-decoration-none">{emp.name}</div>
+                                <div style={{ fontSize: 11, color: '#94a3b8' }}>{emp.email}</div>
+                              </div>
                             </div>
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13 }}>{emp.name}</div>
-                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{emp.email}</div>
-                            </div>
-                          </div>
+                          </Link>
                         </td>
                         <td style={{ fontSize: 13 }}>{emp.department}</td>
                         <td style={{ fontSize: 13 }}>{emp.designation}</td>
@@ -247,7 +267,31 @@ export default function EmployeesPage() {
                       <input type={type} className="form-control" value={form[key] || ''} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))} />
                     </div>
                   ))}
-                  {[['Department', 'department', DEPARTMENTS], ['Designation', 'designation', DESIGNATIONS], ['Shift', 'shift', SHIFTS]].map(([label, key, opts]) => (
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department</label>
+                    {showNewDept ? (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input className="form-control" placeholder="Enter new department name" value={newDeptName} onChange={e => setNewDeptName(e.target.value)} />
+                        <button type="button" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={() => {
+                          if (!newDeptName.trim()) return;
+                          setDepartments(prev => [...prev, newDeptName.trim()]);
+                          setForm(p => ({ ...p, department: newDeptName.trim() }));
+                          setNewDeptName('');
+                          setShowNewDept(false);
+                        }}><i className="bi bi-check-lg" /></button>
+                        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDept(false)}><i className="bi bi-x-lg" /></button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select className="form-select" value={form.department || ''} onChange={e => setForm(p => ({ ...p, department: e.target.value }))}>
+                          <option value="">Select Department</option>
+                          {departments.map(d => <option key={d}>{d}</option>)}
+                        </select>
+                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ whiteSpace: 'nowrap' }} title="Add New Department" onClick={() => setShowNewDept(true)}><i className="bi bi-plus-lg" /></button>
+                      </div>
+                    )}
+                  </div>
+                  {[['Designation', 'designation', DESIGNATIONS], ['Shift', 'shift', SHIFTS]].map(([label, key, opts]) => (
                     <div key={key} className="col-md-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label>
                       <select className="form-select" value={form[key] || ''} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}>
@@ -270,8 +314,8 @@ export default function EmployeesPage() {
                   </div>
                   {!editEmp && (
                     <div className="col-md-6">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Password</label>
-                      <input type="password" className="form-control" placeholder="Min 6 characters" value={form.password || ''} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} />
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Password <span style={{ fontWeight: 400, color: '#94a3b8' }}>(auto-generated if blank)</span></label>
+                      <input type="password" className="form-control" placeholder="Leave blank to auto-generate" value={form.password || ''} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} />
                     </div>
                   )}
                   <div className="col-12">
@@ -285,6 +329,41 @@ export default function EmployeesPage() {
                 <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editEmp ? 'Save Changes' : 'Add Employee'}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Temp Password Modal */}
+      {tempPasswordModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header border-0 pb-0">
+                <button className="btn-close" onClick={() => setTempPasswordModal(null)} />
+              </div>
+              <div className="modal-body text-center pt-0 pb-4">
+                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#10b98120', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                  <i className="bi bi-key-fill" style={{ color: '#10b981', fontSize: 28 }} />
+                </div>
+                <h5 style={{ fontWeight: 700 }}>Employee Created</h5>
+                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>Share this temporary password with the new employee. They will be forced to change it on their first login.</p>
+                
+                <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 8, padding: 16, marginBottom: 24 }}>
+                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Email</div>
+                  <div style={{ fontWeight: 600, marginBottom: 12 }}>{tempPasswordModal.email}</div>
+                  
+                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Temporary Password</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
+                    <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 2, fontFamily: 'monospace' }}>{tempPasswordModal.password}</div>
+                    <button className="btn btn-sm btn-light border" style={{ padding: '4px 8px' }} onClick={() => { navigator.clipboard.writeText(tempPasswordModal.password); showToast('Password copied to clipboard!'); }}>
+                      <i className="bi bi-copy" />
+                    </button>
+                  </div>
+                </div>
+
+                <button className="btn btn-primary w-100" onClick={() => setTempPasswordModal(null)}>Done</button>
               </div>
             </div>
           </div>

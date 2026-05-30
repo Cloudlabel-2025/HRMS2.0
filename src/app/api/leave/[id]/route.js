@@ -5,6 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 
 export async function PUT(req, { params }) {
   try {
+    const { id } = await params;
     const { user, error } = await requireAuth(req);
     if (error) return error;
     await connectDB();
@@ -12,7 +13,7 @@ export async function PUT(req, { params }) {
     const { action } = await req.json(); // 'approved' | 'rejected'
     if (!['approved', 'rejected'].includes(action)) return fail('Invalid action');
 
-    const leave = await Leave.findById(params.id);
+    const leave = await Leave.findById(id);
     if (!leave) return fail('Leave not found', 404);
 
     if (user.role === 'team_admin') {
@@ -37,6 +38,15 @@ export async function PUT(req, { params }) {
       leave.mgmtApprovedBy = user._id;
       leave.mgmtApprovedAt = new Date();
       leave.status         = action;
+      
+      if (action === 'approved') {
+        const { Employee } = await import('@/lib/models/index');
+        const emp = await Employee.findOne({ userId: leave.userId });
+        if (emp) {
+          emp.leaveBalance = (emp.leaveBalance || 24) - leave.days;
+          await emp.save();
+        }
+      }
 
     } else {
       return fail('Access denied', 403);
@@ -51,11 +61,12 @@ export async function PUT(req, { params }) {
 
 export async function DELETE(req, { params }) {
   try {
+    const { id } = await params;
     const { user, error } = await requireAuth(req);
     if (error) return error;
     await connectDB();
 
-    const leave = await Leave.findById(params.id);
+    const leave = await Leave.findById(id);
     if (!leave) return fail('Leave not found', 404);
 
     // Only the owner can cancel, and only if still pending

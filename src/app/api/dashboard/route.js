@@ -6,7 +6,7 @@ import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
-import { AuditLog, Announcement } from '@/lib/models/index';
+import { AuditLog, Announcement, Employee } from '@/lib/models/index';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -20,8 +20,8 @@ export async function GET(req) {
 
   // Scope team member IDs for team_lead / team_admin
   let teamIds = null;
-  if (role === 'team_lead')  teamIds = (await User.find({ teamLeadId:  user._id }).select('_id')).map(u => u._id);
-  if (role === 'team_admin') teamIds = (await User.find({ teamAdminId: user._id }).select('_id')).map(u => u._id);
+  if (role === 'team_lead')  teamIds = (await Employee.find({ teamLeadId:  user._id }).select('userId')).map(e => e.userId);
+  if (role === 'team_admin') teamIds = (await Employee.find({ teamAdminId: user._id }).select('userId')).map(e => e.userId);
 
   const isSelfRole  = ['employee', 'intern'].includes(role);
   const isAdminRole = ['super_admin', 'admin_full'].includes(role);
@@ -36,8 +36,8 @@ export async function GET(req) {
     recentActivity,
     announcements,
   ] = await Promise.all([
-    isAdminRole ? User.countDocuments({ status: 'active' })
-      : isTeamRole ? User.countDocuments({ [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active' })
+    isAdminRole ? Employee.countDocuments({ status: 'active' })
+      : isTeamRole ? Employee.countDocuments({ [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active' })
       : Promise.resolve(0),
     isAdminRole ? Attendance.countDocuments({ date: today, status: 'present' })
       : isTeamRole ? Attendance.countDocuments({ date: today, status: 'present', userId: { $in: teamIds } })

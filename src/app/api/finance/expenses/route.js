@@ -26,7 +26,18 @@ export async function PUT(req) {
     if (!['super_admin','admin_full'].includes(user.role)) return fail('Access denied', 403);
     await connectDB();
     const { id, status } = await req.json();
-    const expense = await Expense.findByIdAndUpdate(id, { status, approvedBy: user._id }, { new: true });
+    const expense = await Expense.findByIdAndUpdate(id, { status, approvedBy: user._id }, { new: true }).populate('userId', 'department');
+    
+    if (status === 'approved' && expense.userId?.department) {
+      const year = new Date(expense.date || Date.now()).getFullYear();
+      const { Budget } = await import('@/lib/models/index');
+      await Budget.findOneAndUpdate(
+        { department: expense.userId.department, year },
+        { $inc: { spent: expense.amount } },
+        { upsert: true } // Create budget record if it doesn't exist
+      );
+    }
+
     return ok({ expense });
   } catch (e) {
     return fail(e.message, 500);

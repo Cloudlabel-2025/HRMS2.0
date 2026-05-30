@@ -21,6 +21,12 @@ export async function POST(req) {
   await dbConnect();
   const { type, ...body } = await req.json();
   if (!MODEL_MAP[type]) return fail('Invalid type', 400);
+  
+  if (type === 'config') {
+    const doc = await MODEL_MAP[type].findOneAndUpdate({ key: body.key }, { value: body.value }, { new: true, upsert: true });
+    return ok(doc);
+  }
+  
   const doc = await MODEL_MAP[type].create(body);
   return ok(doc, 201);
 }

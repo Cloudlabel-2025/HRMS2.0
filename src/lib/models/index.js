@@ -108,6 +108,26 @@ const BudgetSchema = new mongoose.Schema({
   spent:      { type: Number, default: 0 },
 }, { timestamps: true });
 
+// ── Employee (separate from User auth) ───────────────────────────────────────
+const EmployeeSchema = new mongoose.Schema({
+  userId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  name:         { type: String, required: true, trim: true },
+  email:        { type: String, required: true, lowercase: true, trim: true },
+  phone:        { type: String, default: '' },
+  department:   { type: String, required: true, index: true },
+  designation:  { type: String, default: '' },
+  role:         { type: String, default: 'employee' },
+  shift:        { type: String, default: 'Morning (9AM-6PM)' },
+  avatar:       { type: String, default: '' },
+  skills:       [{ type: String }],
+  joinDate:     { type: Date },
+  status:       { type: String, enum: ['active', 'inactive', 'alumni'], default: 'active' },
+  teamLeadId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  teamAdminId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  smeId:        { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
+  leaveBalance: { type: Number, default: 24 },
+}, { timestamps: true });
+
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 const AuditLogSchema = new mongoose.Schema({
   action:   { type: String, required: true },
@@ -206,6 +226,7 @@ export const Invoice     = mongoose.models.Invoice     || mongoose.model('Invoic
 export const Expense     = mongoose.models.Expense     || mongoose.model('Expense', ExpenseSchema);
 export const Budget      = mongoose.models.Budget      || mongoose.model('Budget', BudgetSchema);
 export const AuditLog    = mongoose.models.AuditLog    || mongoose.model('AuditLog', AuditLogSchema);
+export const Employee    = mongoose.models.Employee    || mongoose.model('Employee', EmployeeSchema);
 export const SME         = mongoose.models.SME         || mongoose.model('SME', SMESchema);
 export const JobPosting   = mongoose.models.Job         || mongoose.model('Job', JobSchema);
 export const Applicant   = mongoose.models.Applicant   || mongoose.model('Applicant', ApplicantSchema);

@@ -26,6 +26,10 @@ export default function SettingsPage() {
   const [showModal, setShowModal] = useState(null); // 'dept' | 'shift' | 'holiday'
   const [modalForm, setModalForm] = useState({});
   const [toast, setToast] = useState(null);
+  // Default values for notifications from rules
+  const [notifications, setNotifications] = useState(
+    Object.fromEntries(NOTIFICATION_RULES.map(([title, desc, defaultOn]) => [title, defaultOn]))
+  );
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -33,14 +37,22 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [d, s, h] = await Promise.all([
+      const [d, s, h, c] = await Promise.all([
         api.get('/api/settings?type=departments'),
         api.get('/api/settings?type=shifts'),
         api.get('/api/settings?type=holidays'),
+        api.get('/api/settings?type=config'),
       ]);
       setDepartments(Array.isArray(d) ? d : []);
       setShifts(Array.isArray(s) ? s : []);
       setHolidays(Array.isArray(h) ? h : []);
+      
+      if (Array.isArray(c)) {
+        const globalConfig = c.find(item => item.key === 'global_config');
+        if (globalConfig?.value) setConfig(p => ({ ...p, ...globalConfig.value }));
+        const notifConfig = c.find(item => item.key === 'notification_rules');
+        if (notifConfig?.value) setNotifications(notifConfig.value);
+      }
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -67,6 +79,18 @@ export default function SettingsPage() {
       showToast('Saved successfully');
       setShowModal(null);
       load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveConfig = async (key, value) => {
+    setSaving(true);
+    try {
+      await api.post('/api/settings', { type: 'config', key, value });
+      showToast('Settings saved successfully');
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -146,8 +170,8 @@ export default function SettingsPage() {
                   </select>
                 </div>
                 <div className="col-12">
-                  <button className="btn btn-primary" onClick={() => showToast('Settings saved successfully')}>
-                    <i className="bi bi-check-lg me-2" />Save Settings
+                  <button className="btn btn-primary" onClick={() => saveConfig('global_config', config)} disabled={saving}>
+                    {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-check-lg me-2" />Save Settings</>}
                   </button>
                 </div>
               </div>
@@ -240,19 +264,19 @@ export default function SettingsPage() {
           {tab === 'notifications' && (
             <div className="card p-4">
               <div className="section-title mb-4">Notification Rules</div>
-              {NOTIFICATION_RULES.map(([title, desc, defaultOn]) => (
+              {NOTIFICATION_RULES.map(([title, desc]) => (
                 <div key={title} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: '1px solid #f8fafc' }}>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{title}</div>
                     <div style={{ fontSize: 12, color: '#94a3b8' }}>{desc}</div>
                   </div>
                   <div className="form-check form-switch mb-0">
-                    <input className="form-check-input" type="checkbox" defaultChecked={defaultOn} style={{ cursor: 'pointer' }} />
+                    <input className="form-check-input" type="checkbox" checked={!!notifications[title]} onChange={e => setNotifications(p => ({ ...p, [title]: e.target.checked }))} style={{ cursor: 'pointer' }} />
                   </div>
                 </div>
               ))}
-              <button className="btn btn-primary mt-4" onClick={() => showToast('Notification settings saved')}>
-                <i className="bi bi-check-lg me-2" />Save
+              <button className="btn btn-primary mt-4" onClick={() => saveConfig('notification_rules', notifications)} disabled={saving}>
+                {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-check-lg me-2" />Save</>}
               </button>
             </div>
           )}

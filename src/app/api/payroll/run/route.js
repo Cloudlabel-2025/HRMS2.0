@@ -28,8 +28,20 @@ export async function POST(req) {
 
       const records = await Attendance.find({ userId: emp._id, date: { $regex: `^${month}` } });
       const presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
+      
+      const { default: Leave } = await import('@/lib/models/Leave');
+      const approvedLeaves = await Leave.find({ 
+        userId: emp._id, 
+        status: 'approved',
+        from: { $regex: `^${month}` }
+      });
+      
+      const paidLeaveDays = approvedLeaves
+        .filter(l => l.type !== 'Loss of Pay')
+        .reduce((sum, l) => sum + l.days, 0);
+
       const workingDays = 26;
-      const lopDays = Math.max(0, workingDays - presentDays);
+      const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
       const lopDeduction = lopDays > 0 ? Math.round((structure.basic / workingDays) * lopDays) : 0;
       const grossPay = structure.basic + structure.hra + structure.allowances - lopDeduction;
       const totalDeductions = structure.pf + structure.esi + structure.tds;

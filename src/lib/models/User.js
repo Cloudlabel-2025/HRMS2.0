@@ -41,6 +41,13 @@ const UserSchema = new mongoose.Schema({
   // Login lockout
   loginAttempts:  { type: Number, default: 0 },
   lockUntil:      { type: Date, default: null },
+
+  // Password reset
+  resetToken:       { type: String, default: null },
+  resetTokenExpiry: { type: Date, default: null },
+
+  // Leave
+  leaveBalance:   { type: Number, default: 24 },
 }, { timestamps: true });
 
 UserSchema.pre('save', async function () {

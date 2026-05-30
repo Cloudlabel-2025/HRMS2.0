@@ -2,8 +2,8 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
-import { employeeScopeFilter, hasAccess } from '@/lib/rbac';
+import { AuditLog, Employee, Department } from '@/lib/models/index';
+import { hasAccess } from '@/lib/rbac';
 
 export async function GET(req) {
   try {
@@ -18,10 +18,15 @@ export async function GET(req) {
     const status = searchParams.get('status');
     const search = searchParams.get('search');
 
-    // Base scope — enforced by role
-    const query = employeeScopeFilter(user);
+    const query = {};
 
-    if (dept)   query.department = dept;
+    // Scope by role — everyone (except admins) sees their own department
+    if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) {
+      query.department = user.department;
+    } else if (dept) {
+      query.department = dept;
+    }
+
     if (role)   query.role = role;
     if (status) query.status = status;
     if (search) query.$or = [
@@ -31,9 +36,7 @@ export async function GET(req) {
       { designation: { $regex: search, $options: 'i' } },
     ];
 
-    const employees = await User.find(query)
-      .select('-password -loginAttempts -lockUntil')
-      .sort({ createdAt: -1 });
+    const employees = await Employee.find(query).sort({ department: 1, createdAt: -1 });
     return ok(employees);
   } catch (e) {
     return fail(e.message, 500);
@@ -48,15 +51,71 @@ export async function POST(req) {
     await dbConnect();
 
     const body = await req.json();
-    if (!body.password) return fail('Password is required');
+    
+    // Generate temporary password if not provided
+    let generatedPassword = null;
+    if (!body.password) {
+      const crypto = await import('crypto');
+      generatedPassword = crypto.randomBytes(4).toString('hex');
+      body.password = generatedPassword;
+    }
 
-    const employee = await User.create(body);
+    // 1. Create User record for authentication
+    const authUser = await User.create({
+      name:     body.name,
+      email:    body.email,
+      password: body.password,
+      role:     body.role || 'employee',
+      department:  body.department,
+      designation: body.designation,
+      isFirstLogin: true,
+    });
+
+    // Auto-create department if it doesn't exist
+    if (body.department) {
+      const exists = await Department.findOne({ name: body.department });
+      if (!exists) {
+        await Department.create({ name: body.department, head: '', members: 0 });
+      }
+    }
+
+    // 2. Create Employee record for employee data (organized by department)
+    const employee = await Employee.create({
+      userId:      authUser._id,
+      name:        body.name,
+      email:       body.email,
+      phone:       body.phone || '',
+      department:  body.department,
+      designation: body.designation || '',
+      role:        body.role || 'employee',
+      shift:       body.shift || 'Morning (9AM-6PM)',
+      skills:      body.skills || [],
+      joinDate:    body.joinDate || null,
+      status:      body.status || 'active',
+      teamLeadId:  body.teamLeadId || null,
+      teamAdminId: body.teamAdminId || null,
+      smeId:       body.smeId || null,
+    });
+
+    // Update department member count
+    await Department.findOneAndUpdate(
+      { name: body.department },
+      { $inc: { members: 1 } }
+    );
+
+    if (generatedPassword) {
+      console.log('\n\n===========================================');
+      console.log(`NEW EMPLOYEE CREATED: ${employee.email}`);
+      console.log(`DEPARTMENT: ${employee.department}`);
+      console.log(`TEMPORARY PASSWORD: ${generatedPassword}`);
+      console.log('===========================================\n\n');
+    }
 
     await AuditLog.create({
-      action: `Employee Added: ${employee.name}`, module: 'Employees',
+      action: `Employee Added: ${employee.name} (${employee.department})`, module: 'Employees',
       userId: user._id, severity: 'medium',
     });
-    return ok(employee, 201);
+    return ok({ employee, tempPassword: generatedPassword }, 201);
   } catch (e) {
     if (e.code === 11000) return fail('Email already exists');
     return fail(e.message, 500);

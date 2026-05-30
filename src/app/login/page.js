@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginPage() {
@@ -18,7 +19,11 @@ export default function LoginPage() {
     const result = await login(form.email, form.password);
     setLoading(false);
     if (result.success) {
-      router.push(result.isFirstLogin ? '/settings?firstLogin=1' : '/dashboard');
+      if (result.isFirstLogin) {
+        router.push('/login/setup-password');
+      } else {
+        router.push('/dashboard');
+      }
     } else {
       setError(result.error);
     }
@@ -59,13 +64,14 @@ export default function LoginPage() {
                   value={form.email}
                   onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
                   required
+                  suppressHydrationWarning
                 />
               </div>
             </div>
 
             <div className="mb-4">
               <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Password</label>
-              <div style={{ position: 'relative' }}>
+              <div style={{ position: 'relative', marginBottom: 8 }}>
                 <i className="bi bi-lock" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 14 }} />
                 <input
                   type={showPassword ? 'text' : 'password'}
@@ -75,6 +81,7 @@ export default function LoginPage() {
                   value={form.password}
                   onChange={e => setForm(p => ({ ...p, password: e.target.value }))}
                   required
+                  suppressHydrationWarning
                 />
                 <i
                   className={`bi bi-eye${showPassword ? '-slash' : ''}`}
@@ -82,9 +89,12 @@ export default function LoginPage() {
                   style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 14, cursor: 'pointer' }}
                 />
               </div>
+              <div style={{ textAlign: 'right' }}>
+                <Link href="/login/forgot-password" style={{ fontSize: 13, textDecoration: 'none', color: '#3b82f6', fontWeight: 600 }}>Forgot Password?</Link>
+              </div>
             </div>
 
-            <button type="submit" className="btn btn-primary w-100" disabled={loading} style={{ padding: '10px', fontWeight: 600 }}>
+            <button type="submit" className="btn btn-primary w-100" disabled={loading} style={{ padding: '10px', fontWeight: 600 }} suppressHydrationWarning>
               {loading ? <><span className="spinner-border spinner-border-sm me-2" />Signing in...</> : 'Sign In'}
             </button>
           </form>
