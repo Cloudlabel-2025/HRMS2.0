@@ -4,31 +4,45 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 
-const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Compensatory Leave'];
+const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'Compensatory Leave', 'Loss of Pay'];
 const STATUS_STYLE = {
   pending:  { bg: '#fef3c7', color: '#d97706' },
   approved: { bg: '#dcfce7', color: '#16a34a' },
   rejected: { bg: '#fee2e2', color: '#dc2626' },
+  held:     { bg: '#ede9fe', color: '#7c3aed' },
 };
 const EMPTY_FORM = { type: 'Casual Leave', from: '', to: '', reason: '' };
 
+function ApprovalBadge({ value, holdReason }) {
+  const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
+  return (
+    <span title={value === 'held' && holdReason ? `Hold reason: ${holdReason}` : ''}>
+      <span className="badge" style={{ background: s.bg, color: s.color, cursor: value === 'held' ? 'help' : 'default' }}>
+        {value}{value === 'held' ? ' ⚠' : ''}
+      </span>
+    </span>
+  );
+}
+
 export default function LeavePage() {
   const { user } = useAuth();
-  const [leaves, setLeaves]     = useState([]);
-  const [tab, setTab]           = useState('my');
-  const [showModal, setShowModal] = useState(false);
-  const [form, setForm]         = useState(EMPTY_FORM);
-  const [saving, setSaving]     = useState(false);
-  const [loading, setLoading]   = useState(true);
+  const [leaves, setLeaves]         = useState([]);
+  const [tab, setTab]               = useState('my');
+  const [showModal, setShowModal]   = useState(false);
+  const [holdModal, setHoldModal]   = useState(null); // { id, action }
+  const [holdReason, setHoldReason] = useState('');
+  const [form, setForm]             = useState(EMPTY_FORM);
+  const [saving, setSaving]         = useState(false);
+  const [loading, setLoading]       = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
-  const [toast, setToast]       = useState(null);
+  const [toast, setToast]           = useState(null);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
-  const isAdmin      = ['super_admin', 'admin_full'].includes(user?.role);
-  const isTeamLead   = user?.role === 'team_lead';
-  const isTeamAdmin  = user?.role === 'team_admin';
-  const canApprove   = isAdmin || isTeamLead || isTeamAdmin;
+  const isAdmin     = ['super_admin', 'admin_full'].includes(user?.role);
+  const isTeamLead  = user?.role === 'team_lead';
+  const isTeamAdmin = user?.role === 'team_admin';
+  const canApprove  = isAdmin || isTeamLead || isTeamAdmin;
 
   const load = async (scope) => {
     setLoading(true);
@@ -61,32 +75,37 @@ export default function LeavePage() {
     }
   };
 
-  const handleApprove = async (id, action) => {
+  const handleAction = async (id, action, reason) => {
     try {
-      await api.put(`/api/leave/${id}`, { action });
+      await api.put(`/api/leave/${id}`, { action, ...(reason ? { holdReason: reason } : {}) });
       showToast(`Leave ${action}`);
+      setHoldModal(null);
+      setHoldReason('');
       load(tab);
     } catch (e) {
       showToast(e.message, 'error');
     }
   };
 
+  const openHold = (id) => { setHoldModal({ id, action: 'held' }); setHoldReason(''); };
+
+  // Who can act on a given leave
+  const canActOn = (l) => {
+    if (isAdmin)     return l.adminApproval === 'pending' || (l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected'));
+    if (isTeamAdmin) return l.adminApproval === 'approved' && l.teamAdminApproval === 'pending';
+    if (isTeamLead)  return l.adminApproval === 'approved' && l.tlApproval === 'pending';
+    return false;
+  };
+
+  // For admin reviewing objections — show override buttons
+  const hasObjection = (l) => l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected');
+
   const filtered = leaves.filter(l => !filterStatus || l.status === filterStatus);
 
-  const balanceSummary = LEAVE_TYPES.slice(0, 4).map((type, i) => {
+  const balanceSummary = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave'].map((type, i) => {
     const used = leaves.filter(l => l.type === type && l.status === 'approved').reduce((s, l) => s + l.days, 0);
     return { type, total: [12, 10, 15, 3][i], used };
   });
-
-  const showApprovalActions = tab === 'approvals';
-
-  // Determine what each approver can act on
-  const canActOn = (l) => {
-    if (isTeamAdmin) return l.teamAdminApproval === 'pending';
-    if (isTeamLead)  return l.teamAdminApproval === 'approved' && l.tlApproval === 'pending';
-    if (isAdmin)     return l.tlApproval === 'approved' && l.mgmtApproval === 'pending';
-    return false;
-  };
 
   return (
     <AppShell title="Leave Management">
@@ -109,7 +128,7 @@ export default function LeavePage() {
         <div className="row g-3 mb-4">
           {balanceSummary.map((b, i) => {
             const avail = b.total - b.used;
-            const pct   = Math.round((b.used / b.total) * 100);
+            const pct   = Math.min(Math.round((b.used / b.total) * 100), 100);
             const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b'];
             return (
               <div key={i} className="col-6 col-xl-3">
@@ -163,15 +182,15 @@ export default function LeavePage() {
                 <tr>
                   {(tab === 'all' || tab === 'approvals') && <th>Employee</th>}
                   <th>Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th>
-                  <th>Team Admin</th><th>Team Lead</th><th>Mgmt</th><th>Status</th>
-                  {showApprovalActions && <th>Actions</th>}
+                  <th>Admin</th><th>Team Admin</th><th>Team Lead</th><th>Status</th>
+                  {tab === 'approvals' && <th>Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={11}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
                 ) : filtered.map(l => (
-                  <tr key={l._id}>
+                  <tr key={l._id} style={hasObjection(l) ? { background: '#fff7ed' } : {}}>
                     {(tab === 'all' || tab === 'approvals') && (
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -190,16 +209,33 @@ export default function LeavePage() {
                     <td style={{ fontSize: 13 }}>{l.to}</td>
                     <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                     <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
-                    <td><span className="badge" style={{ background: STATUS_STYLE[l.teamAdminApproval]?.bg, color: STATUS_STYLE[l.teamAdminApproval]?.color }}>{l.teamAdminApproval}</span></td>
-                    <td><span className="badge" style={{ background: STATUS_STYLE[l.tlApproval]?.bg, color: STATUS_STYLE[l.tlApproval]?.color }}>{l.tlApproval}</span></td>
-                    <td><span className="badge" style={{ background: STATUS_STYLE[l.mgmtApproval]?.bg, color: STATUS_STYLE[l.mgmtApproval]?.color }}>{l.mgmtApproval}</span></td>
+                    <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
+                    <td>
+                      <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
+                      {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
+                    </td>
+                    <td>
+                      <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
+                      {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
+                    </td>
                     <td><span className="badge" style={{ background: STATUS_STYLE[l.status]?.bg, color: STATUS_STYLE[l.status]?.color }}>{l.status}</span></td>
-                    {showApprovalActions && (
+                    {tab === 'approvals' && (
                       <td>
                         {canActOn(l) && (
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleApprove(l._id, 'approved')}>Approve</button>
-                            <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleApprove(l._id, 'rejected')}>Reject</button>
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {/* Admin reviewing an objection gets approve/reject only */}
+                            {isAdmin && hasObjection(l) ? (
+                              <>
+                                <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Override Approve</button>
+                                <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'rejected')}>Reject</button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Approve</button>
+                                <button className="btn btn-sm btn-warning"  style={{ fontSize: 11, padding: '3px 8px', color: '#fff' }} onClick={() => openHold(l._id)}>Hold</button>
+                                <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'rejected')}>Reject</button>
+                              </>
+                            )}
                           </div>
                         )}
                       </td>
@@ -212,6 +248,33 @@ export default function LeavePage() {
         )}
       </div>
 
+      {/* Hold Reason Modal */}
+      {holdModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Hold Leave — Provide Reason</h5>
+                <button className="btn-close" onClick={() => setHoldModal(null)} />
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+                  Your objection reason will be visible to the Admin who approved this leave.
+                </p>
+                <textarea className="form-control" rows={3} placeholder="Explain why you are holding this leave request..." value={holdReason} onChange={e => setHoldReason(e.target.value)} />
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setHoldModal(null)}>Cancel</button>
+                <button className="btn btn-warning" style={{ color: '#fff' }} disabled={!holdReason.trim()} onClick={() => handleAction(holdModal.id, 'held', holdReason)}>
+                  Submit Hold
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Apply Leave Modal */}
       {showModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered">
@@ -242,7 +305,8 @@ export default function LeavePage() {
                   <textarea className="form-control" rows={3} value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
-                  <i className="bi bi-info-circle me-2 text-primary" />Approval flow: You → Team Admin → Team Lead → Admin
+                  <i className="bi bi-info-circle me-2 text-primary" />
+                  Approval flow: <strong>Admin</strong> approves first → Team Admin &amp; Team Lead are notified for any objection. Silence = no objection.
                 </div>
               </div>
               <div className="modal-footer">

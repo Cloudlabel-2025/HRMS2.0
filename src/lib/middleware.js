@@ -1,7 +1,8 @@
 import { verifyToken, getTokenFromRequest, fail } from './jwt';
 import { connectDB } from './db';
 import User from './models/User';
-import { hasAccess } from './rbac';
+import { hasAccess, MODULE_ACCESS } from './rbac';
+import { TokenBlacklist, AuditLog } from './models/index';
 
 export async function requireAuth(req) {
   const token = getTokenFromRequest(req);
@@ -11,6 +12,11 @@ export async function requireAuth(req) {
   if (!decoded) return { error: fail('Invalid or expired token', 401) };
 
   await connectDB();
+  
+  // Check if token is blacklisted (revoked)
+  const blacklisted = await TokenBlacklist.findOne({ token });
+  if (blacklisted) return { error: fail('Token has been revoked', 401) };
+
   const user = await User.findById(decoded.id).select('-password');
   if (!user || user.status !== 'active') return { error: fail('User not found or inactive', 401) };
 
@@ -40,3 +46,35 @@ export async function requireAuthAndModule(req, module) {
   if (!hasAccess(user.role, module)) return { error: fail('Access denied', 403) };
   return { user };
 }
+
+/**
+ * Centralized audit logging utility
+ * Call this from any route to log security events
+ */
+export async function auditLog(
+  action,
+  module,
+  userId,
+  details = '',
+  severity = 'low',
+  ip = '',
+  changes = null
+) {
+  try {
+    await connectDB();
+    await AuditLog.create({
+      action,
+      module,
+      userId,
+      details,
+      severity,
+      ip,
+      changes,
+      timestamp: new Date(),
+    });
+  } catch (e) {
+    console.error('Audit log failed:', e);
+    // Don't fail the request due to audit failure
+  }
+}
+

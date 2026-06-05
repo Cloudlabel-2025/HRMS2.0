@@ -8,7 +8,7 @@
 export const MODULE_ACCESS = {
   dashboard:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'limited' },
   employees:     { super_admin:'full', admin_full:'full', recruiter:'view',    team_admin:'team',  team_lead:'dept',  employee:'dept',     intern:'dept' },
-  recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_admin:false,   team_lead:'view',  employee:false,      intern:false },
+  recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_admin:false,   team_lead:false,   employee:false,      intern:false },
   timecard:      { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
   attendance:    { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
   absence:       { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },

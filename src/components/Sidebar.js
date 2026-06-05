@@ -1,5 +1,4 @@
 'use client';
-import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess } from '@/lib/auth';
@@ -28,8 +27,9 @@ const NAV_ITEMS = [
   { module: 'audit',         href: '/audit',         icon: 'bi-shield-check',          label: 'Audit Logs',    section: 'SYSTEM' },
 ];
 
-export default function Sidebar() {
-  const [mobileOpen, setMobileOpen] = useState(false);
+const MOBILE_NAV_MODULES = ['dashboard', 'employees', 'attendance', 'leave', 'settings'];
+
+export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -38,6 +38,9 @@ export default function Sidebar() {
 
   const visibleItems = NAV_ITEMS.filter(item => hasAccess(user.role, item.module));
   const sections = [...new Set(visibleItems.map(i => i.section))];
+  const mobileNavItems = MOBILE_NAV_MODULES
+    .map(module => visibleItems.find(item => item.module === module))
+    .filter(Boolean);
 
   const handleLogout = () => {
     logout();
@@ -46,21 +49,17 @@ export default function Sidebar() {
 
   return (
     <>
-      {/* Mobile hamburger — rendered outside sidebar so it's always visible */}
-      <button
-        className="d-md-none"
-        onClick={() => setMobileOpen(true)}
-        style={{ position: 'fixed', top: 14, left: 14, zIndex: 1100, background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8, width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-      >
-        <i className="bi bi-list" style={{ fontSize: 20 }} />
-      </button>
-
-      {mobileOpen && <div className="sidebar-overlay" onClick={() => setMobileOpen(false)} />}
+      {mobileOpen && <div className="sidebar-overlay" onClick={onMobileClose} />}
 
       <div className={`sidebar ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <h5><i className="bi bi-hexagon-fill me-2" style={{ color: '#3b82f6' }} />HRMS Pro</h5>
-          <span>Enterprise HR Platform</span>
+          <div>
+            <h5><i className="bi bi-hexagon-fill me-2" style={{ color: '#3b82f6' }} />HRMS Pro</h5>
+            <span>Enterprise HR Platform</span>
+          </div>
+          <button className="sidebar-close d-md-none" onClick={onMobileClose} aria-label="Close navigation">
+            <i className="bi bi-x-lg" />
+          </button>
         </div>
 
         <div className="sidebar-nav">
@@ -72,7 +71,7 @@ export default function Sidebar() {
                   key={item.href}
                   href={item.href}
                   className={`nav-item-link ${pathname.startsWith(item.href) ? 'active' : ''}`}
-                  onClick={() => setMobileOpen(false)}
+                  onClick={onMobileClose}
                 >
                   <i className={`bi ${item.icon}`} />
                   {item.label}
@@ -98,6 +97,19 @@ export default function Sidebar() {
           </button>
         </div>
       </div>
+
+      <nav className="mobile-bottom-nav d-md-none" aria-label="Primary mobile navigation">
+        {mobileNavItems.map(item => (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`mobile-bottom-link ${pathname.startsWith(item.href) ? 'active' : ''}`}
+          >
+            <i className={`bi ${item.icon}`} />
+            <span>{item.label}</span>
+          </Link>
+        ))}
+      </nav>
     </>
   );
 }

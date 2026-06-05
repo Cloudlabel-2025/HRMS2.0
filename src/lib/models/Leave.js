@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 
-const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' };
+const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected', 'held'], default: 'pending' };
 
 const LeaveSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -10,7 +10,7 @@ const LeaveSchema = new mongoose.Schema({
            'Paternity Leave', 'Compensatory Leave', 'Loss of Pay'],
     required: true,
   },
-  from:   { type: String, required: true },  // 'YYYY-MM-DD'
+  from:   { type: String, required: true },
   to:     { type: String, required: true },
   days:   { type: Number, required: true },
   reason: { type: String, required: true },
@@ -18,20 +18,26 @@ const LeaveSchema = new mongoose.Schema({
   // Overall resolved status
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
 
-  // Level 1 — Team Admin
+  // Step 1 — Admin (super_admin / admin_full) — must act first
+  adminApproval:   { ...APPROVAL },
+  adminApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  adminApprovedAt: { type: Date, default: null },
+  adminHoldReason: { type: String, default: '' },
+
+  // Step 2a — Team Admin (notified after admin approves, optional objection)
   teamAdminApproval:   { ...APPROVAL },
   teamAdminApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   teamAdminApprovedAt: { type: Date, default: null },
+  teamAdminHoldReason: { type: String, default: '' },
 
-  // Level 2 — Team Lead
+  // Step 2b — Team Lead (notified after admin approves, optional objection)
   tlApproval:   { ...APPROVAL },
   tlApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   tlApprovedAt: { type: Date, default: null },
+  tlHoldReason: { type: String, default: '' },
 
-  // Level 3 — Admin Full / Super Admin
-  mgmtApproval:   { ...APPROVAL },
-  mgmtApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  mgmtApprovedAt: { type: Date, default: null },
+  // Track if step-2 notifications have been sent
+  objectionNotified: { type: Boolean, default: false },
 
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });

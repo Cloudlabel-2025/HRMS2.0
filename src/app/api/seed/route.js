@@ -2,8 +2,26 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
 
-export async function POST() {
+function getSubmittedSetupToken(req, body = {}) {
+  return req.headers.get('x-setup-token') || body.setupToken || '';
+}
+
+export async function POST(req) {
   try {
+    const expectedToken = process.env.SETUP_TOKEN;
+    if (!expectedToken) {
+      return fail('Seed route is disabled. Set SETUP_TOKEN only for controlled first-time setup.', 403);
+    }
+
+    if (process.env.NODE_ENV === 'production' && process.env.ENABLE_SEED_ROUTE !== 'true') {
+      return fail('Seed route is disabled in production', 403);
+    }
+
+    const body = await req.json().catch(() => ({}));
+    if (getSubmittedSetupToken(req, body) !== expectedToken) {
+      return fail('Invalid setup token', 403);
+    }
+
     await dbConnect();
 
     const existing = await User.findOne({ role: 'super_admin' });

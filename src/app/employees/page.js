@@ -5,9 +5,8 @@ import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 
-const DESIGNATIONS = ['Software Engineer', 'Senior Engineer', 'Team Lead', 'Manager', 'HR Executive', 'Designer', 'Analyst', 'Intern'];
-const SHIFTS       = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
-const EMPTY_FORM   = { name: '', email: '', phone: '', department: '', designation: 'Software Engineer', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '' };
+const SHIFTS = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
+const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '' };
 
 export default function EmployeesPage() {
   const { user } = useAuth();
@@ -26,14 +25,35 @@ export default function EmployeesPage() {
 
   const [tempPasswordModal, setTempPasswordModal] = useState(null);
   const [departments, setDepartments] = useState([]);
+  const [designations, setDesignations] = useState([]);
   const [newDeptName, setNewDeptName] = useState('');
   const [showNewDept, setShowNewDept] = useState(false);
+
+  const [fromRecruitment, setFromRecruitment] = useState(false);
+
+  useEffect(() => {
+    const prefill = sessionStorage.getItem('hrms_hire_prefill');
+    if (prefill) {
+      try {
+        const data = JSON.parse(prefill);
+        sessionStorage.removeItem('hrms_hire_prefill');
+        setForm(p => ({ ...p, ...data }));
+        setShowModal(true);
+      } catch {}
+    }
+  }, []);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg: '', type: 'success' }), 3000); };
 
   const loadDepartments = () => {
     api.get('/api/settings?type=departments')
       .then(data => setDepartments(data.map(d => d.name)))
+      .catch(() => {});
+  };
+
+  const loadDesignations = () => {
+    api.get('/api/settings?type=designations')
+      .then(data => setDesignations(data))
       .catch(() => {});
   };
 
@@ -45,7 +65,7 @@ export default function EmployeesPage() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); loadDepartments(); }, []);
+  useEffect(() => { load(); loadDepartments(); loadDesignations(); }, []);
 
   const filtered = employees.filter(e => {
     const q = search.toLowerCase();
@@ -98,6 +118,7 @@ export default function EmployeesPage() {
   };
 
   const canManage = user?.role === 'super_admin' || user?.role === 'admin_full';
+  const canAdd = user?.role === 'super_admin' || user?.role === 'recruiter';
   const allDepts = [...new Set([...departments, ...employees.map(e => e.department).filter(Boolean)])];
   const deptGroups = allDepts.map(d => ({ dept: d, members: employees.filter(e => e.department === d && e.status === 'active') })).filter(g => g.members.length > 0);
 
@@ -116,7 +137,7 @@ export default function EmployeesPage() {
           <h4>Employee Management</h4>
           <p>{employees.filter(e => e.status === 'active').length} active · {employees.filter(e => e.status === 'inactive').length} inactive</p>
         </div>
-        {canManage && (
+        {canAdd && (
           <button className="btn btn-primary" onClick={openAdd}>
             <i className="bi bi-plus-lg me-2" />Add Employee
           </button>
@@ -283,7 +304,7 @@ export default function EmployeesPage() {
                       </div>
                     ) : (
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <select className="form-select" value={form.department || ''} onChange={e => setForm(p => ({ ...p, department: e.target.value }))}>
+                        <select className="form-select" value={form.department || ''} onChange={e => setForm(p => ({ ...p, department: e.target.value, designation: '' }))}>
                           <option value="">Select Department</option>
                           {departments.map(d => <option key={d}>{d}</option>)}
                         </select>
@@ -291,14 +312,20 @@ export default function EmployeesPage() {
                       </div>
                     )}
                   </div>
-                  {[['Designation', 'designation', DESIGNATIONS], ['Shift', 'shift', SHIFTS]].map(([label, key, opts]) => (
-                    <div key={key} className="col-md-6">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label>
-                      <select className="form-select" value={form[key] || ''} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}>
-                        {opts.map(o => <option key={o}>{o}</option>)}
-                      </select>
-                    </div>
-                  ))}
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Designation</label>
+                    <select className="form-select" value={form.designation || ''} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))} disabled={!form.department}>
+                      <option value="">{form.department ? 'Select Designation' : 'Select Department first'}</option>
+                      {designations.filter(d => d.department === form.department).map(d => <option key={d._id} value={d.name}>{d.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Shift</label>
+                    <select className="form-select" value={form.shift || ''} onChange={e => setForm(p => ({ ...p, shift: e.target.value }))}>
+                      <option value="">Select Shift</option>
+                      {SHIFTS.map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Role</label>
                     <select className="form-select" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
@@ -372,3 +399,4 @@ export default function EmployeesPage() {
     </AppShell>
   );
 }
+

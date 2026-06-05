@@ -2,8 +2,9 @@ import { connectDB } from '@/lib/db';
 import { AttendanceRegularization } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
 
 export async function GET(req) {
   try {
@@ -49,12 +50,35 @@ export async function POST(req) {
     if (error) return error;
     await connectDB();
 
-    const { date, requestedIn, requestedOut, reason } = await req.json();
-    if (!date || !reason) return fail('Date and reason are required');
+    const body = await req.json();
+    
+    // Validate request
+    const validation = validateRequest(AttendanceRegularizeSchema, body);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+
+    const { date, requestedIn, requestedOut, reason } = validation.data;
 
     const request = await AttendanceRegularization.create({
-      userId: user._id, date, requestedIn, requestedOut, reason,
+      userId: user._id,
+      date,
+      requestedIn,
+      requestedOut,
+      reason,
+      status: 'pending',
     });
+
+    // Audit log
+    await auditLog(
+      'Attendance Regularization Requested',
+      'Attendance',
+      user._id,
+      `Requested regularization for ${date}`,
+      'low',
+      req.headers.get('x-forwarded-for') || ''
+    );
+
     return ok(request, 201);
   } catch (e) {
     return fail(e.message, 500);
@@ -70,11 +94,25 @@ export async function PUT(req) {
     }
     await connectDB();
 
-    const { id, action } = await req.json();
-    if (!['approved', 'rejected'].includes(action)) return fail('Invalid action');
+    const body = await req.json();
+    const { id, ...rest } = body;
+    if (!id) return fail('id is required', 400);
+
+    // Validate request
+    const validation = validateRequest(ApproveRegularizationSchema, rest);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+
+    const { action } = validation.data;
 
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
+
+    // Check if already processed
+    if (reg.status !== 'pending') {
+      return fail('This request has already been processed', 400);
+    }
 
     reg.status = action;
     reg.reviewedBy = user._id;
@@ -94,6 +132,16 @@ export async function PUT(req) {
       }
       await Attendance.findOneAndUpdate({ userId: reg.userId, date: reg.date }, update);
     }
+
+    // Audit log
+    await auditLog(
+      `Attendance Regularization ${action}`,
+      'Attendance',
+      user._id,
+      `${action} regularization request for ${reg.userId} on ${reg.date}`,
+      action === 'approved' ? 'medium' : 'low',
+      req.headers.get('x-forwarded-for') || ''
+    );
 
     return ok(reg);
   } catch (e) {

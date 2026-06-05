@@ -1,21 +1,10 @@
 import { connectDB } from '@/lib/db';
-import Leave from '@/lib/models/Leave';
+import { Leave } from '@/lib/models/index';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-
-async function getTeamUserIds(user) {
-  if (['super_admin', 'admin_full'].includes(user.role)) return null;
-  if (user.role === 'team_lead') {
-    const members = await User.find({ teamLeadId: user._id }).select('_id');
-    return members.map(m => m._id);
-  }
-  if (user.role === 'team_admin') {
-    const members = await User.find({ teamAdminId: user._id }).select('_id');
-    return members.map(m => m._id);
-  }
-  return [user._id];
-}
+import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
+import { notify } from '@/lib/notify';
 
 export async function GET(req) {
   try {
@@ -24,32 +13,42 @@ export async function GET(req) {
     await connectDB();
 
     const { searchParams } = new URL(req.url);
-    const scope  = searchParams.get('scope');  // 'my' | 'approvals'
+    const scope  = searchParams.get('scope');
     const status = searchParams.get('status');
+    const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
 
     let query = {};
 
     if (scope === 'approvals') {
-      // Each approver sees only what's pending at their level
-      if (user.role === 'team_admin')  query = { teamAdminApproval: 'pending' };
-      if (user.role === 'team_lead')   query = { teamAdminApproval: 'approved', tlApproval: 'pending' };
-      if (['super_admin', 'admin_full'].includes(user.role)) {
-        query = { tlApproval: 'approved', mgmtApproval: 'pending' };
+      if (isAdmin) {
+        query = { $or: [
+          { adminApproval: { $in: ['pending', null] } },
+          { status: 'approved', teamAdminApproval: 'held' },
+          { status: 'approved', tlApproval: 'held' },
+          { status: 'approved', teamAdminApproval: 'rejected' },
+          { status: 'approved', tlApproval: 'rejected' },
+          { status: 'pending', teamAdminApproval: 'held' },
+          { status: 'pending', tlApproval: 'held' },
+          { status: 'pending', teamAdminApproval: 'rejected' },
+          { status: 'pending', tlApproval: 'rejected' },
+        ]};
+      } else if (user.role === 'team_admin') {
+        query = { adminApproval: 'approved', teamAdminApproval: { $in: ['pending', null] } };
+      } else if (user.role === 'team_lead') {
+        query = { adminApproval: 'approved', tlApproval: { $in: ['pending', null] } };
       }
-    } else if (scope === 'my' || ['employee', 'intern', 'recruiter'].includes(user.role)) {
-      query.userId = user._id;
     } else {
-      const ids = await getTeamUserIds(user);
-      if (ids) query.userId = { $in: ids };
+      // 'my' or any other scope — always own leaves
+      query.userId = user._id;
     }
 
     if (status) query.status = status;
 
     const leaves = await Leave.find(query)
       .populate('userId', 'name avatar department')
-      .populate('teamAdminApprovedBy', 'name')
-      .populate('tlApprovedBy', 'name')
-      .populate('mgmtApprovedBy', 'name')
+      .populate({ path: 'adminApprovedBy',     select: 'name', strictPopulate: false })
+      .populate({ path: 'teamAdminApprovedBy',  select: 'name', strictPopulate: false })
+      .populate({ path: 'tlApprovedBy',         select: 'name', strictPopulate: false })
       .sort({ createdAt: -1 });
 
     return ok(leaves);
@@ -64,19 +63,44 @@ export async function POST(req) {
     if (error) return error;
     await connectDB();
 
-    const { type, from, to, reason } = await req.json();
-    if (!type || !from || !to || !reason) return fail('All fields are required');
+    const body = await req.json();
+    const validation = validateRequest(CreateLeaveSchema, body);
+    if (!validation.valid) return fail('Validation failed: ' + validation.error, 400);
 
-    const fromDate = new Date(from), toDate = new Date(to);
-    if (toDate < fromDate) return fail('End date must be after start date');
-    const days = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+    const { type, from, to, reason } = validation.data;
+    const days = Math.ceil((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24)) + 1;
 
-    // Interns can only apply Casual or Sick leave
     if (user.role === 'intern' && !['Casual Leave', 'Sick Leave'].includes(type)) {
-      return fail('Interns can only apply for Casual or Sick Leave');
+      return fail('Interns can only apply for Casual or Sick Leave', 400);
     }
 
-    const leave = await Leave.create({ userId: user._id, type, from, to, days, reason });
+    const existing = await Leave.findOne({ userId: user._id, status: 'pending' });
+    if (existing) return fail('You already have a pending leave application. Wait for it to be resolved before applying again.', 400);
+
+    // Check for date overlap with any approved or pending leave
+    const overlap = await Leave.findOne({
+      userId: user._id,
+      status: { $in: ['pending', 'approved'] },
+      from: { $lte: to },
+      to:   { $gte: from },
+    });
+    if (overlap) return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+
+    const leave = await Leave.create({ userId: user._id, type, from, to, days, reason, status: 'pending' });
+
+    // Notify all admins (super_admin + admin_full)
+    const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] } }).select('_id');
+    if (admins.length) {
+      await notify(
+        admins.map(a => a._id),
+        'New Leave Request',
+        `${user.name} applied for ${days} day(s) of ${type} (${from} to ${to})`,
+        'leave',
+        leave._id
+      );
+    }
+
+    await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${type} (${from} to ${to})`, 'low', req.headers.get('x-forwarded-for') || '');
     return ok(leave, 201);
   } catch (e) {
     return fail(e.message, 500);

@@ -9,6 +9,7 @@ export async function POST(req) {
 
     const decoded = verifyToken(refreshToken);
     if (!decoded) return fail('Invalid or expired refresh token', 401);
+    if (decoded.tokenType !== 'refresh') return fail('Invalid refresh token', 401);
 
     await connectDB();
     const user = await User.findById(decoded.id).select('-password');

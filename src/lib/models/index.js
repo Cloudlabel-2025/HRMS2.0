@@ -180,6 +180,28 @@ const AttendanceRegularizationSchema = new mongoose.Schema({
   reviewedAt:  { type: Date, default: null },
 }, { timestamps: true });
 
+// ── Role & Designation ───────────────────────────────────────────────────────
+const RoleSchema = new mongoose.Schema({
+  name:        { type: String, required: true, unique: true, trim: true },
+  description: { type: String, default: '' },
+}, { timestamps: true });
+
+const DesignationSchema = new mongoose.Schema({
+  name:        { type: String, required: true, unique: true, trim: true },
+  department:  { type: String, default: '' },
+  description: { type: String, default: '' },
+}, { timestamps: true });
+
+// ── Notification ─────────────────────────────────────────────────────────────
+const NotificationSchema = new mongoose.Schema({
+  userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  title:   { type: String, required: true },
+  message: { type: String, required: true },
+  type:    { type: String, enum: ['leave','attendance','general'], default: 'general' },
+  read:    { type: Boolean, default: false },
+  refId:   { type: mongoose.Schema.Types.ObjectId, default: null }, // leave/request id
+}, { timestamps: true });
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 const DepartmentSchema = new mongoose.Schema({
   name:    { type: String, required: true, unique: true },
@@ -214,6 +236,18 @@ const SettingsSchema = new mongoose.Schema({
 export { Task, Project } from './Task';
 export { Payroll, SalaryStructure } from './Payroll';
 
+// ── Token Management ────────────────────────────────────────────────────────
+const TokenBlacklistSchema = new mongoose.Schema({
+  token: { type: String, required: true, index: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  revokedAt: { type: Date, default: Date.now },
+  reason: { type: String, enum: ['logout', 'password_change', 'admin_revoke', 'breach'], default: 'logout' },
+  ip: String,
+}, { 
+  timestamps: true,
+  indexes: [{ createdAt: 1, expireAfterSeconds: 604800 }] // TTL 7 days
+});
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 export const Goal        = mongoose.models.Goal        || mongoose.model('Goal', GoalSchema);
 export const Review      = mongoose.models.Review      || mongoose.model('Review', ReviewSchema);
@@ -236,3 +270,10 @@ export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holida
 export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('SystemConfig', SystemConfigSchema);
 export const Settings    = mongoose.models.Settings    || mongoose.model('Settings', SettingsSchema);
 export const AttendanceRegularization = mongoose.models.AttendanceRegularization || mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
+export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('TokenBlacklist', TokenBlacklistSchema);
+export const Role        = mongoose.models.Role        || mongoose.model('Role', RoleSchema);
+export const Designation = mongoose.models.Designation || mongoose.model('Designation', DesignationSchema);
+export const Notification= mongoose.models.Notification|| mongoose.model('Notification', NotificationSchema);
+
+// Re-import Leave model here to ensure the updated schema is always used
+export { default as Leave } from './Leave';

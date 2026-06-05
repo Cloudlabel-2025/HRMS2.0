@@ -4,6 +4,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee, Department } from '@/lib/models/index';
 import { hasAccess } from '@/lib/rbac';
+import { CreateEmployeeSchema, validateRequest } from '@/lib/validation';
 
 export async function GET(req) {
   try {
@@ -47,75 +48,93 @@ export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
+    if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) return fail('Access denied', 403);
     await dbConnect();
 
     const body = await req.json();
     
+    // Validate request against schema
+    const validation = validateRequest(CreateEmployeeSchema, body);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+    
+    const validated = validation.data;
+
+    // Check if email already exists
+    const existingUser = await User.findOne({ email: validated.email });
+    if (existingUser) return fail('Email already exists', 409);
+
     // Generate temporary password if not provided
     let generatedPassword = null;
-    if (!body.password) {
+    if (!validated.password) {
       const crypto = await import('crypto');
       generatedPassword = crypto.randomBytes(4).toString('hex');
-      body.password = generatedPassword;
+      validated.password = generatedPassword;
     }
 
     // 1. Create User record for authentication
     const authUser = await User.create({
-      name:     body.name,
-      email:    body.email,
-      password: body.password,
-      role:     body.role || 'employee',
-      department:  body.department,
-      designation: body.designation,
+      name:     validated.name,
+      email:    validated.email,
+      password: validated.password,
+      role:     validated.role, // Already validated by schema
+      department:  validated.department,
+      designation: validated.designation,
       isFirstLogin: true,
     });
 
     // Auto-create department if it doesn't exist
-    if (body.department) {
-      const exists = await Department.findOne({ name: body.department });
+    if (validated.department) {
+      const exists = await Department.findOne({ name: validated.department });
       if (!exists) {
-        await Department.create({ name: body.department, head: '', members: 0 });
+        await Department.create({ name: validated.department, head: '', members: 0 });
       }
     }
 
-    // 2. Create Employee record for employee data (organized by department)
+    // 2. Create Employee record
     const employee = await Employee.create({
       userId:      authUser._id,
-      name:        body.name,
-      email:       body.email,
-      phone:       body.phone || '',
-      department:  body.department,
-      designation: body.designation || '',
-      role:        body.role || 'employee',
-      shift:       body.shift || 'Morning (9AM-6PM)',
-      skills:      body.skills || [],
-      joinDate:    body.joinDate || null,
-      status:      body.status || 'active',
-      teamLeadId:  body.teamLeadId || null,
-      teamAdminId: body.teamAdminId || null,
-      smeId:       body.smeId || null,
+      name:        validated.name,
+      email:       validated.email,
+      phone:       validated.phone || '',
+      department:  validated.department,
+      designation: validated.designation || '',
+      role:        validated.role,
+      shift:       validated.shift || 'Morning (9AM-6PM)',
+      skills:      validated.skills || [],
+      joinDate:    validated.joinDate || null,
+      status:      validated.status || 'active',
+      teamLeadId:  validated.teamLeadId || null,
+      teamAdminId: validated.teamAdminId || null,
+      smeId:       validated.smeId || null,
     });
 
     // Update department member count
-    await Department.findOneAndUpdate(
-      { name: body.department },
-      { $inc: { members: 1 } }
-    );
-
-    if (generatedPassword) {
-      console.log('\n\n===========================================');
-      console.log(`NEW EMPLOYEE CREATED: ${employee.email}`);
-      console.log(`DEPARTMENT: ${employee.department}`);
-      console.log(`TEMPORARY PASSWORD: ${generatedPassword}`);
-      console.log('===========================================\n\n');
+    if (validated.department) {
+      await Department.findOneAndUpdate(
+        { name: validated.department },
+        { $inc: { members: 1 } }
+      );
     }
 
+    // Audit log
     await AuditLog.create({
-      action: `Employee Added: ${employee.name} (${employee.department})`, module: 'Employees',
-      userId: user._id, severity: 'medium',
+      action: 'Employee Created',
+      module: 'Employees',
+      userId: user._id,
+      details: `Created: ${employee.name} (${employee.email}), Role: ${employee.role}`,
+      severity: 'medium',
+      ip: req.headers.get('x-forwarded-for') || '',
     });
-    return ok({ employee, tempPassword: generatedPassword }, 201);
+
+    return ok({
+      employee,
+      tempPassword: generatedPassword,
+      message: generatedPassword
+        ? 'Employee created. Temporary password: ' + generatedPassword
+        : 'Employee created successfully'
+    }, 201);
   } catch (e) {
     if (e.code === 11000) return fail('Email already exists');
     return fail(e.message, 500);

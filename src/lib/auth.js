@@ -96,15 +96,15 @@ export function setToken(token) {
 const MODULE_ACCESS = {
   dashboard:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'limited' },
   employees:     { super_admin:'full', admin_full:'full', recruiter:'view',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:false },
-  recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_admin:false,   team_lead:'view',  employee:false,      intern:false },
-  timecard:      { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
-  attendance:    { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
-  absence:       { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
-  leave:         { super_admin:'full', admin_full:'full', recruiter:'self',    team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
+  recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_admin:false,   team_lead:false,   employee:false,      intern:false },
+  timecard:      { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
+  attendance:    { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
+  absence:       { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
+  leave:         { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'self' },
   payroll:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_admin:false,   team_lead:false,   employee:'self',     intern:false },
   payslip:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_admin:false,   team_lead:false,   employee:'self',     intern:false },
-  tasks:         { super_admin:'full', admin_full:'full', recruiter:'limited', team_admin:'team',  team_lead:'dept',  employee:'assigned', intern:'assigned' },
-  projects:      { super_admin:'full', admin_full:'full', recruiter:'view',    team_admin:'team',  team_lead:'dept',  employee:'assigned', intern:'assigned' },
+  tasks:         { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'assigned', intern:'assigned' },
+  projects:      { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:'assigned', intern:'assigned' },
   performance:   { super_admin:'full', admin_full:'full', recruiter:'limited', team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'limited' },
   documents:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_admin:'team',  team_lead:'dept',  employee:'self',     intern:'limited' },
   finance:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_admin:false,   team_lead:false,   employee:false,      intern:false },
@@ -116,7 +116,7 @@ const MODULE_ACCESS = {
   monitoring:    { super_admin:'full', admin_full:'full', recruiter:false,     team_admin:'team',  team_lead:'dept',  employee:false,      intern:false },
   settings:      { super_admin:'full', admin_full:'limited', recruiter:false,  team_admin:false,   team_lead:false,   employee:false,      intern:false },
   audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_admin:false,   team_lead:false,   employee:false,      intern:false },
-  sme:           { super_admin:'full', admin_full:'full',  recruiter:'view',   team_admin:'team',  team_lead:'dept',  employee:'limited',  intern:'limited' },
+  sme:           { super_admin:'full', admin_full:'full',  recruiter:false,    team_admin:'team',  team_lead:'dept',  employee:'limited',  intern:'limited' },
 };
 
 export function hasAccess(role, module) {

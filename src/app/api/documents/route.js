@@ -1,7 +1,8 @@
 import { connectDB } from '@/lib/db';
 import { Document } from '@/lib/models/index';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { CreateDocumentSchema, validateRequest } from '@/lib/validation';
 
 export async function GET(req) {
   try {
@@ -32,8 +33,32 @@ export async function POST(req) {
     if (error) return error;
     if (!['super_admin','admin_full'].includes(user.role)) return fail('Access denied', 403);
     await connectDB();
+    
     const body = await req.json();
-    const doc = await Document.create({ ...body, uploadedBy: user._id });
+    
+    // SECURITY: Validate and prevent mass assignment
+    const validation = validateRequest(CreateDocumentSchema, body);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+    
+    const validated = validation.data;
+    
+    const doc = await Document.create({ 
+      ...validated, 
+      uploadedBy: user._id 
+    });
+
+    // Audit log
+    await auditLog(
+      'Document Uploaded',
+      'Documents',
+      user._id,
+      `Uploaded: ${doc.name} (${doc.fileType}), Access: ${doc.access}`,
+      'low',
+      req.headers.get('x-forwarded-for') || ''
+    );
+
     return ok({ document: doc }, 201);
   } catch (e) {
     return fail(e.message, 500);

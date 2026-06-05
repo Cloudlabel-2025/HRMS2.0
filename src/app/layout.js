@@ -1,5 +1,11 @@
 import './globals.css';
+import { Geist } from 'next/font/google';
 import { AuthProvider } from '@/lib/auth';
+
+const geist = Geist({
+  subsets: ['latin'],
+  display: 'swap',
+});
 
 export const metadata = {
   title: 'HRMS Admin Panel',
@@ -8,7 +14,7 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en">
+    <html lang="en" className={geist.className}>
       <body suppressHydrationWarning>
         <AuthProvider>
           {children}

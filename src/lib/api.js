@@ -62,5 +62,6 @@ export const api = {
   get:    (url)        => request(url),
   post:   (url, body)  => request(url, { method: 'POST',   body: JSON.stringify(body) }),
   put:    (url, body)  => request(url, { method: 'PUT',    body: JSON.stringify(body) }),
+  patch:  (url, body)  => request(url, { method: 'PATCH',  body: JSON.stringify(body) }),
   delete: (url, body)  => request(url, { method: 'DELETE', body: JSON.stringify(body) }),
 };

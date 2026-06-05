@@ -5,7 +5,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
 async function getTeamUserIds(user) {
-  if (['super_admin', 'admin_full'].includes(user.role)) return null; // null = no filter
+  if (['super_admin', 'admin_full'].includes(user.role)) return null;
   if (user.role === 'team_lead') {
     const members = await User.find({ teamLeadId: user._id }).select('_id');
     return members.map(m => m._id);
@@ -14,7 +14,7 @@ async function getTeamUserIds(user) {
     const members = await User.find({ teamAdminId: user._id }).select('_id');
     return members.map(m => m._id);
   }
-  return [user._id]; // employee / intern / recruiter — self only
+  return [user._id];
 }
 
 export async function GET(req) {
@@ -31,7 +31,6 @@ export async function GET(req) {
     const query = {};
 
     if (userId) {
-      // Explicit userId param — only admins or the user themselves
       if (!['super_admin', 'admin_full'].includes(user.role) && userId !== user._id.toString()) {
         return fail('Access denied', 403);
       }
@@ -41,8 +40,8 @@ export async function GET(req) {
       if (ids) query.userId = { $in: ids };
     }
 
-    if (date)  query.date = date;
-    if (month) query.date = { $regex: `^${month}` };
+    if (date)      query.date = date;
+    else if (month) query.date = { $regex: '^' + month };
 
     const records = await Attendance.find(query)
       .populate('userId', 'name avatar department')
@@ -65,7 +64,7 @@ export async function POST(req) {
     const targetUserId = body.userId || user._id;
 
     const existing = await Attendance.findOne({ userId: targetUserId, date: today });
-    if (existing) return fail('Attendance already marked for today');
+    if (existing) return fail('Attendance already marked for today', 409);
 
     const record = await Attendance.create({ userId: targetUserId, date: today, ...body });
     return ok(record, 201);

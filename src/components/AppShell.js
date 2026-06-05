@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import Sidebar from './Sidebar';
@@ -11,6 +11,7 @@ export default function AppShell({ title, children }) {
   const { user, loading, logout } = useAuth();
   const router = useRouter();
   const timerRef = useRef(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const resetTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -43,8 +44,8 @@ export default function AppShell({ title, children }) {
 
   return (
     <>
-      <Sidebar />
-      <Topbar title={title} />
+      <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+      <Topbar title={title} onMenuClick={() => setMobileNavOpen(true)} />
       <main className="main-content">
         {children}
       </main>

@@ -1,8 +1,9 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee } from '@/lib/models/index';
+import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
 
 export async function GET(req, { params }) {
   const { id } = await params;
@@ -40,33 +41,66 @@ export async function PUT(req, { params }) {
   if (!isAdmin && !isSelf) return fail('Access denied', 403);
 
   const body = await req.json();
-  delete body.password;
-  delete body.userId; // cannot change linked user
-
-  // Non-admins can only update safe personal fields
-  if (!isAdmin) {
-    const allowed = ['phone', 'avatar', 'skills', 'designation'];
-    Object.keys(body).forEach(k => { if (!allowed.includes(k)) delete body[k]; });
+  
+  // SECURITY: Validate input and prevent mass assignment
+  let validated;
+  if (isAdmin) {
+    // Admins can update most fields (but not userId or system fields)
+    const validation = validateRequest(UpdateEmployeeSchema, body);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+    validated = validation.data;
+  } else {
+    // Non-admins can only update safe personal fields
+    const allowedFields = ['phone', 'avatar', 'skills', 'designation'];
+    const filtered = {};
+    allowedFields.forEach(field => {
+      if (field in body) filtered[field] = body[field];
+    });
+    
+    // Validate filtered data
+    const validation = validateRequest(UpdateEmployeeSchema.partial(), filtered);
+    if (!validation.valid) {
+      return fail('Validation failed: ' + validation.error, 400);
+    }
+    validated = validation.data;
   }
 
-  const emp = await Employee.findByIdAndUpdate(id, body, { new: true });
+  // Track changes for audit log
+  const changes = [];
+  Object.keys(validated).forEach(key => {
+    if (existing[key] !== validated[key]) {
+      changes.push(`${key}: ${existing[key]} → ${validated[key]}`);
+    }
+  });
+
+  const emp = await Employee.findByIdAndUpdate(id, validated, { new: true });
   if (!emp) return fail('Employee not found', 404);
 
   // Sync key fields back to User for auth/display consistency
   const syncFields = {};
-  if (body.name) syncFields.name = body.name;
-  if (body.department) syncFields.department = body.department;
-  if (body.designation) syncFields.designation = body.designation;
-  if (body.role) syncFields.role = body.role;
-  if (body.status) syncFields.status = body.status;
+  if ('name' in validated) syncFields.name = validated.name;
+  if ('department' in validated) syncFields.department = validated.department;
+  if ('designation' in validated) syncFields.designation = validated.designation;
+  if ('role' in validated) syncFields.role = validated.role;
+  if ('status' in validated) syncFields.status = validated.status;
+  
   if (Object.keys(syncFields).length > 0) {
     await User.findByIdAndUpdate(emp.userId, syncFields);
   }
 
-  await AuditLog.create({
-    action: `Employee Updated: ${emp.name}`, module: 'Employees',
-    userId: user._id, severity: 'low',
-  });
+  // Audit log
+  await auditLog(
+    'Employee Updated',
+    'Employees',
+    user._id,
+    `Updated employee ${emp.name} (ID: ${id}). Changes: ${changes.join('; ')}`,
+    'low',
+    req.headers.get('x-forwarded-for') || '',
+    changes
+  );
+
   return ok(emp);
 }
 
@@ -83,9 +117,15 @@ export async function DELETE(req, { params }) {
   // Also deactivate or delete the associated User auth record
   await User.findByIdAndUpdate(emp.userId, { status: 'inactive' });
 
-  await AuditLog.create({
-    action: `Employee Deleted: ${emp.name}`, module: 'Employees',
-    userId: user._id, severity: 'high',
-  });
+  // Audit log with high severity
+  await auditLog(
+    'Employee Deleted',
+    'Employees',
+    user._id,
+    `Deleted employee ${emp.name} (${emp.email})`,
+    'high',
+    req.headers.get('x-forwarded-for') || ''
+  );
+
   return ok({ deleted: true });
 }
