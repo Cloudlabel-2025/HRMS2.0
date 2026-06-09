@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const NOTIFICATION_RULES = [
@@ -24,8 +25,32 @@ const TABS = [
   { key: 'notifications',label: 'Notifications',icon: 'bi-bell' },
 ];
 
+const toDateInputValue = (value) => {
+  if (!value) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value;
+
+  const day = Number(value);
+  if (Number.isInteger(day) && day >= 1 && day <= 31) {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
+  }
+
+  return '';
+};
+
+const getDefaultPayrollStartDate = () => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+};
+
 export default function SettingsPage() {
   const { user } = useAuth();
+  const { formatDate, updateSettings } = useSettings();
   const [tab, setTab]               = useState('general');
   const [departments, setDepartments] = useState([]);
   const [roles, setRoles]           = useState([]);
@@ -34,7 +59,7 @@ export default function SettingsPage() {
   const [holidays, setHolidays]     = useState([]);
   const [config, setConfig]         = useState({
     timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
-    language: 'English', payrollStartDay: '1', attendanceStartDay: '1',
+    language: 'English', payrollStartDay: getDefaultPayrollStartDate(), attendanceStartDay: '1',
     saturdayWorking: 'alternate', lateThreshold: '15',
   });
   const [loading, setLoading]       = useState(true);
@@ -71,7 +96,7 @@ export default function SettingsPage() {
       setHolidays(Array.isArray(h)     ? h  : []);
       if (Array.isArray(c)) {
         const gc = c.find(i => i.key === 'global_config');
-        if (gc?.value) setConfig(p => ({ ...p, ...gc.value }));
+        if (gc?.value) setConfig(p => ({ ...p, ...gc.value, payrollStartDay: toDateInputValue(gc.value.payrollStartDay) || p.payrollStartDay }));
         const nc = c.find(i => i.key === 'notification_rules');
         if (nc?.value) setNotifications(nc.value);
       }
@@ -127,6 +152,7 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       await api.post('/api/settings', { type: 'config', key, value });
+      if (key === 'global_config') updateSettings(value);
       showToast('Settings saved successfully');
     } catch (e) {
       showToast(e.message, 'error');
@@ -268,7 +294,7 @@ export default function SettingsPage() {
                 ))}
                 <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle Start Day</label>
-                  <input type="number" min="1" max="28" className="form-control" value={config.payrollStartDay} onChange={e => setConfig(p => ({ ...p, payrollStartDay: e.target.value }))} />
+                  <input type="date" className="form-control" value={toDateInputValue(config.payrollStartDay)} onChange={e => setConfig(p => ({ ...p, payrollStartDay: e.target.value }))} />
                 </div>
                 <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Late Login Threshold (minutes)</label>
@@ -373,9 +399,9 @@ export default function SettingsPage() {
                         ) : holidays.map(h => (
                           <tr key={h._id}>
                             <td style={{ fontSize: 13, fontWeight: 600 }}>{h.name}</td>
-                            <td style={{ fontSize: 13 }}>{h.date}</td>
+                            <td style={{ fontSize: 13 }}>{formatDate(h.date)}</td>
                             <td><span className="badge" style={{ background: h.type === 'National' ? '#dbeafe' : '#fef3c7', color: h.type === 'National' ? '#2563eb' : '#d97706' }}>{h.type}</span></td>
-                            <td style={{ fontSize: 13, color: '#64748b' }}>{h.date ? new Date(h.date).toLocaleDateString('en-IN', { weekday: 'long' }) : '—'}</td>
+                            <td style={{ fontSize: 13, color: '#64748b' }}>{h.date ? new Date(h.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }) : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4 }}>
                                 <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...h }); setShowModal('holiday'); }}>Edit</button>
@@ -393,7 +419,7 @@ export default function SettingsPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                           <div>
                             <div style={{ fontWeight: 700, fontSize: 14 }}>{h.name}</div>
-                            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{h.date}</div>
+                            <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{formatDate(h.date)}</div>
                             <span className="badge mt-1" style={{ background: h.type === 'National' ? '#dbeafe' : '#fef3c7', color: h.type === 'National' ? '#2563eb' : '#d97706' }}>{h.type}</span>
                           </div>
                           <div style={{ display: 'flex', gap: 4 }}>

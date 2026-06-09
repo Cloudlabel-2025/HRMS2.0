@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const SHIFTS = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
@@ -10,6 +11,7 @@ const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation
 
 export default function EmployeesPage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [employees, setEmployees]   = useState([]);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
@@ -225,7 +227,7 @@ export default function EmployeesPage() {
                         <td style={{ fontSize: 13 }}>{emp.designation}</td>
                         <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b' }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
                         <td style={{ fontSize: 12, color: '#64748b' }}>{emp.shift}</td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>{emp.joinDate ? new Date(emp.joinDate).toLocaleDateString() : '—'}</td>
+                        <td style={{ fontSize: 12, color: '#64748b' }}>{formatDate(emp.joinDate)}</td>
                         <td><span className={`badge ${emp.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{emp.status === 'active' ? 'Active' : 'Inactive'}</span></td>
                         {canManage && (
                           <td>

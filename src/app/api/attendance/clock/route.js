@@ -1,5 +1,6 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
+import { Leave } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
@@ -21,14 +22,23 @@ export async function POST(req) {
     }
     
     const { action } = validation.data; // 'in' | 'out'
-    const today = new Date().toISOString().split('T')[0];
     const now   = new Date();
-    const timeStr = now.toTimeString().slice(0, 5); // 'HH:MM'
+    const today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
     if (action === 'in') {
       if (record?.clockIn) return fail('Already clocked in today', 400);
+
+      // Block clock-in if employee has an approved leave covering today
+      const onLeave = await Leave.findOne({
+        userId: user._id,
+        status: 'approved',
+        from: { $lte: today },
+        to:   { $gte: today },
+      });
+      if (onLeave) return fail(`You are on approved ${onLeave.type} today (${onLeave.from} to ${onLeave.to}). Clock-in is not allowed.`, 400);
 
       // Late detection: compare against 09:00
       const [h, m] = timeStr.split(':').map(Number);

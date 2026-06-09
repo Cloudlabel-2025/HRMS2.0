@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const STATUS_STYLE = {
@@ -16,9 +17,11 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 export default function AttendancePage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
   const [monthly, setMonthly]           = useState([]);
+  const [teamMonthly, setTeamMonthly]   = useState([]);
   const [teamToday, setTeamToday]       = useState([]);
   const [employees, setEmployees]       = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -36,33 +39,42 @@ export default function AttendancePage() {
   };
 
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
-  const today   = new Date().toISOString().split('T')[0];
+  const today   = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
   const month   = today.slice(0, 7);
 
   const loadTodayRecord = async () => {
     try {
-      const records = await api.get('/api/attendance?userId=' + user._id + '&date=' + today);
+      const records = await api.get('/api/attendance?date=' + today + '&scope=my');
       setTodayRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
     } catch {
       setTodayRecord(null);
     }
   };
 
-  const loadMonthly = async (uid) => {
+  const loadMonthly = async () => {
     try {
-      const url = uid
-        ? '/api/attendance?userId=' + uid + '&month=' + month
-        : '/api/attendance?month=' + month;
-      const records = await api.get(url);
+      const records = await api.get('/api/attendance?scope=my&month=' + month);
       setMonthly(Array.isArray(records) ? records : []);
     } catch {
       setMonthly([]);
     }
   };
 
+  const loadTeamMonthly = async (uid) => {
+    try {
+      const url = uid
+        ? '/api/attendance?scope=team&userId=' + uid + '&month=' + month
+        : '/api/attendance?scope=team&month=' + month;
+      const records = await api.get(url);
+      setTeamMonthly(Array.isArray(records) ? records : []);
+    } catch {
+      setTeamMonthly([]);
+    }
+  };
+
   const loadTeamToday = async () => {
     try {
-      const records = await api.get('/api/attendance?date=' + today);
+      const records = await api.get('/api/attendance?scope=team&date=' + today);
       setTeamToday(Array.isArray(records) ? records : []);
     } catch {
       setTeamToday([]);
@@ -72,9 +84,7 @@ export default function AttendancePage() {
   const loadEmployees = async () => {
     try {
       const emps = await api.get('/api/employees');
-      const list = Array.isArray(emps) ? emps : [];
-      setEmployees(list);
-      if (list.length > 0 && !selectedUserId) setSelectedUserId(list[0]._id);
+      setEmployees(Array.isArray(emps) ? emps : []);
     } catch {
       setEmployees([]);
     }
@@ -93,7 +103,7 @@ export default function AttendancePage() {
     if (!user) return;
     Promise.all([
       loadTodayRecord(),
-      loadMonthly(isAdmin ? selectedUserId : null),
+      loadMonthly(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
       loadRegRequests(isAdmin ? 'approvals' : 'my'),
@@ -101,7 +111,7 @@ export default function AttendancePage() {
   }, [user]);
 
   useEffect(() => {
-    if (selectedUserId) loadMonthly(selectedUserId);
+    if (isAdmin && selectedUserId) loadTeamMonthly(selectedUserId);
   }, [selectedUserId]);
 
   const handleClock = async (action) => {
@@ -245,7 +255,7 @@ export default function AttendancePage() {
         <div className="card p-3 p-md-4">
           {todayRecord ? (
             <div>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {today}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
               <div className="row g-3">
                 {[
                   ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
@@ -278,13 +288,6 @@ export default function AttendancePage() {
       {/* MONTHLY TAB */}
       {tab === 'monthly' && (
         <div>
-          {isAdmin && employees.length > 0 && (
-            <div className="mb-3">
-              <select className="form-select" style={{ fontSize: 13 }} value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}>
-                {employees.map(e => <option key={e._id} value={e._id}>{e.name}</option>)}
-              </select>
-            </div>
-          )}
           <div className="row g-3 mb-3">
             {[['Present', presentCount, '#10b981'], ['Late', lateCount, '#f59e0b'], ['Absent', absentCount, '#ef4444'], ['On Leave', leaveCount, '#3b82f6']].map(([l, v, c]) => (
               <div key={l} className="col-6 col-md-3">
@@ -311,7 +314,7 @@ export default function AttendancePage() {
                         const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
                         return (
                           <tr key={row._id}>
-                            <td style={{ fontSize: 13 }}>{row.date}</td>
+                            <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
                             <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
                             <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
                             <td style={{ fontSize: 13 }}>{row.clockIn  || '—'}</td>
@@ -332,7 +335,7 @@ export default function AttendancePage() {
                     <div key={row._id} className="card p-3">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                         <div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{row.date}</div>
+                          <div style={{ fontWeight: 700, fontSize: 14 }}>{formatDate(row.date)}</div>
                           <div style={{ fontSize: 12, color: '#64748b' }}>{DAYS[d.getDay()]}</div>
                         </div>
                         <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
@@ -392,7 +395,7 @@ export default function AttendancePage() {
                               </div>
                             </td>
                           )}
-                          <td style={{ fontSize: 13 }}>{r.date}</td>
+                          <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedIn  || '—'}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedOut || '—'}</td>
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
@@ -419,7 +422,7 @@ export default function AttendancePage() {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                       <div>
                         {isAdmin && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
-                        <div style={{ fontSize: 13, color: '#64748b' }}>{r.date}</div>
+                        <div style={{ fontSize: 13, color: '#64748b' }}>{formatDate(r.date)}</div>
                       </div>
                       <span className={'badge status-' + r.status}>{r.status}</span>
                     </div>
@@ -490,7 +493,44 @@ export default function AttendancePage() {
       {/* TEAM TAB */}
       {tab === 'team' && isAdmin && (
         <>
-          {loading ? (
+          {employees.length > 0 && (
+            <div className="mb-3">
+              <select className="form-select" style={{ fontSize: 13, maxWidth: 260 }} value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}>
+                <option value="">— Today&apos;s Overview —</option>
+                {employees.map(e => <option key={e._id} value={e._id}>{e.name} — Monthly</option>)}
+              </select>
+            </div>
+          )}
+
+          {selectedUserId ? (
+            teamMonthly.length === 0 ? (
+              <div className="card"><div className="empty-state"><i className="bi bi-calendar2" /><p>No records for this month</p></div></div>
+            ) : (
+              <div className="card">
+                <div className="table-responsive">
+                  <table className="table mb-0">
+                    <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
+                    <tbody>
+                      {teamMonthly.map(row => {
+                        const d = new Date(row.date);
+                        const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+                        return (
+                          <tr key={row._id}>
+                            <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
+                            <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
+                            <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
+                            <td style={{ fontSize: 13 }}>{row.clockIn  || '—'}</td>
+                            <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
+                            <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          ) : loading ? (
             <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
           ) : teamToday.length === 0 ? (
             <div className="card"><div className="empty-state"><i className="bi bi-people" /><p>No attendance records for today</p></div></div>

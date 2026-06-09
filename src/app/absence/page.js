@@ -2,10 +2,12 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 export default function AbsencePage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [absences, setAbsences] = useState([]);
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -78,7 +80,7 @@ export default function AbsencePage() {
                       </div>
                     </td>
                     <td style={{ fontSize: 13, color: '#64748b' }}>{a.userId?.department || '—'}</td>
-                    <td style={{ fontSize: 13 }}>{a.date}</td>
+                    <td style={{ fontSize: 13 }}>{formatDate(a.date)}</td>
                     <td style={{ fontSize: 13, color: '#64748b' }}>{a.reason}</td>
                     <td><span style={{ fontWeight: 700, color: a.pattern >= 3 ? '#ef4444' : '#f59e0b', fontSize: 14 }}>{a.pattern || 1}</span></td>
                     <td>

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const STAGES = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
@@ -12,6 +13,7 @@ const EMPTY_APP = { name: '', email: '', jobId: '', score: '' };
 
 export default function RecruitmentPage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [tab, setTab] = useState('jobs');
   const [jobs, setJobs] = useState([]);
   const [applicants, setApplicants] = useState([]);
@@ -149,7 +151,7 @@ export default function RecruitmentPage() {
                       <span className={`badge ${job.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{job.status}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-                      <span><i className="bi bi-calendar3 me-1" />Posted {new Date(job.createdAt).toLocaleDateString()}</span>
+                      <span><i className="bi bi-calendar3 me-1" />Posted {formatDate(job.createdAt)}</span>
                       <span><i className="bi bi-people me-1" />{applicants.filter(a => a.jobId === job._id || a.jobId?._id === job._id).length} applicants</span>
                     </div>
                   </div>
@@ -212,7 +214,7 @@ export default function RecruitmentPage() {
                         <tr key={app._id}>
                           <td><div style={{ fontSize: 13, fontWeight: 600 }}>{app.name}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{app.email}</div></td>
                           <td style={{ fontSize: 13 }}>{job?.title || '—'}</td>
-                          <td style={{ fontSize: 12, color: '#64748b' }}>{new Date(app.createdAt).toLocaleDateString()}</td>
+                          <td style={{ fontSize: 12, color: '#64748b' }}>{formatDate(app.createdAt)}</td>
                           <td><span className="badge" style={{ background: STAGE_COLORS[app.stage] + '20', color: STAGE_COLORS[app.stage] }}>{app.stage}</span></td>
                           <td><span style={{ fontWeight: 700, color: app.score >= 80 ? '#10b981' : app.score >= 65 ? '#f59e0b' : '#ef4444' }}>{app.score || '—'}</span></td>
                           {isAdmin && (

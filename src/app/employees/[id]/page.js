@@ -3,12 +3,14 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 export default function EmployeeProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -36,12 +38,6 @@ export default function EmployeeProfilePage() {
   if (!data) return <AppShell title="Profile Not Found"><div className="alert alert-danger m-4">Employee not found.</div></AppShell>;
 
   const emp = data.employee;
-  
-  // Format dates
-  const formatDate = (dateStr) => {
-    if (!dateStr) return 'N/A';
-    return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-  };
   
   // Check if current user can edit
   const canEdit = ['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId;

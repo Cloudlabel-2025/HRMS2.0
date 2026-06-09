@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const CATEGORY_COLORS = { Policy: '#3b82f6', Employee: '#10b981', Contract: '#8b5cf6', HR: '#f59e0b', Other: '#64748b' };
@@ -10,6 +11,7 @@ const EMPTY_FORM = { name: '', category: 'Policy', fileUrl: '', fileSize: '', fi
 
 export default function DocumentsPage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [docs, setDocs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -121,7 +123,7 @@ export default function DocumentsPage() {
                       {isExpired(doc.expiry) && <span className="badge status-rejected" style={{ fontSize: 10 }}>Expired</span>}
                       {isExpiringSoon(doc.expiry) && <span className="badge status-pending" style={{ fontSize: 10 }}>Expiring Soon</span>}
                     </div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>By {doc.uploadedBy?.name || '—'} · {new Date(doc.createdAt).toLocaleDateString()}{doc.fileSize ? ` · ${doc.fileSize}` : ''}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>By {doc.uploadedBy?.name || '—'} · {formatDate(doc.createdAt)}{doc.fileSize ? ` · ${doc.fileSize}` : ''}</div>
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>

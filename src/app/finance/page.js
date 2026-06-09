@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
@@ -44,6 +45,7 @@ function BudgetChart({ budgets }) {
 
 export default function FinancePage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [tab, setTab] = useState('invoices');
   const [invoices, setInvoices] = useState([]);
   const [expenses, setExpenses] = useState([]);
@@ -229,7 +231,7 @@ export default function FinancePage() {
                         </td>
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#64748b' }}>{exp.category}</span></td>
                         <td style={{ fontSize: 13, fontWeight: 700 }}>{fmt(exp.amount)}</td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>{exp.date}</td>
+                        <td style={{ fontSize: 12, color: '#64748b' }}>{formatDate(exp.date)}</td>
                         <td style={{ fontSize: 12, color: '#64748b' }}>{exp.description}</td>
                         <td><span className={`badge ${exp.status === 'approved' ? 'status-approved' : exp.status === 'rejected' ? 'status-rejected' : 'status-pending'}`}>{exp.status}</span></td>
                         {isAdmin && (

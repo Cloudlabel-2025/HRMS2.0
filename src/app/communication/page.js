@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const TAGS = [
@@ -13,6 +14,7 @@ const EMPTY_FORM = { title: '', body: '', audience: 'Company-wide', tag: 'Genera
 
 export default function CommunicationPage() {
   const { user } = useAuth();
+  const { formatDate } = useSettings();
   const [tab, setTab] = useState('announcements');
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -88,7 +90,7 @@ export default function CommunicationPage() {
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700 }}>{a.author?.avatar || a.author?.name?.slice(0, 2).toUpperCase()}</div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{a.author?.name}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(a.createdAt).toLocaleDateString()} · {a.audience}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDate(a.createdAt)} · {a.audience}</div>
                   </div>
                 </div>
                 <span className="badge" style={{ background: (a.tagColor || '#3b82f6') + '20', color: a.tagColor || '#3b82f6' }}>{a.tag}</span>

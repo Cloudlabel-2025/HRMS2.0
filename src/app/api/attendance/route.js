@@ -27,17 +27,24 @@ export async function GET(req) {
     const userId = searchParams.get('userId');
     const date   = searchParams.get('date');
     const month  = searchParams.get('month');
+    const scope  = searchParams.get('scope');
 
     const query = {};
 
-    if (userId) {
+    if (scope === 'my') {
+      query.userId = user._id;
+    } else if (scope === 'team') {
+      const ids = await getTeamUserIds(user);
+      if (ids) query.userId = { $in: ids };
+      // admins (ids === null) see all — no userId filter
+    } else if (userId) {
       if (!['super_admin', 'admin_full'].includes(user.role) && userId !== user._id.toString()) {
         return fail('Access denied', 403);
       }
       query.userId = userId;
     } else {
-      const ids = await getTeamUserIds(user);
-      if (ids) query.userId = { $in: ids };
+      // default: own records only
+      query.userId = user._id;
     }
 
     if (date)      query.date = date;
@@ -60,7 +67,8 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
-    const today = new Date().toISOString().split('T')[0];
+    const now = new Date();
+    const today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     const targetUserId = body.userId || user._id;
 
     const existing = await Attendance.findOne({ userId: targetUserId, date: today });

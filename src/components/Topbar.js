@@ -2,12 +2,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 
 const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', general: 'bi-bell' };
 const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', general: '#3b82f6' };
 
 export default function Topbar({ title, onMenuClick }) {
   const { user } = useAuth();
+  const { formatDateTime } = useSettings();
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -80,7 +82,7 @@ export default function Topbar({ title, onMenuClick }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, color: '#1e293b', fontWeight: n.read ? 400 : 600, lineHeight: 1.4 }}>{n.title}</div>
                     <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.message}</div>
-                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{new Date(n.createdAt).toLocaleString()}</div>
+                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(n.createdAt)}</div>
                   </div>
                   {!n.read && <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', flexShrink: 0, marginTop: 4 }} />}
                 </div>

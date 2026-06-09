@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
@@ -33,6 +34,7 @@ function BarChart({ data }) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -88,7 +90,7 @@ export default function DashboardPage() {
         <div>
           <h5 style={{ margin: 0, fontWeight: 700, fontSize: 20 }}>Good morning, {user.name.split(' ')[0]}! 👋</h5>
           <p style={{ margin: '4px 0 0', opacity: 0.8, fontSize: 13 }}>
-            {ROLE_LABELS[user.role]} · {user.department} · {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {ROLE_LABELS[user.role]} · {user.department} · {formatDate(new Date(), { weekday: true })}
           </p>
         </div>
       </div>
@@ -129,7 +131,7 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <div style={{ fontSize: 12.5, color: '#1e293b', lineHeight: 1.4 }}>{a.text}</div>
-                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{new Date(a.time).toLocaleString()}</div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(a.time)}</div>
                     </div>
                   </div>
                 ))}
@@ -144,7 +146,7 @@ export default function DashboardPage() {
                   <div key={a.id} style={{ padding: '12px 0', borderBottom: i < stats.announcements.length - 1 ? '1px solid #f8fafc' : 'none' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                       <span className="badge" style={{ background: (a.tagColor || '#3b82f6') + '20', color: a.tagColor || '#3b82f6' }}>{a.tag}</span>
-                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(a.date).toLocaleDateString()}</span>
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>{formatDate(a.date)}</span>
                     </div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', marginBottom: 2 }}>{a.title}</div>
                     <div style={{ fontSize: 12, color: '#64748b' }}>{a.body}</div>

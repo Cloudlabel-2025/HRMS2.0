@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const SEVERITY_STYLE = {
@@ -16,6 +17,7 @@ const MODULE_COLORS = {
 
 export default function AuditPage() {
   const { user } = useAuth();
+  const { formatDateTime } = useSettings();
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterModule, setFilterModule] = useState('');
@@ -118,7 +120,7 @@ export default function AuditPage() {
                   const sev = SEVERITY_STYLE[log.severity] || SEVERITY_STYLE.low;
                   return (
                     <tr key={log._id}>
-                      <td style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>{new Date(log.createdAt).toLocaleString()}</td>
+                      <td style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap' }}>{formatDateTime(log.createdAt)}</td>
                       <td style={{ fontSize: 13, fontWeight: 700 }}>{log.action}</td>
                       <td><span className="badge" style={{ background: (MODULE_COLORS[log.module] || '#64748b') + '20', color: MODULE_COLORS[log.module] || '#64748b' }}>{log.module}</span></td>
                       <td>
