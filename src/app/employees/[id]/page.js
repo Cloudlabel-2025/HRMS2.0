@@ -1,49 +1,99 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth, ROLE_LABELS } from '@/lib/auth';
+import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+
+const TABS = [
+  { key: 'overview',    label: 'Overview',      icon: 'bi-person-lines-fill' },
+  { key: 'personal',   label: 'Personal Info',  icon: 'bi-card-personal' },
+  { key: 'attendance', label: 'Attendance',     icon: 'bi-clock-history' },
+  { key: 'assets',     label: 'Assets & Docs',  icon: 'bi-box-seam' },
+  { key: 'payroll',    label: 'Payroll',        icon: 'bi-cash-stack' },
+];
+
+function InfoRow({ icon, label, value }) {
+  if (!value) return null;
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0', borderBottom: '1px solid #f1f5f9' }}>
+      <div style={{ width: 32, height: 32, borderRadius: 8, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <i className={`bi ${icon}`} style={{ color: '#3b82f6', fontSize: 14 }} />
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: '#1e293b', marginTop: 2, textTransform: 'capitalize' }}>{value}</div>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({ title, icon, children }) {
+  return (
+    <div className="card" style={{ borderRadius: 12, overflow: 'hidden', marginBottom: 16 }}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <i className={`bi ${icon}`} style={{ color: '#3b82f6', fontSize: 15 }} />
+        </div>
+        <span style={{ fontWeight: 750, fontSize: 14.5, color: '#1e293b' }}>{title}</span>
+      </div>
+      <div style={{ padding: '4px 18px 14px' }}>{children}</div>
+    </div>
+  );
+}
 
 export default function EmployeeProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
   const { formatDate } = useSettings();
-  
+
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
   const [toast, setToast] = useState({ msg: '', type: 'success' });
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg: '', type: 'success' }), 3000); };
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast({ msg: '', type: 'success' }), 3000);
+  };
 
   useEffect(() => {
     if (id) {
       api.get(`/api/employees/${id}/details`)
         .then(res => setData(res))
-        .catch(e => {
-          showToast(e.message, 'error');
-          setTimeout(() => router.push('/employees'), 2000);
-        })
+        .catch(e => { showToast(e.message, 'error'); setTimeout(() => router.push('/employees'), 2000); })
         .finally(() => setLoading(false));
     }
   }, [id, router]);
 
-  if (loading) {
-    return <AppShell title="Loading Profile..."><div style={{ textAlign: 'center', padding: 100 }}><div className="spinner-border text-primary" /></div></AppShell>;
-  }
-  
-  if (!data) return <AppShell title="Profile Not Found"><div className="alert alert-danger m-4">Employee not found.</div></AppShell>;
+  if (loading) return (
+    <AppShell title="Loading...">
+      <div style={{ textAlign: 'center', padding: 100 }}><div className="spinner-border text-primary" /></div>
+    </AppShell>
+  );
+
+  if (!data) return (
+    <AppShell title="Not Found">
+      <div className="alert alert-danger m-4">Employee not found.</div>
+    </AppShell>
+  );
 
   const emp = data.employee;
-  
-  // Check if current user can edit
-  const canEdit = ['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId;
+  const identity = data.identity;
+  const profile = data.profile;
+  const canEdit = ['super_admin', 'admin_full'].includes(user?.role);
+  const visibleTabs = TABS.filter(t => {
+    if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
+    return true;
+  });
+
+  const statusColor = emp.status === 'active' ? '#10b981' : emp.status === 'inactive' ? '#ef4444' : '#64748b';
+  const statusBg = emp.status === 'active' ? '#dcfce7' : emp.status === 'inactive' ? '#fee2e2' : '#f1f5f9';
 
   return (
-    <AppShell title="Employee Profile" breadcrumb={[{ label: 'Employees', href: '/employees' }, { label: emp.name }]}>
+    <AppShell title="Employee Profile">
       {toast.msg && (
         <div className="toast-container-custom">
           <div className={`toast-custom ${toast.type}`}>
@@ -52,392 +102,397 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
-      {/* Header Profile Card */}
-      <div className="card mb-4 border-0 shadow-sm" style={{ overflow: 'hidden', borderRadius: 12 }}>
-        <div style={{ height: 120, background: 'linear-gradient(135deg, #3b82f6 0%, #2dd4bf 100%)' }}></div>
-        <div className="card-body position-relative pt-0 px-4 pb-4">
-          <div className="d-flex flex-column flex-md-row justify-content-between align-items-end align-items-md-start mb-3" style={{ marginTop: -50 }}>
-            <div className="d-flex align-items-end gap-3">
-              <div style={{ width: 100, height: 100, borderRadius: '50%', backgroundColor: '#fff', padding: 4, boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-                {emp.avatar ? (
-                  <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: `url(${emp.avatar}) center/cover` }} />
-                ) : (
-                  <div style={{ width: '100%', height: '100%', borderRadius: '50%', background: 'linear-gradient(135deg, #f8fafc, #e2e8f0)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32, fontWeight: 700, color: '#475569' }}>
-                    {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+      {/* Hero Banner */}
+      <div className="card mb-4" style={{ borderRadius: 16, overflow: 'hidden', border: 'none' }}>
+        <div style={{ height: 110, background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#3b82f6'} 0%, #1e293b 100%)` }} />
+        <div style={{ padding: '0 28px 24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginTop: -48 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16 }}>
+              <div style={{ width: 96, height: 96, borderRadius: 20, background: '#fff', padding: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', flexShrink: 0 }}>
+                <div style={{ width: '100%', height: '100%', borderRadius: 16, background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#3b82f6'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 800, color: '#fff' }}>
+                  {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                </div>
+              </div>
+              <div style={{ paddingBottom: 4 }}>
+                <h3 style={{ margin: 0, fontWeight: 800, fontSize: 22, color: '#0f172a' }}>{emp.name}</h3>
+                <div style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>
+                  <span style={{ fontWeight: 600, color: '#334155' }}>{emp.designation || 'No Designation'}</span>
+                  {emp.department && <> &bull; {emp.department}</>}
+                </div>
+                {profile?.employeeNumber && (
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 3 }}>
+                    <i className="bi bi-tag me-1" />{profile.employeeNumber}
                   </div>
                 )}
               </div>
-              <div className="pb-1">
-                <h3 className="mb-0 fw-bold" style={{ color: '#0f172a' }}>{emp.name}</h3>
-                <div className="text-secondary fw-medium mt-1">
-                  <span className="text-dark">{emp.designation}</span> &bull; {emp.department}
-                </div>
-              </div>
             </div>
-            <div className="mt-4 mt-md-0 d-flex align-items-center gap-3 pb-2">
-              <span className={`badge bg-${emp.status === 'active' ? 'success' : emp.status === 'inactive' ? 'danger' : 'secondary'}-subtle text-${emp.status === 'active' ? 'success' : emp.status === 'inactive' ? 'danger' : 'secondary'} py-2 px-3 rounded-pill`} style={{ fontSize: 13 }}>
-                <i className={`bi bi-circle-fill me-2 fs-7`} style={{ fontSize: '0.6em', verticalAlign: 'middle' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 4 }}>
+              <span className="badge" style={{ background: statusBg, color: statusColor, fontSize: 12, padding: '6px 14px' }}>
+                <i className="bi bi-circle-fill me-2" style={{ fontSize: 7 }} />
                 {emp.status.toUpperCase()}
               </span>
+              <span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b', fontSize: 12, padding: '6px 14px' }}>
+                {ROLE_LABELS[emp.role] || emp.role}
+              </span>
               {canEdit && (
-                <button className="btn btn-outline-primary rounded-pill px-4 fw-medium" onClick={() => router.push(`/employees?edit=${emp._id}`)}>
-                  <i className="bi bi-pencil-square me-2" />Edit Profile
+                <button className="btn btn-outline-primary" style={{ fontSize: 13, padding: '6px 16px' }} onClick={() => router.push(`/employees?edit=${emp._id}`)}>
+                  <i className="bi bi-pencil me-1" />Edit
                 </button>
               )}
             </div>
           </div>
-          
-          <div className="d-flex flex-wrap gap-4 pt-3 border-top mt-2">
-            <div className="d-flex align-items-center gap-2 text-secondary" style={{ fontSize: 14 }}>
-              <i className="bi bi-envelope text-primary opacity-75" /> <span className="fw-medium text-dark">{emp.email}</span>
-            </div>
-            {emp.phone && (
-              <div className="d-flex align-items-center gap-2 text-secondary" style={{ fontSize: 14 }}>
-                <i className="bi bi-telephone text-primary opacity-75" /> <span className="fw-medium text-dark">{emp.phone}</span>
+
+          {/* Quick info strip */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px', marginTop: 20, paddingTop: 16, borderTop: '1px solid #f1f5f9' }}>
+            {[
+              { icon: 'bi-envelope', val: emp.email },
+              { icon: 'bi-telephone', val: emp.phone },
+              { icon: 'bi-calendar2', val: emp.joinDate ? `Joined ${formatDate(emp.joinDate)}` : null },
+              { icon: 'bi-clock', val: emp.shift },
+              { icon: 'bi-geo-alt', val: profile?.workLocation },
+            ].filter(i => i.val).map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13.5, color: '#475569' }}>
+                <i className={`bi ${item.icon}`} style={{ color: '#3b82f6', fontSize: 14 }} />
+                <span style={{ fontWeight: 500 }}>{item.val}</span>
               </div>
-            )}
-            <div className="d-flex align-items-center gap-2 text-secondary" style={{ fontSize: 14 }}>
-              <i className="bi bi-calendar-event text-primary opacity-75" /> <span>Joined <span className="fw-medium text-dark">{formatDate(emp.joinDate)}</span></span>
-            </div>
-            <div className="d-flex align-items-center gap-2 text-secondary" style={{ fontSize: 14 }}>
-              <i className="bi bi-shield-check text-primary opacity-75" /> <span>Role: <span className="fw-medium text-dark">{ROLE_LABELS[emp.role] || emp.role}</span></span>
-            </div>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <ul className="nav nav-tabs nav-tabs-custom mb-4 border-bottom-0 gap-2">
-        {['overview', 'attendance', 'assets', 'payroll'].map(t => {
-          if (t === 'payroll' && (!data.payslips || !data.payslips.length) && !['super_admin', 'admin_full', 'team_admin'].includes(user?.role)) return null;
-          return (
-            <li className="nav-item" key={t}>
-              <button 
-                className={`nav-link border-0 fw-medium ${tab === t ? 'active text-primary bg-primary-subtle rounded-pill' : 'text-secondary bg-transparent'}`}
-                style={{ padding: '8px 24px', transition: 'all 0.2s', fontSize: 14 }}
-                onClick={() => setTab(t)}
-              >
-                {t === 'assets' ? 'Assets & Docs' : t.charAt(0).toUpperCase() + t.slice(1).replace('-', ' & ')}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+        {visibleTabs.map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            padding: '8px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13,
+            cursor: 'pointer', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 7,
+            background: tab === t.key ? '#fff' : 'transparent',
+            color: tab === t.key ? '#1e293b' : '#64748b',
+            boxShadow: tab === t.key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none',
+          }}>
+            <i className={`bi ${t.icon}`} style={{ fontSize: 14 }} />{t.label}
+          </button>
+        ))}
+      </div>
 
-      {/* Tab Content: Overview */}
+      {/* OVERVIEW TAB */}
       {tab === 'overview' && (
-        <div className="row g-4">
-          <div className="col-md-8">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Professional Summary</h5>
+        <div className="row g-3">
+          <div className="col-lg-8">
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Professional Summary</span>
               </div>
-              <div className="card-body">
-                <div className="row g-4 mb-4">
-                  <div className="col-sm-6">
-                    <div className="text-secondary small fw-bold text-uppercase tracking-wider mb-1" style={{ letterSpacing: 0.5, fontSize: 11 }}>Department</div>
-                    <div className="fw-semibold fs-5">{emp.department}</div>
-                  </div>
-                  <div className="col-sm-6">
-                    <div className="text-secondary small fw-bold text-uppercase tracking-wider mb-1" style={{ letterSpacing: 0.5, fontSize: 11 }}>Shift Schedule</div>
-                    <div className="fw-semibold fs-5">{emp.shift}</div>
-                  </div>
+              <div style={{ padding: 20 }}>
+                <div className="row g-3 mb-4">
+                  {[
+                    ['Department', emp.department, 'bi-building'],
+                    ['Shift', emp.shift, 'bi-clock'],
+                    ['Status', profile?.employmentStatus?.replace(/_/g, ' ') || emp.status, 'bi-activity'],
+                    ['Leave Balance', `${emp.leaveBalance || 0} days`, 'bi-calendar-check'],
+                  ].map(([label, val, icon]) => (
+                    <div key={label} className="col-sm-6">
+                      <div style={{ background: '#f8fafc', borderRadius: 10, padding: '14px 16px', border: '1px solid #f1f5f9' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                          <i className={`bi ${icon}`} style={{ color: '#3b82f6', fontSize: 14 }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
+                        </div>
+                        <div style={{ fontSize: 15, fontWeight: 700, color: '#1e293b', textTransform: 'capitalize' }}>{val || '—'}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                
-                <h6 className="fw-bold mb-3 mt-4 text-dark">Skills & Competencies</h6>
+
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 12 }}>Skills & Competencies</div>
                 {emp.skills?.length > 0 ? (
-                  <div className="d-flex flex-wrap gap-2">
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {emp.skills.map((s, i) => (
-                      <span key={i} className="badge bg-light text-dark border px-3 py-2 rounded-pill fw-medium" style={{ fontSize: 13 }}>{s}</span>
+                      <span key={i} className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontSize: 12.5, padding: '6px 12px', fontWeight: 600 }}>{s}</span>
                     ))}
                   </div>
-                ) : <span className="text-muted fst-italic">No skills listed.</span>}
+                ) : <span style={{ fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>No skills listed.</span>}
               </div>
             </div>
           </div>
-          <div className="col-md-4">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Reporting Chain</h5>
+
+          <div className="col-lg-4">
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Reporting Chain</span>
               </div>
-              <div className="card-body pt-4">
-                <div className="d-flex flex-column gap-4 position-relative px-2">
-                  <div style={{ position: 'absolute', left: 32, top: 24, bottom: 24, width: 2, background: '#e2e8f0', zIndex: 0 }}></div>
-                  
-                  {emp.teamAdminId && (
-                    <div className="d-flex align-items-center gap-3 position-relative bg-white" style={{ zIndex: 1 }}>
-                      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #60a5fa)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 18, boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                        {emp.teamAdminId.name.charAt(0)}
+              <div style={{ padding: 20 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, position: 'relative', paddingLeft: 8 }}>
+                  <div style={{ position: 'absolute', left: 27, top: 24, bottom: 24, width: 2, background: '#e2e8f0' }} />
+                  {[
+                    { person: emp.teamAdminId, role: 'Team Admin', color: '#3b82f6' },
+                    { person: emp.teamLeadId, role: 'Team Lead', color: '#10b981' },
+                    { person: { name: emp.name, avatar: emp.avatar }, role: 'Employee', color: '#64748b' },
+                  ].filter(r => r.person).map((r, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, position: 'relative', zIndex: 1, background: '#fff' }}>
+                      <div style={{ width: 44, height: 44, borderRadius: '50%', background: `linear-gradient(135deg, ${r.color}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+                        {r.person.name?.charAt(0)}
                       </div>
                       <div>
-                        <div className="fw-bold text-dark">{emp.teamAdminId.name}</div>
-                        <div className="text-secondary small fw-medium">Team Admin</div>
+                        <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1e293b' }}>{r.person.name}</div>
+                        <div style={{ fontSize: 12, color: '#64748b' }}>{r.role}</div>
                       </div>
                     </div>
-                  )}
-                  {emp.teamLeadId && (
-                    <div className="d-flex align-items-center gap-3 position-relative bg-white" style={{ zIndex: 1 }}>
-                      <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #10b981, #34d399)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 18, boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                        {emp.teamLeadId.name.charAt(0)}
-                      </div>
-                      <div>
-                        <div className="fw-bold text-dark">{emp.teamLeadId.name}</div>
-                        <div className="text-secondary small fw-medium">Team Lead</div>
-                      </div>
-                    </div>
-                  )}
-                  <div className="d-flex align-items-center gap-3 position-relative bg-white" style={{ zIndex: 1 }}>
-                    <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'linear-gradient(135deg, #64748b, #94a3b8)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 600, fontSize: 18, boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
-                      {emp.name.charAt(0)}
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PERSONAL INFO TAB */}
+      {tab === 'personal' && (
+        <div className="row g-3">
+          <div className="col-lg-6">
+            <SectionCard title="Identity Details" icon="bi-person-vcard">
+              {identity ? (
+                <>
+                  <InfoRow icon="bi-person" label="Legal Name" value={identity.legalName} />
+                  <InfoRow icon="bi-person-badge" label="Preferred Name" value={identity.preferredName} />
+                  <InfoRow icon="bi-envelope" label="Primary Email" value={identity.primaryEmail} />
+                  <InfoRow icon="bi-telephone" label="Personal Phone" value={identity.personalPhone} />
+                  <InfoRow icon="bi-telephone-plus" label="Secondary Phone" value={identity.secondaryPhone} />
+                  <InfoRow icon="bi-gender-ambiguous" label="Gender" value={identity.gender?.replace(/_/g, ' ')} />
+                  <InfoRow icon="bi-heart" label="Marital Status" value={identity.maritalStatus?.replace(/_/g, ' ')} />
+                  <InfoRow icon="bi-flag" label="Nationality" value={identity.nationality} />
+                  <InfoRow icon="bi-droplet" label="Blood Group" value={identity.bloodGroup} />
+                </>
+              ) : (
+                <div className="empty-state" style={{ padding: '32px 0' }}>
+                  <i className="bi bi-person-x" />
+                  <p>No identity record found</p>
+                </div>
+              )}
+            </SectionCard>
+
+            <SectionCard title="Employment Profile" icon="bi-briefcase">
+              {profile ? (
+                <>
+                  <InfoRow icon="bi-tag" label="Employee Number" value={profile.employeeNumber} />
+                  <InfoRow icon="bi-person-workspace" label="Employment Type" value={profile.employmentType?.replace(/_/g, ' ')} />
+                  <InfoRow icon="bi-activity" label="Employment Status" value={profile.employmentStatus?.replace(/_/g, ' ')} />
+                  <InfoRow icon="bi-building" label="Business Unit" value={profile.businessUnit} />
+                  <InfoRow icon="bi-geo-alt" label="Work Location" value={profile.workLocation} />
+                  <InfoRow icon="bi-calendar2-check" label="Hire Date" value={formatDate(profile.hireDate)} />
+                  <InfoRow icon="bi-patch-check" label="Confirmation Date" value={formatDate(profile.confirmationDate)} />
+                </>
+              ) : (
+                <div className="empty-state" style={{ padding: '32px 0' }}>
+                  <i className="bi bi-briefcase" />
+                  <p>No employment profile found</p>
+                </div>
+              )}
+            </SectionCard>
+          </div>
+
+          <div className="col-lg-6">
+            <SectionCard title="Address" icon="bi-house">
+              {identity?.addressHistory?.length > 0 ? identity.addressHistory.map((addr, i) => (
+                <div key={i} style={{ background: '#f8fafc', border: '1px solid #f1f5f9', borderRadius: 10, padding: 14, marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8', textTransform: 'capitalize', fontSize: 12 }}>
+                      <i className="bi bi-geo-alt me-1" />{addr.addressType}
+                    </span>
+                    {addr.isCurrent && <span className="badge" style={{ background: '#dcfce7', color: '#16a34a', fontSize: 11 }}>Current</span>}
+                  </div>
+                  <div style={{ fontSize: 13.5, color: '#334155', lineHeight: 1.6 }}>
+                    <div>{addr.line1}{addr.line2 ? ', ' + addr.line2 : ''}</div>
+                    <div>{[addr.city, addr.state, addr.postalCode].filter(Boolean).join(', ')}</div>
+                    <div style={{ color: '#64748b' }}>{addr.country}</div>
+                    {addr.landmark && <div style={{ color: '#94a3b8', fontSize: 12, marginTop: 4 }}><i className="bi bi-pin me-1" />Near: {addr.landmark}</div>}
+                  </div>
+                </div>
+              )) : (
+                <div className="empty-state" style={{ padding: '32px 0' }}>
+                  <i className="bi bi-house" />
+                  <p>No address on record</p>
+                </div>
+              )}
+            </SectionCard>
+
+            <SectionCard title="Emergency Contacts" icon="bi-telephone-inbound">
+              {identity?.emergencyContacts?.length > 0 ? identity.emergencyContacts.map((c, i) => (
+                <div key={i} style={{ background: '#f8fafc', border: '1px solid #f1f5f9', borderRadius: 10, padding: 14, marginTop: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #ef4444, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+                      {c.name?.charAt(0)}
                     </div>
                     <div>
-                      <div className="fw-bold text-dark">{emp.name}</div>
-                      <div className="text-secondary small fw-medium">Employee</div>
+                      <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1e293b' }}>{c.name}</div>
+                      <div style={{ fontSize: 12, color: '#64748b' }}>{c.relation}</div>
                     </div>
+                    {c.isPrimary && <span className="badge ms-auto" style={{ background: '#fef3c7', color: '#d97706', fontSize: 11 }}>Primary</span>}
+                  </div>
+                  <div style={{ fontSize: 13, color: '#475569', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div><i className="bi bi-telephone me-2" style={{ color: '#3b82f6' }} />{c.phone}</div>
+                    {c.email && <div><i className="bi bi-envelope me-2" style={{ color: '#3b82f6' }} />{c.email}</div>}
                   </div>
                 </div>
-              </div>
-            </div>
+              )) : (
+                <div className="empty-state" style={{ padding: '32px 0' }}>
+                  <i className="bi bi-telephone-x" />
+                  <p>No emergency contacts on record</p>
+                </div>
+              )}
+            </SectionCard>
           </div>
         </div>
       )}
 
-      {/* Tab Content: Attendance & Leave */}
+      {/* ATTENDANCE TAB */}
       {tab === 'attendance' && (
-        <div className="row g-4">
+        <div className="row g-3">
           <div className="col-md-4">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-body text-center p-5 d-flex flex-column justify-content-center">
-                <div className="mb-4 text-secondary fw-bold text-uppercase tracking-wider" style={{ letterSpacing: 1, fontSize: 12 }}>Available Leave Balance</div>
-                <div style={{ fontSize: 64, fontWeight: 800, color: '#0f172a', lineHeight: 1 }}>
-                  {emp.leaveBalance || 0} <span style={{ fontSize: 20, color: '#64748b', fontWeight: 600 }}>Days</span>
-                </div>
-                <div className="mt-4 text-secondary small">Annual allocation remaining for this year.</div>
-              </div>
+            <div className="stat-card text-center" style={{ padding: 32 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 12 }}>Leave Balance</div>
+              <div style={{ fontSize: 56, fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>{emp.leaveBalance || 0}</div>
+              <div style={{ fontSize: 14, color: '#64748b', marginTop: 8 }}>days remaining</div>
             </div>
           </div>
+
           <div className="col-md-8">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Recent Leave Requests</h5>
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Recent Leave Requests</span>
               </div>
-              <div className="card-body">
-                {data.leaves?.length > 0 ? (
-                  <div className="table-responsive">
-                    <table className="table table-borderless align-middle">
-                      <thead className="table-light text-secondary" style={{ fontSize: 13 }}>
-                        <tr>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Date Range</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Type</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Days</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Status</th>
+              {data.leaves?.length > 0 ? (
+                <div className="table-responsive">
+                  <table className="table mb-0">
+                    <thead><tr><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {data.leaves.map(l => (
+                        <tr key={l._id}>
+                          <td style={{ fontSize: 13, fontWeight: 600 }}>{l.type}</td>
+                          <td style={{ fontSize: 13 }}>{l.from}</td>
+                          <td style={{ fontSize: 13 }}>{l.to}</td>
+                          <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
+                          <td><span className={`badge status-${l.status}`}>{l.status}</span></td>
                         </tr>
-                      </thead>
-                      <tbody style={{ fontSize: 14 }}>
-                        {data.leaves.map(l => (
-                          <tr key={l._id} className="border-bottom">
-                            <td className="py-3 text-dark">{formatDate(l.startDate)} - {formatDate(l.endDate)}</td>
-                            <td className="fw-medium text-dark">{l.type}</td>
-                            <td className="text-dark fw-medium">{l.days}</td>
-                            <td>
-                              <span className={`badge bg-${l.status === 'approved' ? 'success' : l.status === 'rejected' ? 'danger' : 'warning'}-subtle text-${l.status === 'approved' ? 'success' : l.status === 'rejected' ? 'danger' : 'warning'} rounded-pill px-3 py-1`} style={{ fontWeight: 600 }}>
-                                {l.status.toUpperCase()}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-center py-5">
-                    <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#cbd5e1' }}>
-                      <i className="bi bi-calendar-x fs-3" />
-                    </div>
-                    <div className="text-muted fw-medium">No recent leave requests found.</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          
-          <div className="col-12">
-            <div className="card shadow-sm border-0" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Recent Attendance <span className="fw-normal text-secondary fs-6">(Last 30 Days)</span></h5>
-              </div>
-              <div className="card-body">
-                {data.attendance?.length > 0 ? (
-                  <div className="table-responsive">
-                    <table className="table table-hover align-middle">
-                      <thead className="table-light text-secondary" style={{ fontSize: 13 }}>
-                        <tr>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Date</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Check In</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Check Out</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Hours Logged</th>
-                          <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody style={{ fontSize: 14 }}>
-                        {data.attendance.map(a => (
-                          <tr key={a._id}>
-                            <td className="fw-medium text-dark py-3">{formatDate(a.date)}</td>
-                            <td>{a.checkIn ? new Date(a.checkIn).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--'}</td>
-                            <td>{a.checkOut ? new Date(a.checkOut).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '--'}</td>
-                            <td className="font-monospace fw-medium">{a.checkIn && a.checkOut ? (Math.abs(new Date(a.checkOut) - new Date(a.checkIn)) / 3600000).toFixed(1) + 'h' : '--'}</td>
-                            <td>
-                              <span className={`badge bg-${a.status === 'present' ? 'success' : a.status === 'absent' ? 'danger' : 'warning'}-subtle text-${a.status === 'present' ? 'success' : a.status === 'absent' ? 'danger' : 'warning'} rounded-pill px-3 py-1`} style={{ fontWeight: 600 }}>
-                                {a.status.toUpperCase()}
-                              </span>
-                              {a.late && <span className="badge bg-danger ms-2 rounded-pill px-2">Late</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="text-center py-5">
-                    <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#cbd5e1' }}>
-                      <i className="bi bi-clock-history fs-3" />
-                    </div>
-                    <div className="text-muted fw-medium">No recent attendance records found.</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab Content: Assets & Docs */}
-      {tab === 'assets' && (
-        <div className="row g-4">
-          <div className="col-md-6">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Assigned Equipment</h5>
-              </div>
-              <div className="card-body">
-                {data.assets?.length > 0 ? (
-                  <div className="d-flex flex-column gap-3 mt-2">
-                    {data.assets.map(a => (
-                      <div key={a._id} className="d-flex align-items-center p-3 border rounded bg-white shadow-sm" style={{ borderColor: '#f1f5f9' }}>
-                        <div style={{ width: 56, height: 56, borderRadius: 12, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: '#3b82f6', marginRight: 16 }}>
-                          <i className={`bi bi-${a.category?.toLowerCase().includes('laptop') ? 'laptop' : a.category?.toLowerCase().includes('phone') ? 'phone' : 'device-hdd'}`} />
-                        </div>
-                        <div className="flex-grow-1">
-                          <h6 className="fw-bold mb-1 text-dark">{a.name}</h6>
-                          <div className="text-secondary small d-flex gap-4 mt-1">
-                            <span>ID: <span className="font-monospace text-dark fw-medium">{a.assetId}</span></span>
-                            <span>Condition: <span className={`fw-medium text-capitalize ${a.condition === 'good' ? 'text-success' : a.condition === 'repair' ? 'text-danger' : 'text-warning'}`}>{a.condition}</span></span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-5 border rounded border-dashed bg-light mt-3" style={{ borderColor: '#cbd5e1' }}>
-                     <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#cbd5e1', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                      <i className="bi bi-pc-display fs-4" />
-                    </div>
-                    <div className="text-muted fw-medium">No equipment assigned.</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-          <div className="col-md-6">
-            <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 12 }}>
-              <div className="card-header bg-white border-0 pt-4 pb-0">
-                <h5 className="fw-bold mb-0 text-dark">Employee Documents</h5>
-              </div>
-              <div className="card-body">
-                {data.documents?.length > 0 ? (
-                  <div className="list-group list-group-flush mt-2">
-                    {data.documents.map(d => (
-                      <div key={d._id} className="list-group-item d-flex justify-content-between align-items-center py-3 px-2 border-bottom">
-                        <div className="d-flex align-items-center gap-3">
-                          <div style={{ width: 48, height: 48, borderRadius: 12, background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b', border: '1px solid #e2e8f0' }}>
-                            <i className="bi bi-file-earmark-text-fill fs-5" />
-                          </div>
-                          <div>
-                            <div className="fw-bold text-dark">{d.name}</div>
-                            <div className="text-secondary small mt-1">Uploaded {formatDate(d.createdAt)} &bull; {d.fileSize || 'Unknown size'}</div>
-                          </div>
-                        </div>
-                        <a href={d.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-light border rounded-circle shadow-sm" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <i className="bi bi-download text-primary" />
-                        </a>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-5 border rounded border-dashed bg-light mt-3" style={{ borderColor: '#cbd5e1' }}>
-                    <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#cbd5e1', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                      <i className="bi bi-file-earmark-x fs-4" />
-                    </div>
-                    <div className="text-muted fw-medium">No documents uploaded.</div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab Content: Payroll */}
-      {tab === 'payroll' && (
-        <div className="card shadow-sm border-0" style={{ borderRadius: 12 }}>
-          <div className="card-header bg-white border-0 pt-4 pb-0">
-            <h5 className="fw-bold mb-0 text-dark">Payslips History</h5>
-          </div>
-          <div className="card-body">
-            {data.payslips?.length > 0 ? (
-              <div className="table-responsive mt-2">
-                <table className="table table-hover align-middle">
-                  <thead className="table-light text-secondary" style={{ fontSize: 13 }}>
-                    <tr>
-                      <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Month/Year</th>
-                      <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Gross Pay</th>
-                      <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Deductions</th>
-                      <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Net Pay</th>
-                      <th className="fw-medium text-uppercase" style={{ letterSpacing: 0.5 }}>Status</th>
-                      <th className="fw-medium text-uppercase text-end" style={{ letterSpacing: 0.5 }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody style={{ fontSize: 14 }}>
-                    {data.payslips.map(p => (
-                      <tr key={p._id}>
-                        <td className="fw-bold text-dark py-3">{p.month} {p.year}</td>
-                        <td className="font-monospace fw-medium">₹{p.grossPay?.toLocaleString() || 0}</td>
-                        <td className="font-monospace fw-medium text-danger">₹{p.totalDeductions?.toLocaleString() || 0}</td>
-                        <td className="font-monospace fw-bold text-success fs-6">₹{p.netPay?.toLocaleString() || 0}</td>
-                        <td>
-                          <span className={`badge bg-${p.status === 'paid' ? 'success' : 'warning'}-subtle text-${p.status === 'paid' ? 'success' : 'warning'} rounded-pill px-3 py-1`} style={{ fontWeight: 600 }}>
-                            {p.status.toUpperCase()}
-                          </span>
-                        </td>
-                        <td className="text-end">
-                          <button className="btn btn-sm btn-outline-primary rounded-pill px-3 fw-medium">
-                            <i className="bi bi-download me-1" /> PDF
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="text-center py-5">
-                <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#f8fafc', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', color: '#cbd5e1' }}>
-                  <i className="bi bi-cash-stack fs-3" />
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="text-muted fw-medium">No payslips available for this employee.</div>
-              </div>
-            )}
+              ) : (
+                <div className="empty-state"><i className="bi bi-calendar-x" /><p>No leave requests found</p></div>
+              )}
+            </div>
           </div>
+
+          <div className="col-12">
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Attendance — Last 30 Days</span>
+              </div>
+              {data.attendance?.length > 0 ? (
+                <div className="table-responsive">
+                  <table className="table mb-0">
+                    <thead><tr><th>Date</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {data.attendance.map(a => (
+                        <tr key={a._id}>
+                          <td style={{ fontSize: 13, fontWeight: 600 }}>{formatDate(a.date)}</td>
+                          <td style={{ fontSize: 13 }}>{a.clockIn || '—'}</td>
+                          <td style={{ fontSize: 13 }}>{a.clockOut || '—'}</td>
+                          <td style={{ fontSize: 13 }}>{a.hoursWorked ? `${Math.floor(a.hoursWorked / 60)}h ${a.hoursWorked % 60}m` : '—'}</td>
+                          <td>
+                            <span className={`badge status-${a.status}`}>{a.status}</span>
+                            {a.lateFlag && <span className="badge status-late ms-1">Late</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="empty-state"><i className="bi bi-clock-history" /><p>No attendance records found</p></div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ASSETS & DOCS TAB */}
+      {tab === 'assets' && (
+        <div className="row g-3">
+          <div className="col-md-6">
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Assigned Assets</span>
+              </div>
+              <div style={{ padding: 16 }}>
+                {data.assets?.length > 0 ? data.assets.map(a => (
+                  <div key={a._id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f8fafc' }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: '#eff6ff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <i className={`bi bi-${a.category?.toLowerCase().includes('laptop') ? 'laptop' : a.category?.toLowerCase().includes('phone') ? 'phone' : 'device-hdd'}`} style={{ color: '#3b82f6', fontSize: 18 }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1e293b' }}>{a.name}</div>
+                      <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>ID: {a.assetId} &bull; <span style={{ textTransform: 'capitalize', color: a.condition === 'good' ? '#16a34a' : a.condition === 'repair' ? '#dc2626' : '#d97706' }}>{a.condition}</span></div>
+                    </div>
+                    <span className="badge" style={{ background: '#f1f5f9', color: '#475569', textTransform: 'capitalize' }}>{a.status}</span>
+                  </div>
+                )) : <div className="empty-state"><i className="bi bi-box-seam" /><p>No assets assigned</p></div>}
+              </div>
+            </div>
+          </div>
+
+          <div className="col-md-6">
+            <div className="card" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Documents</span>
+              </div>
+              <div style={{ padding: 16 }}>
+                {data.documents?.length > 0 ? data.documents.map(d => (
+                  <div key={d._id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid #f8fafc' }}>
+                    <div style={{ width: 44, height: 44, borderRadius: 10, background: '#f8fafc', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <i className="bi bi-file-earmark-text" style={{ color: '#64748b', fontSize: 18 }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13.5, color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</div>
+                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{formatDate(d.createdAt)} &bull; {d.fileSize || 'Unknown size'}</div>
+                    </div>
+                    <a href={d.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-outline-primary" style={{ padding: '5px 10px', fontSize: 12 }}>
+                      <i className="bi bi-download" />
+                    </a>
+                  </div>
+                )) : <div className="empty-state"><i className="bi bi-file-earmark-x" /><p>No documents uploaded</p></div>}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PAYROLL TAB */}
+      {tab === 'payroll' && (
+        <div className="card" style={{ borderRadius: 12 }}>
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+            <span style={{ fontWeight: 750, fontSize: 14.5 }}>Payslip History</span>
+          </div>
+          {data.payslips?.length > 0 ? (
+            <div className="table-responsive">
+              <table className="table mb-0">
+                <thead><tr><th>Month</th><th>Gross</th><th>Deductions</th><th>Net Pay</th><th>Status</th></tr></thead>
+                <tbody>
+                  {data.payslips.map(p => (
+                    <tr key={p._id}>
+                      <td style={{ fontSize: 13, fontWeight: 700 }}>{p.month}</td>
+                      <td style={{ fontSize: 13 }}>₹{Number(p.grossPay || 0).toLocaleString('en-IN')}</td>
+                      <td style={{ fontSize: 13, color: '#ef4444' }}>₹{Number(p.totalDeductions || 0).toLocaleString('en-IN')}</td>
+                      <td style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>₹{Number(p.netPay || 0).toLocaleString('en-IN')}</td>
+                      <td><span className={`badge ${p.status === 'finalized' ? 'status-approved' : 'status-pending'}`}>{p.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-state"><i className="bi bi-cash-stack" /><p>No payslips available</p></div>
+          )}
         </div>
       )}
     </AppShell>

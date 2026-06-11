@@ -21,6 +21,10 @@ const UserSchema = new mongoose.Schema({
   password:     { type: String, required: true, minlength: 6, select: false },
   role:         { type: String, enum: ROLES, default: 'employee' },
 
+  // Core identity/profile links for the decoupled HR data layer
+  identityId:   { type: mongoose.Schema.Types.ObjectId, ref: 'UsrIdentity', default: null, index: true },
+  profileId:    { type: mongoose.Schema.Types.ObjectId, ref: 'EmpProfile', default: null, index: true },
+
   // Org structure — used for data-scope filtering on every API
   department:   { type: String, default: '' },
   designation:  { type: String, default: '' },

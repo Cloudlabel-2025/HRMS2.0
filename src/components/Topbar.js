@@ -1,19 +1,31 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 
-const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', general: 'bi-bell' };
-const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', general: '#3b82f6' };
+const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', general: 'bi-bell', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack' };
+const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', general: '#3b82f6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316' };
+
+function getNotifRoute(n) {
+  if (n.type === 'leave') return '/leave';
+  if (n.type === 'attendance') return '/attendance';
+  if (n.type === 'self_service') return '/core-hr/requests';
+  if (n.type === 'lifecycle') return '/core-hr';
+  if (n.type === 'payroll') return '/payroll';
+  return null;
+}
 
 export default function Topbar({ title, onMenuClick }) {
   const { user } = useAuth();
   const { formatDateTime } = useSettings();
+  const router = useRouter();
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const pollRef = useRef(null);
+  const [pendingRequests, setPendingRequests] = useState(0);
 
   const loadNotifs = () => {
     api.get('/api/notifications')
@@ -21,12 +33,26 @@ export default function Topbar({ title, onMenuClick }) {
       .catch(() => {});
   };
 
+  const loadPendingRequests = () => {
+    if (!user || !['super_admin', 'admin_full'].includes(user.role)) return;
+    api.get('/api/core/self-service-requests?status=pending')
+      .then(d => setPendingRequests(Array.isArray(d.requests) ? d.requests.length : 0))
+      .catch(() => {});
+  };
+
   useEffect(() => {
     if (!user) return;
     loadNotifs();
-    pollRef.current = setInterval(loadNotifs, 10000);
+    loadPendingRequests();
+    pollRef.current = setInterval(() => { loadNotifs(); loadPendingRequests(); }, 30000);
     return () => clearInterval(pollRef.current);
   }, [user]);
+
+  const handleNotifClick = async (n) => {
+    await markRead(n._id);
+    const route = getNotifRoute(n);
+    if (route) { setShowNotif(false); router.push(route); }
+  };
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -74,19 +100,28 @@ export default function Topbar({ title, onMenuClick }) {
               </div>
               {notifications.length === 0 && <div style={{ padding: '20px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}><i className="bi bi-bell-slash d-block mb-2" style={{ fontSize: 24 }} />No notifications</div>}
               {notifications.slice(0, 8).map(n => (
-                <div key={n._id} className="notif-item" onClick={() => markRead(n._id)}
-                  style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: 'pointer' }}>
+                <div key={n._id} className="notif-item" onClick={() => handleNotifClick(n)}
+                  style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: getNotifRoute(n) ? 'pointer' : 'default' }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, background: (NOTIF_COLORS[n.type] || '#3b82f6') + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <i className={`bi ${NOTIF_ICONS[n.type] || 'bi-bell'}`} style={{ color: NOTIF_COLORS[n.type] || '#3b82f6', fontSize: 14 }} />
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, color: '#1e293b', fontWeight: n.read ? 400 : 600, lineHeight: 1.4 }}>{n.title}</div>
-                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{n.message}</div>
+                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</div>
                     <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(n.createdAt)}</div>
                   </div>
                   {!n.read && <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', flexShrink: 0, marginTop: 4 }} />}
                 </div>
               ))}
+              {['super_admin', 'admin_full'].includes(user.role) && pendingRequests > 0 && (
+                <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9' }}>
+                  <button onClick={() => { setShowNotif(false); router.push('/core-hr/requests'); }}
+                    style={{ width: '100%', background: '#fef3c7', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#d97706', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <i className="bi bi-inbox" />
+                    {pendingRequests} pending HR request{pendingRequests > 1 ? 's' : ''} — Review now
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>

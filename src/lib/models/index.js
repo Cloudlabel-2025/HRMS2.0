@@ -277,3 +277,7 @@ export const Notification= mongoose.models.Notification|| mongoose.model('Notifi
 
 // Re-import Leave model here to ensure the updated schema is always used
 export { default as Leave } from './Leave';
+export { default as UsrIdentity } from './Identity';
+export { default as EmpProfile } from './EmploymentProfile';
+export { default as EmpLifecycleHistory } from './LifecycleHistory';
+export { default as SelfServiceRequest } from './SelfServiceRequest';

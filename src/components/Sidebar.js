@@ -1,7 +1,9 @@
 'use client';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess } from '@/lib/auth';
+import { api } from '@/lib/api';
 
 const NAV_ITEMS = [
   { module: 'dashboard',     href: '/dashboard',     icon: 'bi-grid-1x2',              label: 'Dashboard',     section: 'MAIN' },
@@ -19,6 +21,9 @@ const NAV_ITEMS = [
   { module: 'inventory',     href: '/inventory',     icon: 'bi-box-seam',              label: 'Inventory',     section: 'FINANCE' },
   { module: 'performance',   href: '/performance',   icon: 'bi-graph-up-arrow',        label: 'Performance',   section: 'HR' },
   { module: 'documents',     href: '/documents',     icon: 'bi-folder2',               label: 'Documents',     section: 'HR' },
+  { module: 'self_service',  href: '/self-service',  icon: 'bi-person-badge',          label: 'My Profile',    section: 'HR' },
+  { module: 'core_hr',       href: '/core-hr',          icon: 'bi-diagram-3',             label: 'Core HR',           section: 'HR' },
+  { module: 'core_hr',       href: '/core-hr/requests',  icon: 'bi-inbox',                 label: 'HR Requests',       section: 'HR' },
   { module: 'communication', href: '/communication', icon: 'bi-megaphone',             label: 'Announcements', section: 'HR' },
   { module: 'calendar',      href: '/calendar',      icon: 'bi-calendar3',             label: 'Calendar',      section: 'HR' },
   { module: 'reports',       href: '/reports',       icon: 'bi-file-earmark-bar-graph',label: 'Reports',       section: 'ANALYTICS' },
@@ -27,12 +32,25 @@ const NAV_ITEMS = [
   { module: 'audit',         href: '/audit',         icon: 'bi-shield-check',          label: 'Audit Logs',    section: 'SYSTEM' },
 ];
 
-const MOBILE_NAV_MODULES = ['dashboard', 'employees', 'attendance', 'leave', 'settings'];
+const MOBILE_NAV_MODULES = ['dashboard', 'self-service', 'attendance', 'leave', 'settings'];
 
 export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const [pendingRequests, setPendingRequests] = useState(0);
+
+  useEffect(() => {
+    if (!user || !['super_admin', 'admin_full'].includes(user.role)) return;
+    const load = () => {
+      api.get('/api/core/self-service-requests?status=pending')
+        .then(d => setPendingRequests(Array.isArray(d.requests) ? d.requests.length : 0))
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, [user]);
 
   if (!user) return null;
 
@@ -75,6 +93,11 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
                 >
                   <i className={`bi ${item.icon}`} />
                   {item.label}
+                  {item.href === '/core-hr/requests' && pendingRequests > 0 && (
+                    <span style={{ marginLeft: 'auto', background: '#ef4444', color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 700, padding: '1px 6px', minWidth: 18, textAlign: 'center' }}>
+                      {pendingRequests}
+                    </span>
+                  )}
                 </Link>
               ))}
             </div>

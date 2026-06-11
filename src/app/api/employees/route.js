@@ -1,10 +1,13 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee, Department } from '@/lib/models/index';
+import UsrIdentity from '@/lib/models/Identity';
+import EmpProfile from '@/lib/models/EmploymentProfile';
 import { hasAccess } from '@/lib/rbac';
 import { CreateEmployeeSchema, validateRequest } from '@/lib/validation';
+import { recordLifecycleHistory } from '@/lib/core/history';
 
 export async function GET(req) {
   try {
@@ -118,15 +121,68 @@ export async function POST(req) {
       );
     }
 
+    const ip = req.headers.get('x-forwarded-for') || '';
+
+    // 3-5. Auto-create Core Identity + Profile (non-blocking — employee already saved)
+    try {
+      const nameParts = validated.name.trim().replace(/\s+/g, ' ').split(' ');
+      const identity = await UsrIdentity.create({
+        authUserId:      authUser._id,
+        legalFirstName:  nameParts[0] || validated.name,
+        legalMiddleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
+        legalLastName:   nameParts.length > 1 ? nameParts[nameParts.length - 1] : '',
+        preferredName:   validated.name,
+        primaryEmail:    validated.email,
+        personalPhone:   validated.phone || '',
+        gender:          'prefer_not_to_say',
+        maritalStatus:   'prefer_not_to_say',
+        nationality:     'Indian',
+        sourceSystem:    'manual',
+      });
+
+      const year = validated.joinDate ? new Date(validated.joinDate).getFullYear() : new Date().getFullYear();
+      const count = await EmpProfile.countDocuments();
+      const employeeNumber = `CHC-${year}-${String(count + 1).padStart(4, '0')}`;
+
+      const profile = await EmpProfile.create({
+        identityId:       identity._id,
+        employeeNumber,
+        employmentType:   'full_time',
+        employmentStatus: 'onboarding',
+        department:       validated.department,
+        designation:      validated.designation || '',
+        shift:            validated.shift || 'Morning (9AM-6PM)',
+        hireDate:         validated.joinDate || null,
+        sourceSystem:     'manual',
+      });
+
+      await User.findByIdAndUpdate(authUser._id, {
+        identityId: identity._id,
+        profileId:  profile._id,
+      });
+
+      await recordLifecycleHistory({
+        entityType:  'profile',
+        entityId:    profile._id,
+        identityId:  identity._id,
+        profileId:   profile._id,
+        eventType:   'create',
+        action:      'Create employment profile',
+        toState:     profile.employmentStatus,
+        changes:     [],
+        reason:      'Auto-created on employee registration',
+        actorUserId: user._id,
+        actorRole:   user.role,
+        ip,
+        metadata:    { source: 'employee.register.auto' },
+      });
+    } catch (coreErr) {
+      console.error('Core profile auto-creation failed (non-fatal):', coreErr.message);
+      // Still return success — employee login works, core profile can be created manually from Core HR
+    }
+
     // Audit log
-    await AuditLog.create({
-      action: 'Employee Created',
-      module: 'Employees',
-      userId: user._id,
-      details: `Created: ${employee.name} (${employee.email}), Role: ${employee.role}`,
-      severity: 'medium',
-      ip: req.headers.get('x-forwarded-for') || '',
-    });
+    await auditLog('Employee Created', 'Employees', user._id, `Created: ${employee.name} (${employee.email}), Role: ${employee.role}`, 'medium', ip);
 
     return ok({
       employee,
