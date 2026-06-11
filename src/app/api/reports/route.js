@@ -4,6 +4,8 @@ import Leave from '@/lib/models/Leave';
 import { Payroll } from '@/lib/models/Payroll';
 import { Task } from '@/lib/models/Task';
 import User from '@/lib/models/User';
+import EmpProfile from '@/lib/models/EmploymentProfile';
+import { SelfServiceRequest } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -160,6 +162,78 @@ export async function GET(req) {
     }
 
     // performance & finance — summary only
+    if (type === 'lifecycle') {
+      if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
+
+      const profiles = await EmpProfile.find().populate('identityId', 'legalName primaryEmail');
+
+      const statusCounts = {};
+      for (const p of profiles) {
+        const s = p.employmentStatus || 'unknown';
+        statusCounts[s] = (statusCounts[s] || 0) + 1;
+      }
+
+      const deptCounts = {};
+      for (const p of profiles) {
+        const d = p.department || 'Unknown';
+        deptCounts[d] = (deptCounts[d] || 0) + 1;
+      }
+
+      const pendingOnboarding = profiles.filter(p => p.employmentStatus === 'onboarding').length;
+      const pendingProbation  = profiles.filter(p => p.employmentStatus === 'probation').length;
+      const rehired           = profiles.filter(p => (p.rehireCount || 0) > 0).length;
+
+      const ssRequests = await SelfServiceRequest.aggregate([
+        { $group: { _id: { type: '$requestType', status: '$status' }, count: { $sum: 1 } } },
+      ]);
+      const ssMap = {};
+      for (const r of ssRequests) {
+        const key = `${r._id.type}__${r._id.status}`;
+        ssMap[key] = r.count;
+      }
+
+      const ssTypes = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation'];
+      const ssRows = ssTypes.map(t => ({
+        'Request Type': t.replace(/_/g, ' '),
+        Pending:  ssMap[`${t}__pending`]  || 0,
+        Approved: ssMap[`${t}__approved`] || 0,
+        Rejected: ssMap[`${t}__rejected`] || 0,
+      }));
+
+      return ok({
+        summary: [
+          { label: 'Total Profiles',    value: profiles.length,         color: '#3b82f6' },
+          { label: 'Active Employees',  value: statusCounts['active'] || 0, color: '#10b981' },
+          { label: 'On Probation',      value: pendingProbation,        color: '#f59e0b' },
+          { label: 'Onboarding',        value: pendingOnboarding,       color: '#8b5cf6' },
+          { label: 'Suspended',         value: statusCounts['suspended'] || 0, color: '#ef4444' },
+          { label: 'Separated',         value: (statusCounts['resigned'] || 0) + (statusCounts['terminated'] || 0), color: '#64748b' },
+          { label: 'Rehired',           value: rehired,                 color: '#06b6d4' },
+        ],
+        chart: {
+          type: 'bar', title: 'Headcount by Lifecycle Status',
+          labels: Object.keys(statusCounts).map(s => s.replace(/_/g, ' ')),
+          datasets: [{ label: 'Employees', data: Object.values(statusCounts), backgroundColor: ['#10b981','#f59e0b','#8b5cf6','#3b82f6','#ef4444','#64748b','#06b6d4','#f97316'] }],
+        },
+        deptChart: {
+          type: 'bar', title: 'Headcount by Department',
+          labels: Object.keys(deptCounts),
+          datasets: [{ label: 'Employees', data: Object.values(deptCounts), backgroundColor: '#3b82f6' }],
+        },
+        ssRows,
+        ssColumns: ['Request Type', 'Pending', 'Approved', 'Rejected'],
+        columns: ['Name', 'Department', 'Designation', 'Status', 'Hire Date', 'Rehire Count'],
+        rows: profiles.map(p => ({
+          Name:         p.identityId?.legalName || '—',
+          Department:   p.department,
+          Designation:  p.designation,
+          Status:       p.employmentStatus,
+          'Hire Date':  p.hireDate ? new Date(p.hireDate).toISOString().slice(0, 10) : '—',
+          'Rehire Count': p.rehireCount || 0,
+        })),
+      });
+    }
+
     return ok({
       summary: [{ label: 'Report Type', value: type, color: '#3b82f6' }],
       columns: [],

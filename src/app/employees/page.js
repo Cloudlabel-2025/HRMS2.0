@@ -7,7 +7,16 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const SHIFTS = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
-const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '' };
+const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '', panNumber: '', aadhaarNumber: '' };
+
+const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+const AADHAAR_REGEX = /^[0-9]{12}$/;
+
+function validateIdentifiers(panNumber, aadhaarNumber) {
+  if (panNumber && !PAN_REGEX.test(panNumber.toUpperCase())) return 'PAN must be in format ABCDE1234F';
+  if (aadhaarNumber && !AADHAAR_REGEX.test(aadhaarNumber.replace(/\s/g, ''))) return 'Aadhaar must be exactly 12 digits';
+  return null;
+}
 
 export default function EmployeesPage() {
   const { user } = useAuth();
@@ -80,14 +89,22 @@ export default function EmployeesPage() {
   });
 
   const openAdd  = () => { setEditEmp(null); setForm(EMPTY_FORM); setShowModal(true); };
-  const openEdit = (emp) => { setEditEmp(emp); setForm({ ...emp, skills: (emp.skills || []).join(', ') }); setShowModal(true); };
+  const openEdit = (emp) => { setEditEmp(emp); setForm({ ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '' }); setShowModal(true); };
 
   const handleSave = async () => {
     if (!form.name || !form.email) return showToast('Name and email are required', 'error');
     if (!form.department) return showToast('Department is required', 'error');
+    const idError = validateIdentifiers(form.panNumber, form.aadhaarNumber);
+    if (idError) return showToast(idError, 'error');
     setSaving(true);
     try {
       const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean) };
+      // Normalise before sending
+      if (payload.panNumber) payload.panNumber = payload.panNumber.toUpperCase().trim();
+      if (payload.aadhaarNumber) payload.aadhaarNumber = payload.aadhaarNumber.replace(/\s/g, '');
+      // Remove empty identifier fields so backend validation doesn't trip on ''
+      if (!payload.panNumber) delete payload.panNumber;
+      if (!payload.aadhaarNumber) delete payload.aadhaarNumber;
       if (editEmp) {
         await api.put(`/api/employees/${editEmp._id}`, payload);
         showToast('Employee updated');
@@ -201,7 +218,7 @@ export default function EmployeesPage() {
                 <table className="table mb-0">
                   <thead>
                     <tr>
-                      <th>Employee</th><th>Department</th><th>Designation</th><th>Role</th><th>Shift</th><th>Join Date</th><th>Status</th>
+                      <th>Employee</th><th>Emp ID</th><th>Department</th><th>Designation</th><th>Role</th><th>Status</th><th>Lifecycle</th>
                       {canManage && <th>Actions</th>}
                     </tr>
                   </thead>
@@ -223,12 +240,12 @@ export default function EmployeesPage() {
                             </div>
                           </Link>
                         </td>
+                        <td style={{ fontSize: 13 }}>{emp.employeeNumber ? <span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontWeight: 700 }}>{emp.employeeNumber}</span> : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>}</td>
                         <td style={{ fontSize: 13 }}>{emp.department}</td>
                         <td style={{ fontSize: 13 }}>{emp.designation}</td>
                         <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b' }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>{emp.shift}</td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>{formatDate(emp.joinDate)}</td>
                         <td><span className={`badge ${emp.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{emp.status === 'active' ? 'Active' : 'Inactive'}</span></td>
+                        <td>{emp.employmentStatus ? <span className="badge" style={{ background: '#f8fafc', color: '#475569', textTransform: 'capitalize', border: '1px solid #e2e8f0' }}>{emp.employmentStatus.replace(/_/g, ' ')}</span> : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>}</td>
                         {canManage && (
                           <td>
                             <div style={{ display: 'flex', gap: 4 }}>
@@ -351,6 +368,43 @@ export default function EmployeesPage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Skills (comma separated)</label>
                     <input className="form-control" placeholder="e.g. React, Node.js, AWS" value={form.skills || ''} onChange={e => setForm(p => ({ ...p, skills: e.target.value }))} />
                   </div>
+                  {/* PAN & Aadhaar — shown only to super_admin / admin_full on Add */}
+                  {!editEmp && canManage && (
+                    <>
+                      <div className="col-12" style={{ marginTop: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10 }}>
+                          <i className="bi bi-shield-lock" style={{ color: '#d97706', fontSize: 14 }} />
+                          <div style={{ fontSize: 12, color: '#92400e' }}>
+                            <strong>Sensitive Identifiers</strong> — stored encrypted. Only masked values are shown after saving. Visible to Super Admin and Admin only.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>PAN Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+                        <input
+                          className="form-control"
+                          style={{ fontFamily: 'monospace', letterSpacing: 1, textTransform: 'uppercase' }}
+                          placeholder="ABCDE1234F"
+                          maxLength={10}
+                          value={form.panNumber || ''}
+                          onChange={e => setForm(p => ({ ...p, panNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))}
+                        />
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>Format: 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F)</div>
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Aadhaar Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+                        <input
+                          className="form-control"
+                          style={{ fontFamily: 'monospace', letterSpacing: 1 }}
+                          placeholder="123456789012"
+                          maxLength={12}
+                          value={form.aadhaarNumber || ''}
+                          onChange={e => setForm(p => ({ ...p, aadhaarNumber: e.target.value.replace(/\D/g, '') }))}
+                        />
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>12-digit Aadhaar number (digits only)</div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="modal-footer">

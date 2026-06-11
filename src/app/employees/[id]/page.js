@@ -53,6 +53,9 @@ export default function EmployeeProfilePage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
   const [toast, setToast] = useState({ msg: '', type: 'success' });
+  const [idForm, setIdForm] = useState({ panNumber: '', aadhaarNumber: '' });
+  const [idSaving, setIdSaving] = useState(false);
+  const [showIdForm, setShowIdForm] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -62,7 +65,7 @@ export default function EmployeeProfilePage() {
   useEffect(() => {
     if (id) {
       api.get(`/api/employees/${id}/details`)
-        .then(res => setData(res))
+        .then(res => { setData(res); })
         .catch(e => { showToast(e.message, 'error'); setTimeout(() => router.push('/employees'), 2000); })
         .finally(() => setLoading(false));
     }
@@ -84,6 +87,35 @@ export default function EmployeeProfilePage() {
   const identity = data.identity;
   const profile = data.profile;
   const canEdit = ['super_admin', 'admin_full'].includes(user?.role);
+
+  const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+  const AADHAAR_RE = /^[0-9]{12}$/;
+
+  const saveIdentifiers = async () => {
+    if (!data?.identity?._id) return showToast('No identity record found', 'error');
+    if (!idForm.panNumber && !idForm.aadhaarNumber) return showToast('Enter PAN or Aadhaar to save', 'error');
+    const pan = idForm.panNumber.toUpperCase().trim();
+    const aadhaar = idForm.aadhaarNumber.replace(/\D/g, '');
+    if (pan && !PAN_RE.test(pan)) return showToast('Invalid PAN — must be 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)', 'error');
+    if (aadhaar && !AADHAAR_RE.test(aadhaar)) return showToast('Invalid Aadhaar — must be exactly 12 digits', 'error');
+    setIdSaving(true);
+    try {
+      const payload = { identifiers: {} };
+      if (pan) payload.identifiers.panNumber = pan;
+      if (aadhaar) payload.identifiers.aadhaarNumber = aadhaar;
+      await api.put(`/api/core/identities/${data.identity._id}`, payload);
+      showToast('Identifiers saved securely');
+      setIdForm({ panNumber: '', aadhaarNumber: '' });
+      setShowIdForm(false);
+      // Refresh data
+      const res = await api.get(`/api/employees/${id}/details`);
+      setData(res);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setIdSaving(false);
+    }
+  };
   const visibleTabs = TABS.filter(t => {
     if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
     return true;
@@ -261,6 +293,55 @@ export default function EmployeeProfilePage() {
                   <InfoRow icon="bi-heart" label="Marital Status" value={identity.maritalStatus?.replace(/_/g, ' ')} />
                   <InfoRow icon="bi-flag" label="Nationality" value={identity.nationality} />
                   <InfoRow icon="bi-droplet" label="Blood Group" value={identity.bloodGroup} />
+
+                  {/* PAN / Aadhaar — admin only */}
+                  {canEdit && (
+                    <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #f1f5f9' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <i className="bi bi-shield-lock" style={{ color: '#94a3b8', fontSize: 13 }} />
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.5 }}>Sensitive Identifiers</span>
+                        </div>
+                        <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 10px' }} onClick={() => setShowIdForm(p => !p)}>
+                          <i className={`bi ${showIdForm ? 'bi-x-lg' : 'bi-pencil'} me-1`} style={{ fontSize: 10 }} />{showIdForm ? 'Cancel' : 'Update'}
+                        </button>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {[['PAN', identity.identifiers?.pan?.maskedValue], ['Aadhaar', identity.identifiers?.aadhaar?.maskedValue]].map(([label, val]) => (
+                          <div key={label} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10, padding: '12px 14px' }}>
+                            <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>{label}</div>
+                            {val ? (
+                              <div style={{ fontSize: 13.5, fontWeight: 700, fontFamily: 'monospace', letterSpacing: 1.5, color: '#1e293b' }}>{val}</div>
+                            ) : (
+                              <div style={{ fontSize: 12, color: '#cbd5e1', fontStyle: 'italic' }}>Not entered</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {showIdForm && (
+                        <div style={{ marginTop: 12, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 14 }}>
+                          <div style={{ fontSize: 12, color: '#92400e', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <i className="bi bi-lock-fill" style={{ fontSize: 11 }} /> Values are stored encrypted. Only masked values are shown after saving.
+                          </div>
+                          <div className="row g-2">
+                            <div className="col-6">
+                              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>PAN Number</label>
+                              <input className="form-control" style={{ fontSize: 13, fontFamily: 'monospace', letterSpacing: 1 }} placeholder="ABCDE1234F" maxLength={10} value={idForm.panNumber} onChange={e => setIdForm(p => ({ ...p, panNumber: e.target.value.toUpperCase() }))} />
+                            </div>
+                            <div className="col-6">
+                              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Aadhaar Number</label>
+                              <input className="form-control" style={{ fontSize: 13, fontFamily: 'monospace', letterSpacing: 1 }} placeholder="123456789012" maxLength={12} value={idForm.aadhaarNumber} onChange={e => setIdForm(p => ({ ...p, aadhaarNumber: e.target.value.replace(/\D/g, '') }))} />
+                            </div>
+                            <div className="col-12">
+                              <button className="btn btn-sm" style={{ background: '#f59e0b', color: '#fff', border: 'none', fontSize: 12 }} onClick={saveIdentifiers} disabled={idSaving}>
+                                {idSaving ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Saving...</> : <><i className="bi bi-shield-check me-1" />Save Securely</>}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </>
               ) : (
                 <div className="empty-state" style={{ padding: '32px 0' }}>

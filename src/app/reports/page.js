@@ -13,6 +13,7 @@ const REPORT_TYPES = [
   { key: 'tasks', label: 'Task & Project', icon: 'bi-check2-square', color: '#f59e0b' },
   { key: 'performance', label: 'Performance', icon: 'bi-graph-up-arrow', color: '#ef4444' },
   { key: 'finance', label: 'Financial', icon: 'bi-bar-chart-line', color: '#06b6d4' },
+  { key: 'lifecycle', label: 'HR Lifecycle', icon: 'bi-diagram-3', color: '#f97316' },
 ];
 
 function BarChart({ labels, datasets }) {
@@ -160,6 +161,42 @@ export default function ReportsPage() {
               <div className="section-title mb-3">{data.chart.title}</div>
               <div style={{ height: 280 }}>
                 <LineChart labels={data.chart.labels} datasets={data.chart.datasets} />
+              </div>
+            </div>
+          )}
+
+          {/* Lifecycle dept chart */}
+          {data.deptChart && (
+            <div className="card p-3 mb-4">
+              <div className="section-title mb-3">{data.deptChart.title}</div>
+              <div style={{ height: 240 }}>
+                <BarChart labels={data.deptChart.labels} datasets={data.deptChart.datasets} />
+              </div>
+            </div>
+          )}
+
+          {/* Self-service request summary */}
+          {data.ssRows && data.ssRows.length > 0 && (
+            <div className="card mb-4">
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9' }}>
+                <span style={{ fontWeight: 750, fontSize: 14.5 }}>Self-Service Request Summary</span>
+              </div>
+              <div className="table-responsive">
+                <table className="table mb-0">
+                  <thead><tr>{data.ssColumns?.map(c => <th key={c}>{c}</th>)}</tr></thead>
+                  <tbody>
+                    {data.ssRows.map((row, i) => (
+                      <tr key={i}>{data.ssColumns?.map(c => (
+                        <td key={c} style={{ fontSize: 13, fontWeight: c === 'Request Type' ? 600 : 400, textTransform: 'capitalize' }}>
+                          {c === 'Pending' ? <span className="badge status-pending">{row[c]}</span>
+                           : c === 'Approved' ? <span className="badge status-approved">{row[c]}</span>
+                           : c === 'Rejected' ? <span className="badge status-rejected">{row[c]}</span>
+                           : row[c]}
+                        </td>
+                      ))}</tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}

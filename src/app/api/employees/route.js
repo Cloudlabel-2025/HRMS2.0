@@ -7,6 +7,7 @@ import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { hasAccess } from '@/lib/rbac';
 import { CreateEmployeeSchema, validateRequest } from '@/lib/validation';
+import { buildSensitiveIdentifierPayload } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 
 export async function GET(req) {
@@ -41,7 +42,30 @@ export async function GET(req) {
     ];
 
     const employees = await Employee.find(query).sort({ department: 1, createdAt: -1 });
-    return ok(employees);
+
+    // Enrich with Core HR data (employeeNumber + employmentStatus)
+    const userIds = employees.map(e => e.userId?.toString()).filter(Boolean);
+    const authUsers = await User.find({ _id: { $in: userIds } }).select('_id identityId profileId');
+    const profileIds = authUsers.map(u => u.profileId).filter(Boolean);
+    const profiles = await EmpProfile.find({ _id: { $in: profileIds } }).select('identityId employeeNumber employmentStatus');
+    const profileMap = {};
+    for (const p of profiles) profileMap[p._id.toString()] = p;
+    const userProfileMap = {};
+    for (const u of authUsers) {
+      if (u.profileId) userProfileMap[u._id.toString()] = profileMap[u.profileId.toString()];
+    }
+
+    const enriched = employees.map(emp => {
+      const obj = emp.toObject();
+      const coreProfile = userProfileMap[emp.userId?.toString()];
+      if (coreProfile) {
+        obj.employeeNumber    = coreProfile.employeeNumber || '';
+        obj.employmentStatus  = coreProfile.employmentStatus || '';
+      }
+      return obj;
+    });
+
+    return ok(enriched);
   } catch (e) {
     return fail(e.message, 500);
   }
@@ -126,7 +150,7 @@ export async function POST(req) {
     // 3-5. Auto-create Core Identity + Profile (non-blocking — employee already saved)
     try {
       const nameParts = validated.name.trim().replace(/\s+/g, ' ').split(' ');
-      const identity = await UsrIdentity.create({
+      const identityPayload = {
         authUserId:      authUser._id,
         legalFirstName:  nameParts[0] || validated.name,
         legalMiddleName: nameParts.length > 2 ? nameParts.slice(1, -1).join(' ') : '',
@@ -138,7 +162,15 @@ export async function POST(req) {
         maritalStatus:   'prefer_not_to_say',
         nationality:     'Indian',
         sourceSystem:    'manual',
-      });
+      };
+      // Store PAN / Aadhaar encrypted if provided
+      if (validated.panNumber || validated.aadhaarNumber) {
+        identityPayload.identifiers = {
+          pan:     validated.panNumber    ? buildSensitiveIdentifierPayload('pan',     validated.panNumber)    : undefined,
+          aadhaar: validated.aadhaarNumber ? buildSensitiveIdentifierPayload('aadhaar', validated.aadhaarNumber) : undefined,
+        };
+      }
+      const identity = await UsrIdentity.create(identityPayload);
 
       const year = validated.joinDate ? new Date(validated.joinDate).getFullYear() : new Date().getFullYear();
       const count = await EmpProfile.countDocuments();

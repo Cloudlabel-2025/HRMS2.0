@@ -43,7 +43,7 @@ export async function GET(req, { params }) {
 
   return ok({
     employee: emp,
-    identity: sanitizeIdentityRecord(identity),
+    identity: sanitizeIdentityRecord(identity, user.role),
     profile:  sanitizeProfileRecord(profile),
     leaves,
     attendance,

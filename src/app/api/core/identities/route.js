@@ -77,7 +77,7 @@ export async function GET(req) {
     ]);
 
     return ok({
-      items: items.map(sanitizeIdentityRecord),
+      items: items.map(i => sanitizeIdentityRecord(i, user.role)),
       pagination: {
         page,
         limit,
@@ -143,7 +143,7 @@ export async function POST(req) {
 
     await auditLog('Core Identity Created', 'Identity', user._id, `Created identity ${identity.legalName} (${identity.primaryEmail})`, 'medium', ip);
 
-    return ok({ identity: sanitizeIdentityRecord(identity) }, 201);
+    return ok({ identity: sanitizeIdentityRecord(identity, user.role) }, 201);
   } catch (e) {
     if (e.code === 11000) return fail('Identity already exists', 409);
     return fail(e.message, 500);

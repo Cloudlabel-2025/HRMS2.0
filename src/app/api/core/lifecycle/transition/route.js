@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { Employee } from '@/lib/models/index';
+import { Department, Employee } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { CORE_HR_MANAGER_ROLES } from '@/lib/core/constants';
@@ -113,6 +113,9 @@ export async function POST(req) {
     const identity = profile.identityId;
     if (!identity) return fail('Linked identity not found for this profile', 409);
 
+    // Record locking — block mutations on finalized separated profiles
+    if (profile.isLocked && action !== 'rehire') return fail('This profile is locked after exit clearance. Only rehire is allowed.', 403);
+
     if (!canOperateOnProfile(profile, user) && !['super_admin', 'admin_full'].includes(user.role)) {
       return fail('Access denied', 403);
     }
@@ -222,6 +225,20 @@ export async function POST(req) {
 
     await profile.save();
 
+    // Sync department member counts on transfer or separation
+    if (action === 'transfer' && before.department !== profile.department) {
+      await Promise.all([
+        Department.findOneAndUpdate({ name: before.department }, { $inc: { members: -1 } }),
+        Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } }),
+      ]);
+    }
+    if (action === 'separation') {
+      await Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: -1 } });
+    }
+    if (action === 'rehire') {
+      await Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } });
+    }
+
     const userStatus = mapStatusToUserStatus(profile.employmentStatus, profile.separation?.separationType || '');
     identity.recordStatus = userStatus === 'alumni' ? 'archived' : userStatus === 'active' ? 'active' : 'inactive';
     await identity.save();
@@ -258,15 +275,14 @@ export async function POST(req) {
         rehired:    { title: 'Welcome Back!',                message: `Your employment has been reinstated${reason ? ': ' + reason : '.'}` },
       };
       const msg = statusMessages[profile.employmentStatus];
-      if (msg) await notify(authUserId, msg.title, msg.message, 'general', profile._id);
+      if (msg) await notify(authUserId, msg.title, msg.message, 'lifecycle', profile._id);
 
-      // Also notify actor (admin/manager) if they are different from the employee
       if (String(authUserId) !== String(user._id)) {
         await notify(
           user._id,
           `Lifecycle updated — ${identity.legalName}`,
           `${identity.legalName} has been moved to ${profile.employmentStatus.replace(/_/g, ' ')}${reason ? ': ' + reason : '.'}`,
-          'general',
+          'lifecycle',
           profile._id
         );
       }

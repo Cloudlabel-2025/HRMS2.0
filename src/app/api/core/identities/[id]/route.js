@@ -66,7 +66,7 @@ export async function GET(req, { params }) {
       return fail('Access denied', 403);
     }
 
-    return ok({ identity: sanitizeIdentityRecord(identity) });
+    return ok({ identity: sanitizeIdentityRecord(identity, user.role) });
   } catch (e) {
     return fail(e.message, 500);
   }
@@ -123,24 +123,11 @@ export async function PUT(req, { params }) {
     }
 
     const changes = buildChangeSet(before, existing.toObject(), [
-      'legalFirstName',
-      'legalMiddleName',
-      'legalLastName',
-      'preferredName',
-      'primaryEmail',
-      'personalPhone',
-      'secondaryPhone',
-      'dateOfBirth',
-      'gender',
-      'maritalStatus',
-      'nationality',
-      'bloodGroup',
-      'addressHistory',
-      'emergencyContacts',
-      'recordStatus',
-      'sourceSystem',
-      'notes',
-      'identifiers',
+      'legalFirstName', 'legalMiddleName', 'legalLastName', 'preferredName',
+      'primaryEmail', 'personalPhone', 'secondaryPhone', 'dateOfBirth',
+      'gender', 'maritalStatus', 'nationality', 'bloodGroup',
+      'addressHistory', 'emergencyContacts', 'recordStatus', 'sourceSystem',
+      'notes', 'identifiers',
     ], ['identifiers']);
 
     const requestId = req.headers.get('x-request-id') || '';
@@ -165,7 +152,7 @@ export async function PUT(req, { params }) {
 
     await auditLog('Core Identity Updated', 'Identity', user._id, `Updated identity ${existing.legalName} (${existing.primaryEmail})`, 'low', ip);
 
-    return ok({ identity: sanitizeIdentityRecord(existing) });
+    return ok({ identity: sanitizeIdentityRecord(existing, user.role) });
   } catch (e) {
     if (e.code === 11000) return fail('Identity already exists', 409);
     return fail(e.message, 500);

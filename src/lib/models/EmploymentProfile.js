@@ -16,6 +16,15 @@ const SeparationSchema = new mongoose.Schema({
   approvedByUserId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   approvedAt:            { type: Date, default: null },
   clearedAt:             { type: Date, default: null },
+  // Exit clearance checklist
+  clearanceChecklist: {
+    assetReturned:     { type: Boolean, default: false },
+    accessRevoked:     { type: Boolean, default: false },
+    finalSettlement:   { type: Boolean, default: false },
+    exitInterviewDone: { type: Boolean, default: false },
+    nocIssued:         { type: Boolean, default: false },
+    relievingLetter:   { type: Boolean, default: false },
+  },
 }, { _id: false });
 
 const ReportingLineSchema = new mongoose.Schema({
@@ -58,6 +67,7 @@ const EmpProfileSchema = new mongoose.Schema({
 
   sourceSystem:         { type: String, enum: ['manual', 'recruitment', 'migration', 'rehire', 'import'], default: 'manual' },
   notes:                { type: String, default: '' },
+  isLocked:             { type: Boolean, default: false },
 }, { timestamps: true, minimize: false, collection: 'emp_profiles' });
 
 EmpProfileSchema.statics.generateEmployeeNumber = async function (hireDate) {

@@ -62,6 +62,9 @@ export default function SettingsPage() {
     language: 'English', payrollStartDay: getDefaultPayrollStartDate(), attendanceStartDay: '1',
     saturdayWorking: 'alternate', lateThreshold: '15',
   });
+  const [archiveYears, setArchiveYears] = useState(3);
+  const [archivePreview, setArchivePreview] = useState(null);
+  const [archiving, setArchiving] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
   const [showModal, setShowModal]   = useState(null);
@@ -145,6 +148,29 @@ export default function SettingsPage() {
       load();
     } catch (e) {
       showToast(e.message, 'error');
+    }
+  };
+
+  const previewArchive = async () => {
+    try {
+      const res = await api.get(`/api/core/archive?olderThanYears=${archiveYears}`);
+      setArchivePreview(res);
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  };
+
+  const runArchive = async () => {
+    if (!confirm(`Archive ${archivePreview?.count} separated profiles older than ${archiveYears} years? This will change their status to "alumni" and cannot be undone without manual intervention.`)) return;
+    setArchiving(true);
+    try {
+      const res = await api.post('/api/core/archive', { olderThanYears: archiveYears });
+      showToast(`${res.archived} profiles archived successfully`);
+      setArchivePreview(null);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -314,6 +340,51 @@ export default function SettingsPage() {
                   </button>
                 </div>
               </div>
+
+              {/* Data Retention */}
+              {user?.role === 'super_admin' && (
+                <>
+                  <div style={{ borderTop: '1px solid #e2e8f0', marginTop: 28, paddingTop: 24 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Data Retention Policy</div>
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: 16 }}>Archive separated (resigned / terminated / retired) employees whose profiles are locked and older than N years. Archived profiles are excluded from active queries.</div>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div>
+                        <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Years Since Last Update</label>
+                        <input type="number" className="form-control" min={1} max={20} style={{ width: 100 }} value={archiveYears} onChange={e => { setArchiveYears(Number(e.target.value)); setArchivePreview(null); }} />
+                      </div>
+                      <button className="btn btn-outline-secondary btn-sm" onClick={previewArchive} style={{ height: 38 }}>
+                        <i className="bi bi-search me-1" />Preview
+                      </button>
+                      {archivePreview && archivePreview.count > 0 && (
+                        <button className="btn btn-danger btn-sm" onClick={runArchive} disabled={archiving} style={{ height: 38 }}>
+                          {archiving ? <><span className="spinner-border spinner-border-sm me-1" />Archiving...</> : <><i className="bi bi-archive me-1" />Archive {archivePreview.count} Profiles</>}
+                        </button>
+                      )}
+                    </div>
+                    {archivePreview && (
+                      <div style={{ marginTop: 14, background: archivePreview.count === 0 ? '#f0fdf4' : '#fff7ed', border: `1px solid ${archivePreview.count === 0 ? '#bbf7d0' : '#fed7aa'}`, borderRadius: 10, padding: 14 }}>
+                        {archivePreview.count === 0 ? (
+                          <div style={{ fontSize: 13, color: '#16a34a' }}><i className="bi bi-check-circle me-2" />No profiles match this retention criteria.</div>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e', marginBottom: 10 }}>
+                              <i className="bi bi-exclamation-triangle me-2" />{archivePreview.count} profiles eligible for archival (separated before {new Date(archivePreview.cutoff).toLocaleDateString()})
+                            </div>
+                            <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+                              {archivePreview.candidates.slice(0, 10).map(c => (
+                                <div key={c.profileId} style={{ fontSize: 12, color: '#78350f', padding: '4px 0', borderBottom: '1px solid #fed7aa20' }}>
+                                  {c.name} &mdash; {c.employeeNumber} &mdash; <span style={{ textTransform: 'capitalize' }}>{c.employmentStatus}</span>
+                                </div>
+                              ))}
+                              {archivePreview.count > 10 && <div style={{ fontSize: 11, color: '#92400e', marginTop: 6 }}>...and {archivePreview.count - 10} more</div>}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

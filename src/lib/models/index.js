@@ -197,7 +197,7 @@ const NotificationSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title:   { type: String, required: true },
   message: { type: String, required: true },
-  type:    { type: String, enum: ['leave','attendance','general'], default: 'general' },
+  type:    { type: String, enum: ['leave','attendance','general','lifecycle','self_service','payroll'], default: 'general' },
   read:    { type: Boolean, default: false },
   refId:   { type: mongoose.Schema.Types.ObjectId, default: null }, // leave/request id
 }, { timestamps: true });
