@@ -8,8 +8,8 @@ import AppShell from '@/components/AppShell';
 
 const STAGES = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
 const STAGE_COLORS = { Applied: '#64748b', Screening: '#3b82f6', Interview: '#f59e0b', Offer: '#8b5cf6', Hired: '#10b981', Rejected: '#ef4444' };
-const EMPTY_JOB = { title: '', department: '', type: 'Full-time', status: 'active' };
-const EMPTY_APP = { name: '', email: '', jobId: '', score: '' };
+const EMPTY_JOB = { title: '', department: '', type: 'Full-time', status: 'active', requiredSkills: '' };
+const EMPTY_APP = { name: '', email: '', jobId: '', qualification: '', skills: '', isFresher: 'yes', experienceYears: '' };
 
 export default function RecruitmentPage() {
   const { user } = useAuth();
@@ -25,7 +25,7 @@ export default function RecruitmentPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [departments, setDepartments] = useState([]);
-  const [hiredModal, setHiredModal] = useState(null); // { id, name, email }
+  const [hiredModal, setHiredModal] = useState(null);
   const router = useRouter();
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
@@ -40,11 +40,8 @@ export default function RecruitmentPage() {
       ]);
       setJobs(Array.isArray(j) ? j : []);
       setApplicants(Array.isArray(a) ? a : []);
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => {
@@ -58,32 +55,40 @@ export default function RecruitmentPage() {
     if (!jobForm.title) return showToast('Job title required', 'error');
     setSaving(true);
     try {
-      await api.post('/api/recruitment/jobs', jobForm);
+      await api.post('/api/recruitment/jobs', {
+        ...jobForm,
+        requiredSkills: jobForm.requiredSkills ? jobForm.requiredSkills.split(',').map(s => s.trim()).filter(Boolean) : [],
+      });
       showToast('Job posted');
       setShowJobModal(false);
       setJobForm(EMPTY_JOB);
       load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setSaving(false); }
   };
 
   const saveApplicant = async () => {
-    if (!appForm.name || !appForm.email || !appForm.jobId) return showToast('Name, email and job required', 'error');
+    if (!appForm.name || !appForm.email || !appForm.jobId) return showToast('Name, email and job are required', 'error');
+    if (!appForm.qualification) return showToast('Qualification is required', 'error');
+    if (!appForm.skills) return showToast('Skills are required', 'error');
+    if (appForm.isFresher === 'no' && !appForm.experienceYears) return showToast('Years of experience is required for non-freshers', 'error');
     setSaving(true);
     try {
-      await api.post('/api/recruitment/applicants', { ...appForm, score: +appForm.score || 0 });
+      await api.post('/api/recruitment/applicants', {
+        name: appForm.name,
+        email: appForm.email,
+        jobId: appForm.jobId,
+        qualification: appForm.qualification,
+        skills: appForm.skills.split(',').map(s => s.trim()).filter(Boolean),
+        isFresher: appForm.isFresher === 'yes',
+        experienceYears: appForm.isFresher === 'no' ? Number(appForm.experienceYears) : 0,
+      });
       showToast('Applicant added');
       setShowAppModal(false);
       setAppForm(EMPTY_APP);
       load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setSaving(false); }
   };
 
   const moveStage = async (id, stage, appName, appEmail) => {
@@ -92,9 +97,7 @@ export default function RecruitmentPage() {
       setApplicants(prev => prev.map(a => a._id === id ? { ...a, stage } : a));
       showToast(`Moved to ${stage}`);
       if (stage === 'Hired') setHiredModal({ id, name: appName, email: appEmail });
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+    } catch (e) { showToast(e.message, 'error'); }
   };
 
   return (
@@ -113,10 +116,10 @@ export default function RecruitmentPage() {
 
       <div className="row g-3 mb-4">
         {[
-          { label: 'Open Positions', value: jobs.filter(j => j.status === 'active').length, color: '#3b82f6', icon: 'bi-briefcase' },
-          { label: 'Total Applicants', value: applicants.length, color: '#8b5cf6', icon: 'bi-people' },
-          { label: 'In Interview', value: applicants.filter(a => a.stage === 'Interview').length, color: '#f59e0b', icon: 'bi-chat-dots' },
-          { label: 'Offers / Hired', value: applicants.filter(a => ['Offer', 'Hired'].includes(a.stage)).length, color: '#10b981', icon: 'bi-envelope-check' },
+          { label: 'Open Positions',  value: jobs.filter(j => j.status === 'active').length,                         color: '#3b82f6', icon: 'bi-briefcase' },
+          { label: 'Total Applicants',value: applicants.length,                                                       color: '#8b5cf6', icon: 'bi-people' },
+          { label: 'In Interview',    value: applicants.filter(a => a.stage === 'Interview').length,                  color: '#f59e0b', icon: 'bi-chat-dots' },
+          { label: 'Offers / Hired',  value: applicants.filter(a => ['Offer','Hired'].includes(a.stage)).length,      color: '#10b981', icon: 'bi-envelope-check' },
         ].map((s, i) => (
           <div key={i} className="col-6 col-xl-3">
             <div className="stat-card">
@@ -147,13 +150,23 @@ export default function RecruitmentPage() {
                 <div key={job._id} className="col-md-6">
                   <div className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                      <div><div style={{ fontWeight: 700, fontSize: 15 }}>{job.title}</div><div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{job.department} · {job.type}</div></div>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{job.title}</div>
+                        <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{job.department} · {job.type}</div>
+                      </div>
                       <span className={`badge ${job.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{job.status}</span>
                     </div>
-                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
+                    <div style={{ display: 'flex', gap: 16, fontSize: 12, color: '#94a3b8', marginBottom: job.requiredSkills?.length ? 10 : 0 }}>
                       <span><i className="bi bi-calendar3 me-1" />Posted {formatDate(job.createdAt)}</span>
                       <span><i className="bi bi-people me-1" />{applicants.filter(a => a.jobId === job._id || a.jobId?._id === job._id).length} applicants</span>
                     </div>
+                    {job.requiredSkills?.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+                        {job.requiredSkills.map((s, i) => (
+                          <span key={i} style={{ background: '#eff6ff', color: '#2563eb', fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12 }}>{s}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -175,9 +188,18 @@ export default function RecruitmentPage() {
                     </div>
                     {stageApps.map(app => (
                       <div key={app._id} className="kanban-card">
-                        <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 4 }}>{app.name}</div>
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>{app.email}</div>
-                        {app.score > 0 && <div style={{ fontSize: 11, fontWeight: 700, color: app.score >= 80 ? '#10b981' : app.score >= 65 ? '#f59e0b' : '#ef4444', marginBottom: 8 }}>Score: {app.score}</div>}
+                        <div style={{ fontSize: 12.5, fontWeight: 700, marginBottom: 2 }}>{app.name}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{app.email}</div>
+                        {app.isFresher !== undefined && (
+                          <div style={{ fontSize: 11, color: app.isFresher ? '#10b981' : '#f59e0b', fontWeight: 600, marginBottom: 4 }}>
+                            {app.isFresher ? 'Fresher' : `${app.experienceYears || 0} yr exp`}
+                          </div>
+                        )}
+                        {app.skills?.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 6 }}>
+                            {app.skills.slice(0, 3).map((s, i) => <span key={i} style={{ background: '#f1f5f9', color: '#475569', fontSize: 9, padding: '1px 5px', borderRadius: 8 }}>{s}</span>)}
+                          </div>
+                        )}
                         {isAdmin && (() => {
                           const idx = STAGES.indexOf(stage);
                           const next = STAGES.slice(idx + 1);
@@ -204,19 +226,40 @@ export default function RecruitmentPage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Applicant</th><th>Job</th><th>Applied</th><th>Stage</th><th>Score</th>{isAdmin && <th>Move Stage</th>}</tr></thead>
+                  <thead>
+                    <tr>
+                      <th>Applicant</th><th>Job</th><th>Qualification</th><th>Experience</th><th>Skills</th><th>Applied</th><th>Stage</th>
+                      {isAdmin && <th>Move Stage</th>}
+                    </tr>
+                  </thead>
                   <tbody>
                     {applicants.length === 0 ? (
-                      <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-people" /><h6>No applicants yet</h6></div></td></tr>
+                      <tr><td colSpan={8}><div className="empty-state"><i className="bi bi-people" /><h6>No applicants yet</h6></div></td></tr>
                     ) : applicants.map(app => {
                       const job = jobs.find(j => j._id === app.jobId || j._id === app.jobId?._id);
                       return (
                         <tr key={app._id}>
-                          <td><div style={{ fontSize: 13, fontWeight: 600 }}>{app.name}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{app.email}</div></td>
+                          <td>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{app.name}</div>
+                            <div style={{ fontSize: 11, color: '#94a3b8' }}>{app.email}</div>
+                          </td>
                           <td style={{ fontSize: 13 }}>{job?.title || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{app.qualification || '—'}</td>
+                          <td style={{ fontSize: 12 }}>
+                            {app.isFresher
+                              ? <span style={{ color: '#10b981', fontWeight: 600 }}>Fresher</span>
+                              : <span style={{ color: '#f59e0b', fontWeight: 600 }}>{app.experienceYears || 0} yr(s)</span>}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                              {(app.skills || []).slice(0, 3).map((s, i) => (
+                                <span key={i} style={{ background: '#eff6ff', color: '#2563eb', fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 10 }}>{s}</span>
+                              ))}
+                              {(app.skills || []).length > 3 && <span style={{ fontSize: 10, color: '#94a3b8' }}>+{app.skills.length - 3}</span>}
+                            </div>
+                          </td>
                           <td style={{ fontSize: 12, color: '#64748b' }}>{formatDate(app.createdAt)}</td>
                           <td><span className="badge" style={{ background: STAGE_COLORS[app.stage] + '20', color: STAGE_COLORS[app.stage] }}>{app.stage}</span></td>
-                          <td><span style={{ fontWeight: 700, color: app.score >= 80 ? '#10b981' : app.score >= 65 ? '#f59e0b' : '#ef4444' }}>{app.score || '—'}</span></td>
                           {isAdmin && (
                             <td>
                               <select className="form-select form-select-sm" style={{ fontSize: 11, width: 120 }} value={app.stage} onChange={e => moveStage(app._id, e.target.value, app.name, app.email)}>
@@ -235,6 +278,7 @@ export default function RecruitmentPage() {
         </>
       )}
 
+      {/* Post Job Modal */}
       {showJobModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered">
@@ -242,9 +286,27 @@ export default function RecruitmentPage() {
               <div className="modal-header"><h5 className="modal-title">Post Job</h5><button className="btn-close" onClick={() => setShowJobModal(false)} /></div>
               <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job Title *</label><input className="form-control" value={jobForm.title} onChange={e => setJobForm(p => ({ ...p, title: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department</label><select className="form-select" value={jobForm.department} onChange={e => setJobForm(p => ({ ...p, department: e.target.value }))}><option value="">Select Department</option>{departments.map(d => <option key={d}>{d}</option>)}</select></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Type</label><select className="form-select" value={jobForm.type} onChange={e => setJobForm(p => ({ ...p, type: e.target.value }))}>{['Full-time', 'Part-time', 'Contract', 'Intern'].map(t => <option key={t}>{t}</option>)}</select></div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job Title *</label>
+                    <input className="form-control" value={jobForm.title} onChange={e => setJobForm(p => ({ ...p, title: e.target.value }))} />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department</label>
+                    <select className="form-select" value={jobForm.department} onChange={e => setJobForm(p => ({ ...p, department: e.target.value }))}>
+                      <option value="">Select Department</option>
+                      {departments.map(d => <option key={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Type</label>
+                    <select className="form-select" value={jobForm.type} onChange={e => setJobForm(p => ({ ...p, type: e.target.value }))}>
+                      {['Full-time', 'Part-time', 'Contract', 'Intern'].map(t => <option key={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Required Skills <span style={{ fontWeight: 400, color: '#94a3b8' }}>(comma separated)</span></label>
+                    <input className="form-control" placeholder="e.g. React, Node.js, MongoDB" value={jobForm.requiredSkills} onChange={e => setJobForm(p => ({ ...p, requiredSkills: e.target.value }))} />
+                  </div>
                 </div>
               </div>
               <div className="modal-footer">
@@ -256,24 +318,80 @@ export default function RecruitmentPage() {
         </div>
       )}
 
+      {/* Add Applicant Modal */}
+      {showAppModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header"><h5 className="modal-title">Add Applicant</h5><button className="btn-close" onClick={() => setShowAppModal(false)} /></div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Name *</label>
+                    <input className="form-control" placeholder="Full name" value={appForm.name}
+                      onChange={e => setAppForm(p => ({ ...p, name: e.target.value.replace(/[^A-Za-z\s]/g, '') }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Email *</label>
+                    <input type="email" className="form-control" placeholder="email@example.com" value={appForm.email}
+                      onChange={e => setAppForm(p => ({ ...p, email: e.target.value }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job *</label>
+                    <select className="form-select" value={appForm.jobId} onChange={e => setAppForm(p => ({ ...p, jobId: e.target.value }))}>
+                      <option value="">Select job</option>
+                      {jobs.map(j => <option key={j._id} value={j._id}>{j.title}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Qualification *</label>
+                    <input className="form-control" placeholder="e.g. B.Tech, MBA, BSc" value={appForm.qualification}
+                      onChange={e => setAppForm(p => ({ ...p, qualification: e.target.value }))} />
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Skills * <span style={{ fontWeight: 400, color: '#94a3b8' }}>(comma separated)</span></label>
+                    <input className="form-control" placeholder="e.g. React, Node.js, AWS" value={appForm.skills}
+                      onChange={e => setAppForm(p => ({ ...p, skills: e.target.value }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Fresher? *</label>
+                    <select className="form-select" value={appForm.isFresher} onChange={e => setAppForm(p => ({ ...p, isFresher: e.target.value, experienceYears: '' }))}>
+                      <option value="yes">Yes — Fresher</option>
+                      <option value="no">No — Experienced</option>
+                    </select>
+                  </div>
+                  {appForm.isFresher === 'no' && (
+                    <div className="col-md-6">
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Years of Experience *</label>
+                      <input type="number" min="1" max="50" className="form-control" placeholder="e.g. 3"
+                        value={appForm.experienceYears}
+                        onChange={e => setAppForm(p => ({ ...p, experienceYears: e.target.value.replace(/[^0-9]/g, '') }))} />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowAppModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveApplicant} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Add Applicant'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Hired Modal */}
       {hiredModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content">
-              <div className="modal-header border-0 pb-0">
-                <button className="btn-close" onClick={() => setHiredModal(null)} />
-              </div>
+              <div className="modal-header border-0 pb-0"><button className="btn-close" onClick={() => setHiredModal(null)} /></div>
               <div className="modal-body text-center pt-0 pb-4 px-4">
                 <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#10b98120', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
                   <i className="bi bi-person-check-fill" style={{ color: '#10b981', fontSize: 26 }} />
                 </div>
                 <h5 style={{ fontWeight: 700 }}>🎉 Applicant Hired!</h5>
-                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 6 }}>
-                  <strong>{hiredModal.name}</strong> has been marked as Hired.
-                </p>
-                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>
-                  Would you like to register them as an employee now?
-                </p>
+                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 6 }}><strong>{hiredModal.name}</strong> has been marked as Hired.</p>
+                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>Would you like to register them as an employee now?</p>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button className="btn btn-outline-secondary w-50" onClick={() => setHiredModal(null)}>Later</button>
                   <button className="btn btn-primary w-50" onClick={() => {
@@ -284,28 +402,6 @@ export default function RecruitmentPage() {
                     <i className="bi bi-person-plus me-2" />Register Employee
                   </button>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showAppModal && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-header"><h5 className="modal-title">Add Applicant</h5><button className="btn-close" onClick={() => setShowAppModal(false)} /></div>
-              <div className="modal-body">
-                <div className="row g-3">
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Name *</label><input className="form-control" value={appForm.name} onChange={e => setAppForm(p => ({ ...p, name: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Email *</label><input type="email" className="form-control" value={appForm.email} onChange={e => setAppForm(p => ({ ...p, email: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job *</label><select className="form-select" value={appForm.jobId} onChange={e => setAppForm(p => ({ ...p, jobId: e.target.value }))}><option value="">Select job</option>{jobs.map(j => <option key={j._id} value={j._id}>{j.title}</option>)}</select></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Score (0-100)</label><input type="number" className="form-control" value={appForm.score} onChange={e => setAppForm(p => ({ ...p, score: e.target.value }))} /></div>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowAppModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={saveApplicant} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Add Applicant'}</button>
               </div>
             </div>
           </div>

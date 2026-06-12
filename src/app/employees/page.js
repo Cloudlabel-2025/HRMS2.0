@@ -6,11 +6,13 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
-const SHIFTS = ['Morning (9AM-6PM)', 'Evening (2PM-11PM)', 'Night (10PM-7AM)', 'Flexible'];
-const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: 'Morning (9AM-6PM)', status: 'active', joinDate: '', skills: '', panNumber: '', aadhaarNumber: '' };
+const EMPTY_FORM = { name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: '', status: 'active', joinDate: '', skills: '', panNumber: '', aadhaarNumber: '', address: '', emergencyContactName: '', emergencyContactPhone: '', gender: '', bloodGroup: '' };
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 const AADHAAR_REGEX = /^[0-9]{12}$/;
+const NAME_REGEX = /^[A-Za-z\s]+$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ALPHA_SPACE_REGEX = /^[A-Za-z\s]+$/;
 
 function validateIdentifiers(panNumber, aadhaarNumber) {
   if (panNumber && !PAN_REGEX.test(panNumber.toUpperCase())) return 'PAN must be in format ABCDE1234F';
@@ -33,14 +35,16 @@ export default function EmployeesPage() {
   const [editEmp, setEditEmp]       = useState(null);
   const [form, setForm]             = useState(EMPTY_FORM);
   const [toast, setToast]           = useState({ msg: '', type: 'success' });
-
   const [tempPasswordModal, setTempPasswordModal] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
+  const [shifts, setShifts] = useState([]);
   const [newDeptName, setNewDeptName] = useState('');
   const [showNewDept, setShowNewDept] = useState(false);
-
-  const [fromRecruitment, setFromRecruitment] = useState(false);
+  const [newDesigName, setNewDesigName] = useState('');
+  const [showNewDesig, setShowNewDesig] = useState(false);
+  const [newShiftName, setNewShiftName] = useState('');
+  const [showNewShift, setShowNewShift] = useState(false);
 
   useEffect(() => {
     const prefill = sessionStorage.getItem('hrms_hire_prefill');
@@ -56,27 +60,12 @@ export default function EmployeesPage() {
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg: '', type: 'success' }), 3000); };
 
-  const loadDepartments = () => {
-    api.get('/api/settings?type=departments')
-      .then(data => setDepartments(data.map(d => d.name)))
-      .catch(() => {});
-  };
+  const loadDepartments = () => api.get('/api/settings?type=departments').then(data => setDepartments(data.map(d => d.name))).catch(() => {});
+  const loadDesignations = () => api.get('/api/settings?type=designations').then(data => setDesignations(data)).catch(() => {});
+  const loadShifts = () => api.get('/api/settings?type=shifts').then(data => setShifts(Array.isArray(data) ? data : [])).catch(() => {});
+  const load = () => { setLoading(true); api.get('/api/employees').then(setEmployees).catch(e => showToast(e.message, 'error')).finally(() => setLoading(false)); };
 
-  const loadDesignations = () => {
-    api.get('/api/settings?type=designations')
-      .then(data => setDesignations(data))
-      .catch(() => {});
-  };
-
-  const load = () => {
-    setLoading(true);
-    api.get('/api/employees')
-      .then(setEmployees)
-      .catch(e => showToast(e.message, 'error'))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => { load(); loadDepartments(); loadDesignations(); }, []);
+  useEffect(() => { load(); loadDepartments(); loadDesignations(); loadShifts(); }, []);
 
   const filtered = employees.filter(e => {
     const q = search.toLowerCase();
@@ -92,17 +81,38 @@ export default function EmployeesPage() {
   const openEdit = (emp) => { setEditEmp(emp); setForm({ ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '' }); setShowModal(true); };
 
   const handleSave = async () => {
-    if (!form.name || !form.email) return showToast('Name and email are required', 'error');
+    const name = form.name?.trim() || '';
+    const email = form.email?.trim() || '';
+    const phone = form.phone?.trim() || '';
+
+    if (!name) return showToast('Full name is required', 'error');
+    if (!NAME_REGEX.test(name)) return showToast('Name must contain only letters and spaces', 'error');
+    if (!email) return showToast('Email is required', 'error');
+    if (!EMAIL_REGEX.test(email)) return showToast('Please enter a valid email address', 'error');
+    if (!phone) return showToast('Phone number is required', 'error');
+    if (!/^[0-9]{10}$/.test(phone)) return showToast('Phone must be exactly 10 digits', 'error');
     if (!form.department) return showToast('Department is required', 'error');
+    if (form.department && !ALPHA_SPACE_REGEX.test(form.department)) return showToast('Department must contain only letters and spaces', 'error');
+    if (!form.designation) return showToast('Designation is required', 'error');
+    if (form.designation && !ALPHA_SPACE_REGEX.test(form.designation)) return showToast('Designation must contain only letters and spaces', 'error');
+    if (!form.address?.trim()) return showToast('Address is required', 'error');
+    if (!form.emergencyContactName?.trim()) return showToast('Emergency contact name is required', 'error');
+    if (!NAME_REGEX.test(form.emergencyContactName.trim())) return showToast('Emergency contact name must contain only letters and spaces', 'error');
+    if (!form.emergencyContactPhone?.trim()) return showToast('Emergency contact phone is required', 'error');
+    if (!/^[0-9]{10}$/.test(form.emergencyContactPhone.trim())) return showToast('Emergency contact phone must be exactly 10 digits', 'error');
+    if (!form.gender) return showToast('Gender is required', 'error');
+    if (!form.bloodGroup) return showToast('Blood group is required', 'error');
+    if (!form.shift) return showToast('Shift is required', 'error');
+    if (!form.joinDate) return showToast('Join date is required', 'error');
+    if (!form.role) return showToast('Role is required', 'error');
     const idError = validateIdentifiers(form.panNumber, form.aadhaarNumber);
     if (idError) return showToast(idError, 'error');
+
     setSaving(true);
     try {
       const payload = { ...form, skills: form.skills.split(',').map(s => s.trim()).filter(Boolean) };
-      // Normalise before sending
       if (payload.panNumber) payload.panNumber = payload.panNumber.toUpperCase().trim();
       if (payload.aadhaarNumber) payload.aadhaarNumber = payload.aadhaarNumber.replace(/\s/g, '');
-      // Remove empty identifier fields so backend validation doesn't trip on ''
       if (!payload.panNumber) delete payload.panNumber;
       if (!payload.aadhaarNumber) delete payload.aadhaarNumber;
       if (editEmp) {
@@ -113,12 +123,9 @@ export default function EmployeesPage() {
         const res = await api.post('/api/employees', payload);
         showToast('Employee added');
         setShowModal(false);
-        if (res.tempPassword) {
-          setTempPasswordModal({ email: res.employee.email, password: res.tempPassword });
-        }
+        if (res.tempPassword) setTempPasswordModal({ email: res.employee.email, password: res.tempPassword });
       }
-      load();
-      loadDepartments();
+      load(); loadDepartments(); loadShifts();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -129,16 +136,13 @@ export default function EmployeesPage() {
   const toggleStatus = async (emp) => {
     try {
       await api.put(`/api/employees/${emp._id}`, { status: emp.status === 'active' ? 'inactive' : 'active' });
-      showToast('Status updated');
-      load();
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+      showToast('Status updated'); load();
+    } catch (e) { showToast(e.message, 'error'); }
   };
 
   const canManage = user?.role === 'super_admin' || user?.role === 'admin_full';
-  const canAdd = user?.role === 'super_admin' || user?.role === 'recruiter';
-  const allDepts = [...new Set([...departments, ...employees.map(e => e.department).filter(Boolean)])];
+  const canAdd    = user?.role === 'super_admin' || user?.role === 'recruiter';
+  const allDepts  = [...new Set([...departments, ...employees.map(e => e.department).filter(Boolean)])];
   const deptGroups = allDepts.map(d => ({ dept: d, members: employees.filter(e => e.department === d && e.status === 'active') })).filter(g => g.members.length > 0);
 
   return (
@@ -301,23 +305,60 @@ export default function EmployeesPage() {
               </div>
               <div className="modal-body">
                 <div className="row g-3">
-                  {[['Full Name', 'name', 'text'], ['Email', 'email', 'email'], ['Phone', 'phone', 'text'], ['Join Date', 'joinDate', 'date']].map(([label, key, type]) => (
-                    <div key={key} className="col-md-6">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label>
-                      <input type={type} className="form-control" value={form[key] || ''} onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))} />
-                    </div>
-                  ))}
+                  {/* Name */}
                   <div className="col-md-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department</label>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Full Name *</label>
+                    <input
+                      type="text" className="form-control"
+                      placeholder="e.g. John Smith"
+                      value={form.name || ''}
+                      onChange={e => setForm(p => ({ ...p, name: e.target.value.replace(/[^A-Za-z\s]/g, '') }))}
+                    />
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Letters and spaces only</div>
+                  </div>
+                  {/* Email */}
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Email *</label>
+                    <input
+                      type="email" className="form-control"
+                      placeholder="e.g. john@company.com"
+                      autoComplete="off"
+                      value={form.email || ''}
+                      onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
+                    />
+                  </div>
+                  {/* Phone */}
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Phone *</label>
+                    <input
+                      type="tel" className="form-control"
+                      placeholder="10-digit number"
+                      maxLength={10}
+                      autoComplete="off"
+                      value={form.phone || ''}
+                      onChange={e => setForm(p => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                    />
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Numbers only, exactly 10 digits</div>
+                  </div>
+                  {/* Join Date */}
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Join Date *</label>
+                    <input type="date" className="form-control" value={form.joinDate || ''} onChange={e => setForm(p => ({ ...p, joinDate: e.target.value }))} />
+                  </div>
+
+                  {/* Department */}
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department *</label>
                     {showNewDept ? (
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <input className="form-control" placeholder="Enter new department name" value={newDeptName} onChange={e => setNewDeptName(e.target.value)} />
+                        <input className="form-control" placeholder="Letters and spaces only"
+                          value={newDeptName}
+                          onChange={e => setNewDeptName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} />
                         <button type="button" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={() => {
                           if (!newDeptName.trim()) return;
                           setDepartments(prev => [...prev, newDeptName.trim()]);
                           setForm(p => ({ ...p, department: newDeptName.trim() }));
-                          setNewDeptName('');
-                          setShowNewDept(false);
+                          setNewDeptName(''); setShowNewDept(false);
                         }}><i className="bi bi-check-lg" /></button>
                         <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDept(false)}><i className="bi bi-x-lg" /></button>
                       </div>
@@ -327,26 +368,72 @@ export default function EmployeesPage() {
                           <option value="">Select Department</option>
                           {departments.map(d => <option key={d}>{d}</option>)}
                         </select>
-                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ whiteSpace: 'nowrap' }} title="Add New Department" onClick={() => setShowNewDept(true)}><i className="bi bi-plus-lg" /></button>
+                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowNewDept(true)}><i className="bi bi-plus-lg" /></button>
                       </div>
                     )}
                   </div>
+
+                  {/* Designation */}
                   <div className="col-md-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Designation</label>
-                    <select className="form-select" value={form.designation || ''} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))} disabled={!form.department}>
-                      <option value="">{form.department ? 'Select Designation' : 'Select Department first'}</option>
-                      {designations.filter(d => d.department === form.department).map(d => <option key={d._id} value={d.name}>{d.name}</option>)}
-                    </select>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Designation *</label>
+                    {showNewDesig ? (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input className="form-control" placeholder="Letters and spaces only"
+                          value={newDesigName}
+                          onChange={e => setNewDesigName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} />
+                        <button type="button" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={async () => {
+                          if (!newDesigName.trim()) return;
+                          try {
+                            await api.post('/api/settings', { type: 'designations', name: newDesigName.trim(), department: form.department || '' });
+                            await loadDesignations();
+                            setForm(p => ({ ...p, designation: newDesigName.trim() }));
+                          } catch {}
+                          setNewDesigName(''); setShowNewDesig(false);
+                        }}><i className="bi bi-check-lg" /></button>
+                        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDesig(false)}><i className="bi bi-x-lg" /></button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select className="form-select" value={form.designation || ''} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))}>
+                          <option value="">Select Designation</option>
+                          {designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}
+                        </select>
+                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowNewDesig(true)}><i className="bi bi-plus-lg" /></button>
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>All designations shown — same name can exist across departments</div>
                   </div>
+
+                  {/* Shift */}
                   <div className="col-md-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Shift</label>
-                    <select className="form-select" value={form.shift || ''} onChange={e => setForm(p => ({ ...p, shift: e.target.value }))}>
-                      <option value="">Select Shift</option>
-                      {SHIFTS.map(o => <option key={o}>{o}</option>)}
-                    </select>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Shift *</label>
+                    {showNewShift ? (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input className="form-control" placeholder="e.g. Morning (9AM-6PM)" value={newShiftName} onChange={e => setNewShiftName(e.target.value)} />
+                        <button type="button" className="btn btn-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={async () => {
+                          if (!newShiftName.trim()) return;
+                          try {
+                            await api.post('/api/settings', { type: 'shifts', name: newShiftName.trim(), startTime: '09:00', endTime: '18:00' });
+                            await loadShifts();
+                            setForm(p => ({ ...p, shift: newShiftName.trim() }));
+                          } catch {}
+                          setNewShiftName(''); setShowNewShift(false);
+                        }}><i className="bi bi-check-lg" /></button>
+                        <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewShift(false)}><i className="bi bi-x-lg" /></button>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <select className="form-select" value={form.shift || ''} onChange={e => setForm(p => ({ ...p, shift: e.target.value }))}>
+                          <option value="">Select Shift</option>
+                          {shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}–${s.endTime})` : ''}</option>)}
+                        </select>
+                        <button type="button" className="btn btn-outline-primary btn-sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowNewShift(true)}><i className="bi bi-plus-lg" /></button>
+                      </div>
+                    )}
                   </div>
+
                   <div className="col-md-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Role</label>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Role *</label>
                     <select className="form-select" value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
                       {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                     </select>
@@ -361,47 +448,90 @@ export default function EmployeesPage() {
                   {!editEmp && (
                     <div className="col-md-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Password <span style={{ fontWeight: 400, color: '#94a3b8' }}>(auto-generated if blank)</span></label>
-                      <input type="password" className="form-control" placeholder="Leave blank to auto-generate" value={form.password || ''} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} />
+                      <input type="password" className="form-control" autoComplete="new-password" placeholder="Leave blank to auto-generate" value={form.password || ''} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} />
                     </div>
                   )}
                   <div className="col-12">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Skills (comma separated)</label>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Skills <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional, comma separated)</span></label>
                     <input className="form-control" placeholder="e.g. React, Node.js, AWS" value={form.skills || ''} onChange={e => setForm(p => ({ ...p, skills: e.target.value }))} />
                   </div>
-                  {/* PAN & Aadhaar — shown only to super_admin / admin_full on Add */}
+
+                  {/* Personal Info */}
+                  <div className="col-12" style={{ marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, paddingTop: 8, borderTop: '1px solid #f1f5f9' }}>Personal Information</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Gender *</label>
+                    <select className="form-select" value={form.gender || ''} onChange={e => setForm(p => ({ ...p, gender: e.target.value }))}>
+                      <option value="">Select Gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="non_binary">Non-Binary</option>
+                      <option value="prefer_not_to_say">Prefer not to say</option>
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Blood Group *</label>
+                    <select className="form-select" value={form.bloodGroup || ''} onChange={e => setForm(p => ({ ...p, bloodGroup: e.target.value }))}>
+                      <option value="">Select Blood Group</option>
+                      {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                    </select>
+                  </div>
+
+                  {/* Address & Emergency Contact */}
+                  <div className="col-12" style={{ marginTop: 4 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, paddingTop: 8, borderTop: '1px solid #f1f5f9' }}>Address & Emergency Contact</div>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Address *</label>
+                    <textarea className="form-control" rows={2} placeholder="e.g. 12, MG Road, Bangalore, Karnataka - 560001" value={form.address || ''} onChange={e => setForm(p => ({ ...p, address: e.target.value }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Emergency Contact Name *</label>
+                    <input
+                      type="text" className="form-control"
+                      placeholder="e.g. Jane Smith"
+                      value={form.emergencyContactName || ''}
+                      onChange={e => setForm(p => ({ ...p, emergencyContactName: e.target.value.replace(/[^A-Za-z\s]/g, '') }))}
+                    />
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Letters and spaces only</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Emergency Contact Phone *</label>
+                    <input
+                      type="tel" className="form-control"
+                      placeholder="10-digit number"
+                      maxLength={10}
+                      value={form.emergencyContactPhone || ''}
+                      onChange={e => setForm(p => ({ ...p, emergencyContactPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+                    />
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Numbers only, exactly 10 digits</div>
+                  </div>
+
+                  {/* PAN & Aadhaar */}
                   {!editEmp && canManage && (
                     <>
                       <div className="col-12" style={{ marginTop: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10 }}>
                           <i className="bi bi-shield-lock" style={{ color: '#d97706', fontSize: 14 }} />
                           <div style={{ fontSize: 12, color: '#92400e' }}>
-                            <strong>Sensitive Identifiers</strong> — stored encrypted. Only masked values are shown after saving. Visible to Super Admin and Admin only.
+                            <strong>Sensitive Identifiers</strong> — stored encrypted. Only masked values shown after saving.
                           </div>
                         </div>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>PAN Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
-                        <input
-                          className="form-control"
-                          style={{ fontFamily: 'monospace', letterSpacing: 1, textTransform: 'uppercase' }}
-                          placeholder="ABCDE1234F"
-                          maxLength={10}
-                          value={form.panNumber || ''}
-                          onChange={e => setForm(p => ({ ...p, panNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))}
-                        />
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>Format: 5 letters + 4 digits + 1 letter (e.g. ABCDE1234F)</div>
+                        <input className="form-control" style={{ fontFamily: 'monospace', letterSpacing: 1, textTransform: 'uppercase' }}
+                          placeholder="ABCDE1234F" maxLength={10} value={form.panNumber || ''}
+                          onChange={e => setForm(p => ({ ...p, panNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))} />
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>5 letters + 4 digits + 1 letter</div>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Aadhaar Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
-                        <input
-                          className="form-control"
-                          style={{ fontFamily: 'monospace', letterSpacing: 1 }}
-                          placeholder="123456789012"
-                          maxLength={12}
-                          value={form.aadhaarNumber || ''}
-                          onChange={e => setForm(p => ({ ...p, aadhaarNumber: e.target.value.replace(/\D/g, '') }))}
-                        />
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>12-digit Aadhaar number (digits only)</div>
+                        <input className="form-control" style={{ fontFamily: 'monospace', letterSpacing: 1 }}
+                          placeholder="123456789012" maxLength={12} value={form.aadhaarNumber || ''}
+                          onChange={e => setForm(p => ({ ...p, aadhaarNumber: e.target.value.replace(/\D/g, '') }))} />
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>12-digit Aadhaar number</div>
                       </div>
                     </>
                   )}
@@ -431,21 +561,18 @@ export default function EmployeesPage() {
                   <i className="bi bi-key-fill" style={{ color: '#10b981', fontSize: 28 }} />
                 </div>
                 <h5 style={{ fontWeight: 700 }}>Employee Created</h5>
-                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>Share this temporary password with the new employee. They will be forced to change it on their first login.</p>
-                
+                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>Share this temporary password with the new employee. They will be forced to change it on first login.</p>
                 <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 8, padding: 16, marginBottom: 24 }}>
                   <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Email</div>
                   <div style={{ fontWeight: 600, marginBottom: 12 }}>{tempPasswordModal.email}</div>
-                  
                   <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Temporary Password</div>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
                     <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 2, fontFamily: 'monospace' }}>{tempPasswordModal.password}</div>
-                    <button className="btn btn-sm btn-light border" style={{ padding: '4px 8px' }} onClick={() => { navigator.clipboard.writeText(tempPasswordModal.password); showToast('Password copied to clipboard!'); }}>
+                    <button className="btn btn-sm btn-light border" style={{ padding: '4px 8px' }} onClick={() => { navigator.clipboard.writeText(tempPasswordModal.password); showToast('Password copied!'); }}>
                       <i className="bi bi-copy" />
                     </button>
                   </div>
                 </div>
-
                 <button className="btn btn-primary w-100" onClick={() => setTempPasswordModal(null)}>Done</button>
               </div>
             </div>
@@ -455,4 +582,3 @@ export default function EmployeesPage() {
     </AppShell>
   );
 }
-

@@ -56,6 +56,12 @@ export default function EmployeeProfilePage() {
   const [idForm, setIdForm] = useState({ panNumber: '', aadhaarNumber: '' });
   const [idSaving, setIdSaving] = useState(false);
   const [showIdForm, setShowIdForm] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editForm, setEditForm] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
+  const [departments, setDepartments] = useState([]);
+  const [designations, setDesignations] = useState([]);
+  const [shifts, setShifts] = useState([]);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -68,8 +74,48 @@ export default function EmployeeProfilePage() {
         .then(res => { setData(res); })
         .catch(e => { showToast(e.message, 'error'); setTimeout(() => router.push('/employees'), 2000); })
         .finally(() => setLoading(false));
+      api.get('/api/settings?type=departments').then(d => setDepartments(Array.isArray(d) ? d.map(x => x.name) : [])).catch(() => {});
+      api.get('/api/settings?type=designations').then(d => setDesignations(Array.isArray(d) ? d : [])).catch(() => {});
+      api.get('/api/settings?type=shifts').then(d => setShifts(Array.isArray(d) ? d : [])).catch(() => {});
     }
   }, [id, router]);
+
+  const openEdit = () => {
+    const emp = data?.employee;
+    if (!emp) return;
+    setEditForm({
+      name: emp.name || '',
+      email: emp.email || '',
+      phone: emp.phone || '',
+      department: emp.department || '',
+      designation: emp.designation || '',
+      role: emp.role || 'employee',
+      shift: emp.shift || '',
+      status: emp.status || 'active',
+      joinDate: emp.joinDate ? emp.joinDate.slice(0, 10) : '',
+      skills: (emp.skills || []).join(', '),
+    });
+    setShowEditModal(true);
+  };
+
+  const saveEdit = async () => {
+    const NAME_RE = /^[A-Za-z\s]+$/;
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!editForm.name?.trim()) return showToast('Name is required', 'error');
+    if (!NAME_RE.test(editForm.name.trim())) return showToast('Name must contain only letters and spaces', 'error');
+    if (!editForm.email?.trim() || !EMAIL_RE.test(editForm.email.trim())) return showToast('Valid email is required', 'error');
+    if (editForm.phone && !/^[0-9]{10}$/.test(editForm.phone.trim())) return showToast('Phone must be exactly 10 digits', 'error');
+    setEditSaving(true);
+    try {
+      const payload = { ...editForm, skills: editForm.skills.split(',').map(s => s.trim()).filter(Boolean) };
+      await api.put(`/api/employees/${id}`, payload);
+      showToast('Employee updated successfully');
+      setShowEditModal(false);
+      const res = await api.get(`/api/employees/${id}/details`);
+      setData(res);
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setEditSaving(false); }
+  };
 
   if (loading) return (
     <AppShell title="Loading...">
@@ -167,7 +213,7 @@ export default function EmployeeProfilePage() {
                 {ROLE_LABELS[emp.role] || emp.role}
               </span>
               {canEdit && (
-                <button className="btn btn-outline-primary" style={{ fontSize: 13, padding: '6px 16px' }} onClick={() => router.push(`/employees?edit=${emp._id}`)}>
+                <button className="btn btn-outline-primary" style={{ fontSize: 13, padding: '6px 16px' }} onClick={openEdit}>
                   <i className="bi bi-pencil me-1" />Edit
                 </button>
               )}
@@ -574,6 +620,90 @@ export default function EmployeeProfilePage() {
           ) : (
             <div className="empty-state"><i className="bi bi-cash-stack" /><p>No payslips available</p></div>
           )}
+        </div>
+      )}
+
+      {/* Inline Edit Modal */}
+      {showEditModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Edit Employee — {data?.employee?.name}</h5>
+                <button className="btn-close" onClick={() => setShowEditModal(false)} />
+              </div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Full Name *</label>
+                    <input type="text" className="form-control" value={editForm.name || ''}
+                      onChange={e => setEditForm(p => ({ ...p, name: e.target.value.replace(/[^A-Za-z\s]/g, '') }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Email *</label>
+                    <input type="email" className="form-control" autoComplete="off" value={editForm.email || ''}
+                      onChange={e => setEditForm(p => ({ ...p, email: e.target.value }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Phone</label>
+                    <input type="tel" className="form-control" maxLength={10} value={editForm.phone || ''}
+                      onChange={e => setEditForm(p => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
+                    <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Numbers only, 10 digits</div>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Join Date</label>
+                    <input type="date" className="form-control" value={editForm.joinDate || ''}
+                      onChange={e => setEditForm(p => ({ ...p, joinDate: e.target.value }))} />
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Department</label>
+                    <select className="form-select" value={editForm.department || ''} onChange={e => setEditForm(p => ({ ...p, department: e.target.value }))}>
+                      <option value="">Select Department</option>
+                      {departments.map(d => <option key={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Designation</label>
+                    <select className="form-select" value={editForm.designation || ''} onChange={e => setEditForm(p => ({ ...p, designation: e.target.value }))}>
+                      <option value="">Select Designation</option>
+                      {designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Shift</label>
+                    <select className="form-select" value={editForm.shift || ''} onChange={e => setEditForm(p => ({ ...p, shift: e.target.value }))}>
+                      <option value="">Select Shift</option>
+                      {shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}–${s.endTime})` : ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Role</label>
+                    <select className="form-select" value={editForm.role || ''} onChange={e => setEditForm(p => ({ ...p, role: e.target.value }))}>
+                      {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status</label>
+                    <select className="form-select" value={editForm.status || ''} onChange={e => setEditForm(p => ({ ...p, status: e.target.value }))}>
+                      <option value="active">Active</option>
+                      <option value="inactive">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Skills <span style={{ fontWeight: 400, color: '#94a3b8' }}>(comma separated)</span></label>
+                    <input className="form-control" placeholder="e.g. React, Node.js, AWS" value={editForm.skills || ''}
+                      onChange={e => setEditForm(p => ({ ...p, skills: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowEditModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveEdit} disabled={editSaving}>
+                  {editSaving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </AppShell>

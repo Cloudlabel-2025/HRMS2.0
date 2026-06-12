@@ -132,12 +132,28 @@ export async function POST(req) {
     const metadata = { action, effectiveDate, requestId, ip, userAgent };
 
     if (action === 'confirm_probation') {
-      if (!['onboarding', 'probation'].includes(profile.employmentStatus)) return fail('Only onboarding or probation profiles can be confirmed', 400);
+      if (!['onboarding', 'probation'].includes(profile.employmentStatus))
+        return fail('Only onboarding or probation profiles can be confirmed', 400);
+
       if (profile.employmentStatus === 'onboarding') {
+        // onboarding → probation: set probation start and end dates
+        if (!data.probationEndDate)
+          return fail('Probation end date is required when starting probation', 400);
+        const endDate = new Date(data.probationEndDate);
+        if (endDate <= new Date(effectiveDate))
+          return fail('Probation end date must be after the effective date', 400);
         profile.employmentStatus = 'probation';
         profile.probationStartDate = effectiveDate;
+        profile.probationEndDate = endDate;
         actionLabel = 'Move to probation';
       } else {
+        // probation → active: only allowed on or after probationEndDate
+        const endDate = profile.probationEndDate ? new Date(profile.probationEndDate) : null;
+        if (endDate && new Date() < endDate)
+          return fail(
+            `Probation period has not ended yet. End date: ${endDate.toISOString().slice(0, 10)}`,
+            400
+          );
         profile.employmentStatus = 'active';
         profile.confirmationDate = effectiveDate;
         profile.probationEndDate = profile.probationEndDate || effectiveDate;

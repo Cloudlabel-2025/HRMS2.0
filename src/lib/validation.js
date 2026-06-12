@@ -67,8 +67,13 @@ export const CreateEmployeeSchema = z.object({
   // Sensitive identifiers — stored encrypted in UsrIdentity, not in Employee
   panNumber: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/i, 'Invalid PAN format').optional(),
   aadhaarNumber: z.string().regex(/^[0-9]{12}$/, 'Aadhaar must be 12 digits').optional(),
-  // Explicitly reject fields that shouldn't be set on create
-}).strict().omit({ _id: true, createdAt: true, updatedAt: true, userId: true });
+  // Personal / contact fields — stored in UsrIdentity on creation
+  address: z.string().max(500).optional().or(z.literal('')),
+  emergencyContactName: z.string().max(120).optional().or(z.literal('')),
+  emergencyContactPhone: z.string().regex(/^[0-9]{10}$/, 'Emergency phone must be 10 digits').optional().or(z.literal('')),
+  gender: z.enum(['male', 'female', 'non_binary', 'prefer_not_to_say']).optional(),
+  bloodGroup: z.string().max(10).optional().or(z.literal('')),
+});
 
 export const UpdateEmployeeSchema = CreateEmployeeSchema.partial();
 
@@ -182,6 +187,7 @@ const LifecycleProfileStateSchema = z.enum(['onboarding', 'probation', 'active',
 export const LifecycleConfirmProbationSchema = z.object({
   profileId: ObjectIdSchema,
   effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
+  probationEndDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
   confirmationNote: z.string().max(500).optional().or(z.literal('')),
 }).passthrough();
 

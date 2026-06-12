@@ -158,11 +158,35 @@ export async function POST(req) {
         preferredName:   validated.name,
         primaryEmail:    validated.email,
         personalPhone:   validated.phone || '',
-        gender:          'prefer_not_to_say',
+        gender:          validated.gender || 'prefer_not_to_say',
+        bloodGroup:      validated.bloodGroup || '',
         maritalStatus:   'prefer_not_to_say',
         nationality:     'Indian',
         sourceSystem:    'manual',
       };
+
+      // Address
+      if (validated.address) {
+        identityPayload.addressHistory = [{
+          addressType: 'current',
+          line1: validated.address,
+          city: 'N/A',
+          state: 'N/A',
+          country: 'India',
+          postalCode: '000000',
+          isCurrent: true,
+        }];
+      }
+
+      // Emergency contact
+      if (validated.emergencyContactName || validated.emergencyContactPhone) {
+        identityPayload.emergencyContacts = [{
+          name:      validated.emergencyContactName || 'Emergency Contact',
+          relation:  'Emergency',
+          phone:     validated.emergencyContactPhone || '0000000000',
+          isPrimary: true,
+        }];
+      }
       // Store PAN / Aadhaar encrypted if provided
       if (validated.panNumber || validated.aadhaarNumber) {
         identityPayload.identifiers = {

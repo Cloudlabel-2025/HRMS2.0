@@ -439,7 +439,10 @@ export default function SettingsPage() {
                             <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('shifts', s._id)}>Delete</button>
                           </div>
                         </div>
-                        <div style={{ fontSize: 13, color: '#64748b' }}><i className="bi bi-clock me-2" />{s.startTime} – {s.endTime}</div>
+                        <div style={{ fontSize: 13, color: '#64748b' }}>
+                          <i className="bi bi-clock me-2" />
+                          {s.startTime && s.endTime ? `${s.startTime} – ${s.endTime}` : 'No timing set'}
+                        </div>
                       </div>
                     </div>
                   ))}

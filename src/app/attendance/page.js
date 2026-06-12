@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
@@ -14,6 +14,27 @@ const STATUS_STYLE = {
 };
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// Break = 30 min allowance, Lunch = 60 min allowance
+const BREAK_ALLOWANCE_MINS = 30;
+const LUNCH_ALLOWANCE_MINS = 60;
+
+function toMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+}
+
+function nowTimeStr() {
+  const n = new Date();
+  return String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
+}
+
+function diffMins(start, end) {
+  if (!start || !end) return 0;
+  const s = toMinutes(start), e = toMinutes(end);
+  return e > s ? e - s : 0;
+}
 
 export default function AttendancePage() {
   const { user } = useAuth();
@@ -33,10 +54,11 @@ export default function AttendancePage() {
   const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', reason: '' });
   const [regSaving, setRegSaving]       = useState(false);
 
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
+  // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
+  const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
+  const [breakLoading, setBreakLoading] = useState(false);
+
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
   const today   = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
@@ -46,93 +68,125 @@ export default function AttendancePage() {
     try {
       const records = await api.get('/api/attendance?date=' + today + '&scope=my');
       setTodayRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
-    } catch {
-      setTodayRecord(null);
-    }
+    } catch { setTodayRecord(null); }
   };
 
   const loadMonthly = async () => {
-    try {
-      const records = await api.get('/api/attendance?scope=my&month=' + month);
-      setMonthly(Array.isArray(records) ? records : []);
-    } catch {
-      setMonthly([]);
-    }
+    try { const r = await api.get('/api/attendance?scope=my&month=' + month); setMonthly(Array.isArray(r) ? r : []); }
+    catch { setMonthly([]); }
   };
 
   const loadTeamMonthly = async (uid) => {
     try {
-      const url = uid
-        ? '/api/attendance?scope=team&userId=' + uid + '&month=' + month
-        : '/api/attendance?scope=team&month=' + month;
-      const records = await api.get(url);
-      setTeamMonthly(Array.isArray(records) ? records : []);
-    } catch {
-      setTeamMonthly([]);
-    }
+      const url = uid ? '/api/attendance?scope=team&userId=' + uid + '&month=' + month : '/api/attendance?scope=team&month=' + month;
+      const r = await api.get(url); setTeamMonthly(Array.isArray(r) ? r : []);
+    } catch { setTeamMonthly([]); }
   };
 
   const loadTeamToday = async () => {
-    try {
-      const records = await api.get('/api/attendance?scope=team&date=' + today);
-      setTeamToday(Array.isArray(records) ? records : []);
-    } catch {
-      setTeamToday([]);
-    }
+    try { const r = await api.get('/api/attendance?scope=team&date=' + today); setTeamToday(Array.isArray(r) ? r : []); }
+    catch { setTeamToday([]); }
   };
 
   const loadEmployees = async () => {
-    try {
-      const emps = await api.get('/api/employees');
-      setEmployees(Array.isArray(emps) ? emps : []);
-    } catch {
-      setEmployees([]);
-    }
+    try { const r = await api.get('/api/employees'); setEmployees(Array.isArray(r) ? r : []); }
+    catch { setEmployees([]); }
   };
 
   const loadRegRequests = async (scope) => {
-    try {
-      const data = await api.get('/api/attendance/regularize?scope=' + scope);
-      setRegRequests(Array.isArray(data) ? data : []);
-    } catch {
-      setRegRequests([]);
-    }
+    try { const r = await api.get('/api/attendance/regularize?scope=' + scope); setRegRequests(Array.isArray(r) ? r : []); }
+    catch { setRegRequests([]); }
   };
 
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      loadTodayRecord(),
-      loadMonthly(),
+      loadTodayRecord(), loadMonthly(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
       loadRegRequests(isAdmin ? 'approvals' : 'my'),
     ]).finally(() => setLoading(false));
   }, [user]);
 
-  useEffect(() => {
-    if (isAdmin && selectedUserId) loadTeamMonthly(selectedUserId);
-  }, [selectedUserId]);
+  useEffect(() => { if (isAdmin && selectedUserId) loadTeamMonthly(selectedUserId); }, [selectedUserId]);
 
   const handleClock = async (action) => {
     setClockLoading(true);
     try {
       const result = await api.post('/api/attendance/clock', { action });
-      // use record from response directly — instant update, no re-fetch delay
       setTodayRecord(result.record);
       showToast('Clocked ' + (action === 'in' ? 'in' : 'out') + ' at ' + result.time);
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setClockLoading(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setClockLoading(false); }
   };
 
+  // ── Break / Lunch helpers ──────────────────────────────────────────────────
+  // We store breaks in todayRecord locally; in a real app you'd persist via API.
+  // Structure: todayRecord.breaks = [{ type:'break'|'lunch', start, end }]
+
+  const getBreaks = (type) => (todayRecord?.breaks || []).filter(b => b.type === type);
+
+  const activeBreak = (type) => getBreaks(type).find(b => b.start && !b.end);
+
+  const totalBreakMins = (type) =>
+    getBreaks(type).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
+
+  const overMins = (type) => {
+    const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+    return Math.max(0, totalBreakMins(type) - allowance);
+  };
+
+  const handleBreakClock = async (type) => {
+    setBreakLoading(true);
+    try {
+      const now = nowTimeStr();
+      const active = activeBreak(type);
+      let updatedBreaks = [...(todayRecord?.breaks || [])];
+
+      if (!active) {
+        // Start break/lunch
+        updatedBreaks.push({ type, start: now, end: null });
+        showToast(`${type === 'break' ? 'Break' : 'Lunch'} started at ${now}`);
+      } else {
+        // End break/lunch
+        const idx = updatedBreaks.findIndex(b => b.type === type && b.start && !b.end);
+        if (idx !== -1) updatedBreaks[idx] = { ...updatedBreaks[idx], end: now };
+        const elapsed = diffMins(active.start, now);
+        const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+        const over = Math.max(0, elapsed - allowance);
+        if (over > 0) {
+          showToast(`${type === 'break' ? 'Break' : 'Lunch'} ended — exceeded by ${over} min(s). Working hours reduced.`, 'error');
+        } else {
+          showToast(`${type === 'break' ? 'Break' : 'Lunch'} ended at ${now}`);
+        }
+      }
+
+      // Recalculate deduction: total over-time for all break types
+      const allBreaks = updatedBreaks;
+      const breakOver = allBreaks.filter(b => b.type === 'break' && b.end)
+        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - BREAK_ALLOWANCE_MINS), 0);
+      const lunchOver = allBreaks.filter(b => b.type === 'lunch' && b.end)
+        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - LUNCH_ALLOWANCE_MINS), 0);
+      const totalDeduction = breakOver + lunchOver;
+
+      // Recalculate effective hours (base hoursWorked minus deductions)
+      const baseHours = todayRecord?.baseHoursWorked ?? todayRecord?.hoursWorked ?? 0;
+      const effectiveHours = Math.max(0, baseHours - totalDeduction);
+
+      setTodayRecord(prev => ({
+        ...prev,
+        breaks: updatedBreaks,
+        baseHoursWorked: prev.baseHoursWorked ?? prev.hoursWorked ?? 0,
+        hoursWorked: effectiveHours,
+        breakDeduction: totalDeduction,
+      }));
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setBreakLoading(false); }
+  };
+
+  // ── Regularization ──────────────────────────────────────────────────────────
   const submitRegularization = async () => {
-    if (!regForm.date || !regForm.reason) {
-      showToast('Date and reason are required', 'error');
-      return;
-    }
+    if (!regForm.date || !regForm.reason) { showToast('Date and reason are required', 'error'); return; }
     setRegSaving(true);
     try {
       await api.post('/api/attendance/regularize', regForm);
@@ -140,11 +194,8 @@ export default function AttendancePage() {
       setShowRegModal(false);
       setRegForm({ date: '', requestedIn: '', requestedOut: '', reason: '' });
       loadRegRequests('my');
-    } catch (e) {
-      showToast(e.message, 'error');
-    } finally {
-      setRegSaving(false);
-    }
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setRegSaving(false); }
   };
 
   const reviewRegularization = async (id, action) => {
@@ -152,9 +203,7 @@ export default function AttendancePage() {
       await api.put('/api/attendance/regularize', { id, action });
       showToast('Request ' + action);
       loadRegRequests('approvals');
-    } catch (e) {
-      showToast(e.message, 'error');
-    }
+    } catch (e) { showToast(e.message, 'error'); }
   };
 
   const clockedIn  = !!todayRecord?.clockIn;
@@ -165,13 +214,88 @@ export default function AttendancePage() {
   const absentCount  = monthly.filter(r => r.status === 'absent').length;
   const leaveCount   = monthly.filter(r => r.status === 'leave').length;
 
-  const formatMins = (mins) => {
-    if (!mins) return '--';
-    return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm';
-  };
+  const formatMins = (mins) => { if (!mins) return '--'; return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'; };
 
   const tabs = ['today', 'monthly', ...(isAdmin ? ['team'] : []), 'regularize'];
   const tabLabels = { today: 'Today', monthly: 'Monthly', team: 'Team', regularize: 'Regularize' };
+
+  // Break/Lunch UI helpers
+  const BreakLunchPanel = ({ type }) => {
+    const label     = type === 'break' ? 'Break' : 'Lunch';
+    const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+    const color     = type === 'break' ? '#f59e0b' : '#8b5cf6';
+    const bgColor   = type === 'break' ? '#fffbeb' : '#f5f3ff';
+    const icon      = type === 'break' ? 'bi-cup-hot' : 'bi-egg-fried';
+    const active    = activeBreak(type);
+    const totalMins = totalBreakMins(type);
+    const over      = overMins(type);
+    const history   = getBreaks(type).filter(b => b.end);
+
+    return (
+      <div style={{ background: bgColor, border: `1px solid ${color}30`, borderRadius: 12, padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className={`bi ${icon}`} style={{ color, fontSize: 15 }} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>{label}</div>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Allowance: {allowance} min</div>
+            </div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: over > 0 ? '#ef4444' : '#10b981' }}>
+              {totalMins} / {allowance} min
+            </div>
+            {over > 0 && <div style={{ fontSize: 11, color: '#ef4444', fontWeight: 600 }}>−{over} min deducted</div>}
+          </div>
+        </div>
+
+        {/* Progress bar */}
+        <div style={{ height: 6, borderRadius: 4, background: '#e2e8f0', marginBottom: 14, overflow: 'hidden' }}>
+          <div style={{ height: '100%', borderRadius: 4, width: Math.min(100, (totalMins / allowance) * 100) + '%', background: over > 0 ? '#ef4444' : color, transition: 'width 0.3s' }} />
+        </div>
+
+        {/* Clock button */}
+        {!clockedOut && (
+          <button
+            className="btn btn-sm w-100"
+            disabled={breakLoading}
+            onClick={() => handleBreakClock(type)}
+            style={{ fontSize: 13, fontWeight: 600, background: active ? '#ef444415' : color + '15', color: active ? '#ef4444' : color, border: `1px solid ${active ? '#ef4444' : color}30` }}>
+            {breakLoading
+              ? <span className="spinner-border spinner-border-sm" />
+              : active
+                ? <><i className="bi bi-stop-circle me-2" />End {label} (started {active.start})</>
+                : <><i className="bi bi-play-circle me-2" />Start {label}</>}
+          </button>
+        )}
+
+        {/* History */}
+        {history.length > 0 && (
+          <div style={{ marginTop: 12 }}>
+            {history.map((b, i) => {
+              const dur = diffMins(b.start, b.end);
+              const exceeded = dur > allowance;
+              return (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#64748b', padding: '4px 0', borderBottom: i < history.length - 1 ? '1px solid #e2e8f033' : 'none' }}>
+                  <span>{b.start} → {b.end}</span>
+                  <span style={{ fontWeight: 700, color: exceeded ? '#ef4444' : '#10b981' }}>{dur} min{exceeded ? ` (${dur - allowance} over)` : ''}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {active && (
+          <div style={{ marginTop: 10, fontSize: 12, color, background: color + '10', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="spinner-grow spinner-grow-sm" style={{ width: 8, height: 8, background: color }} />
+            {label} in progress since {active.start}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <AppShell title="Attendance">
@@ -191,14 +315,12 @@ export default function AttendancePage() {
         <div style={{ display: 'flex', gap: 8 }}>
           {!clockedIn && !clockedOut && (
             <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
-              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}
-              Clock In
+              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
             </button>
           )}
           {clockedIn && !clockedOut && (
             <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
-              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}
-              Clock Out
+              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
             </button>
           )}
           {clockedIn && clockedOut && (
@@ -252,34 +374,84 @@ export default function AttendancePage() {
 
       {/* TODAY TAB */}
       {tab === 'today' && (
-        <div className="card p-3 p-md-4">
-          {todayRecord ? (
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
-              <div className="row g-3">
-                {[
-                  ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
-                  ['Clock In',  todayRecord.clockIn  || '—'],
-                  ['Clock Out', todayRecord.clockOut || '—'],
-                  ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
-                ].map(([label, val]) => (
-                  <div key={label} className="col-6 col-md-3">
-                    <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}</div>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
+        <div className="row g-3">
+          {/* Attendance Record */}
+          <div className={clockedIn ? 'col-lg-7' : 'col-12'}>
+            <div className="card p-3 p-md-4">
+              {todayRecord ? (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
+                  <div className="row g-3">
+                    {[
+                      ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
+                      ['Clock In',  todayRecord.clockIn  || '—'],
+                      ['Clock Out', todayRecord.clockOut || '—'],
+                      ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
+                    ].map(([label, val]) => (
+                      <div key={label} className="col-6 col-md-3">
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              {todayRecord.lateFlag && (
-                <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
-                  <i className="bi bi-exclamation-triangle me-2" />Late login detected
+
+                  {/* Deduction summary */}
+                  {(todayRecord.breakDeduction > 0) && (
+                    <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <i className="bi bi-dash-circle" />
+                      <span><strong>{todayRecord.breakDeduction} min</strong> deducted from working hours (excess break/lunch time)</span>
+                    </div>
+                  )}
+
+                  {todayRecord.lateFlag && (
+                    <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
+                      <i className="bi bi-exclamation-triangle me-2" />Late login detected
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <i className="bi bi-clock" />
+                  <h6>No attendance record for today</h6>
+                  <p>Click &quot;Clock In&quot; to mark your attendance</p>
                 </div>
               )}
             </div>
-          ) : (
-            <div className="empty-state">
-              <i className="bi bi-clock" />
-              <h6>No attendance record for today</h6>
-              <p>Click &quot;Clock In&quot; to mark your attendance</p>
+          </div>
+
+          {/* Break / Lunch panel — only shown after clock-in */}
+          {clockedIn && (
+            <div className="col-lg-5">
+              <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
+                {/* Sub-tabs */}
+                <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                  {[
+                    { key: 'break', label: 'Break', icon: 'bi-cup-hot',    color: '#f59e0b' },
+                    { key: 'lunch', label: 'Lunch', icon: 'bi-egg-fried', color: '#8b5cf6' },
+                  ].map(bt => (
+                    <button key={bt.key} onClick={() => setBreakTab(bt.key)}
+                      style={{
+                        flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                        background: 'transparent',
+                        color: breakTab === bt.key ? bt.color : '#94a3b8',
+                        borderBottom: breakTab === bt.key ? `3px solid ${bt.color}` : '3px solid transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                        transition: 'all 0.15s',
+                      }}>
+                      <i className={`bi ${bt.icon}`} style={{ fontSize: 14 }} />{bt.label}
+                      {/* Badge showing over-time */}
+                      {overMins(bt.key) > 0 && (
+                        <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
+                          −{overMins(bt.key)}m
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div style={{ padding: 16 }}>
+                  <BreakLunchPanel type={breakTab} />
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -361,9 +533,7 @@ export default function AttendancePage() {
       {tab === 'regularize' && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>
-              {isAdmin ? 'Pending Regularization Requests' : 'My Regularization Requests'}
-            </span>
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{isAdmin ? 'Pending Regularization Requests' : 'My Regularization Requests'}</span>
             {!isAdmin && (
               <button className="btn btn-primary btn-sm" onClick={() => setShowRegModal(true)}>
                 <i className="bi bi-plus-lg me-1" />New Request
@@ -427,14 +597,8 @@ export default function AttendancePage() {
                       <span className={'badge status-' + r.status}>{r.status}</span>
                     </div>
                     <div className="row g-2 mb-2">
-                      <div className="col-6">
-                        <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div>
-                      </div>
-                      <div className="col-6">
-                        <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div>
-                        <div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOut || '—'}</div>
-                      </div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOut || '—'}</div></div>
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: isAdmin && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
                     {isAdmin && r.status === 'pending' && (
@@ -448,7 +612,6 @@ export default function AttendancePage() {
               </div>
             </>
           )}
-
           {showRegModal && (
             <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
               <div className="modal-dialog modal-dialog-centered">
@@ -501,7 +664,6 @@ export default function AttendancePage() {
               </select>
             </div>
           )}
-
           {selectedUserId ? (
             teamMonthly.length === 0 ? (
               <div className="card"><div className="empty-state"><i className="bi bi-calendar2" /><p>No records for this month</p></div></div>
