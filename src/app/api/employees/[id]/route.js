@@ -41,27 +41,23 @@ export async function PUT(req, { params }) {
   if (!isAdmin && !isSelf) return fail('Access denied', 403);
 
   const body = await req.json();
-  
-  // SECURITY: Validate input and prevent mass assignment
+  const ip = req.headers.get('x-forwarded-for') || '';
+
   let validated;
   if (isAdmin) {
-    // Admins can update most fields (but not userId or system fields)
     const validation = validateRequest(UpdateEmployeeSchema, body);
     if (!validation.valid) {
+      auditLog('Employee Update Failed', 'Employees', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, existing.userId);
       return fail('Validation failed: ' + validation.error, 400);
     }
     validated = validation.data;
   } else {
-    // Non-admins can only update safe personal fields
     const allowedFields = ['phone', 'avatar', 'skills', 'designation'];
     const filtered = {};
-    allowedFields.forEach(field => {
-      if (field in body) filtered[field] = body[field];
-    });
-    
-    // Validate filtered data
+    allowedFields.forEach(field => { if (field in body) filtered[field] = body[field]; });
     const validation = validateRequest(UpdateEmployeeSchema.partial(), filtered);
     if (!validation.valid) {
+      auditLog('Employee Update Failed', 'Employees', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, existing.userId);
       return fail('Validation failed: ' + validation.error, 400);
     }
     validated = validation.data;
@@ -98,7 +94,8 @@ export async function PUT(req, { params }) {
     `Updated employee ${emp.name} (ID: ${id}). Changes: ${changes.join('; ')}`,
     'low',
     req.headers.get('x-forwarded-for') || '',
-    changes
+    changes,
+    emp.userId
   );
 
   return ok(emp);
@@ -124,7 +121,9 @@ export async function DELETE(req, { params }) {
     user._id,
     `Deleted employee ${emp.name} (${emp.email})`,
     'high',
-    req.headers.get('x-forwarded-for') || ''
+    req.headers.get('x-forwarded-for') || '',
+    null,
+    emp.userId
   );
 
   return ok({ deleted: true });

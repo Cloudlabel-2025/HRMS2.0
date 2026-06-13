@@ -1,7 +1,7 @@
 import dbConnect from '@/lib/db';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { Employee, Asset, Document } from '@/lib/models/index';
+import { Employee, Asset, Document, AuditLog } from '@/lib/models/index';
 import Leave from '@/lib/models/Leave';
 import Attendance from '@/lib/models/Attendance';
 import { Payroll } from '@/lib/models/Payroll';
@@ -26,10 +26,13 @@ export async function GET(req, { params }) {
     if (emp.department !== user.department) return fail('Access denied', 403);
   }
 
-  // Fetch auth user to get identityId
-  const authUser = await User.findById(emp.userId).select('identityId profileId');
+  const authUser = await User.findById(emp.userId).select('identityId profileId firstLoginAt');
 
-  const [leaves, attendance, assets, documents, payslips, identity, profile] = await Promise.all([
+  const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
+  // Audit logs: only super_admin/admin_full can view, and NEVER the employee themselves
+  const canViewAudit = isAdmin && user._id.toString() !== emp.userId.toString();
+
+  const [leaves, attendance, assets, documents, payslips, identity, profile, auditLogs] = await Promise.all([
     Leave.find({ userId: emp.userId }).sort({ createdAt: -1 }).limit(10),
     Attendance.find({ userId: emp.userId }).sort({ date: -1 }).limit(30),
     Asset.find({ assignedTo: emp.userId }),
@@ -39,6 +42,11 @@ export async function GET(req, { params }) {
       : Promise.resolve([]),
     authUser?.identityId ? UsrIdentity.findById(authUser.identityId) : Promise.resolve(null),
     authUser?.profileId  ? EmpProfile.findById(authUser.profileId)   : Promise.resolve(null),
+    canViewAudit
+      ? AuditLog.find({ $or: [{ userId: emp.userId }, { targetUserId: emp.userId }] })
+          .populate('userId', 'name')
+          .sort({ createdAt: -1 }).limit(200)
+      : Promise.resolve([]),
   ]);
 
   return ok({
@@ -50,5 +58,7 @@ export async function GET(req, { params }) {
     assets,
     documents,
     payslips,
+    auditLogs,
+    firstLoginAt: authUser?.firstLoginAt || null,
   });
 }

@@ -1,6 +1,6 @@
 import { connectDB } from '@/lib/db';
 import { Goal } from '@/lib/models/index';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
 export async function GET(req) {
@@ -27,8 +27,15 @@ export async function POST(req) {
     const { user, error } = await requireAuth(req);
     if (error) return error;
     await connectDB();
+    const ip = req.headers.get('x-forwarded-for') || '';
     const body = await req.json();
-    const goal = await Goal.create({ ...body, userId: body.userId || user._id });
+    if (!body.title) {
+      auditLog('Goal Create Failed', 'Performance', user._id, 'Failed to create goal: title is required', 'low', ip, null, user._id);
+      return fail('Goal title is required', 400);
+    }
+    const targetId = body.userId || user._id;
+    const goal = await Goal.create({ ...body, userId: targetId });
+    auditLog('Goal Created', 'Performance', user._id, `Created goal: "${body.title}"`, 'low', ip, null, targetId);
     return ok({ goal }, 201);
   } catch (e) {
     return fail(e.message, 500);

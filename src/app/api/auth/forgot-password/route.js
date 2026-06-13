@@ -1,7 +1,7 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
+import { auditLog } from '@/lib/middleware';
 import crypto from 'crypto';
 
 const GENERIC_RESET_MESSAGE = 'If an account with that email exists, we sent a password reset link.';
@@ -24,14 +24,7 @@ export async function POST(req) {
     const appUrl = process.env.APP_URL || 'http://localhost:3000';
     const resetUrl = `${appUrl.replace(/\/$/, '')}/login/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
-    await AuditLog.create({
-      action: 'Password Reset Requested',
-      module: 'Auth',
-      userId: user._id,
-      details: 'Password reset token generated',
-      severity: 'medium',
-      ip: req.headers.get('x-forwarded-for') || '',
-    });
+    await auditLog('Password Reset Requested', 'Auth', user._id, 'Password reset link generated', 'medium', req.headers.get('x-forwarded-for') || '', null, user._id);
 
     if (process.env.NODE_ENV !== 'production' && process.env.RETURN_RESET_LINK === 'true') {
       return ok({ message: GENERIC_RESET_MESSAGE, resetUrl });

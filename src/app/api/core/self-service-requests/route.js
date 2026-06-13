@@ -205,7 +205,7 @@ export async function PUT(req) {
       );
     }
 
-    await auditLog('Self-Service Request Reviewed', 'SelfService', user._id, `${validation.data.action} ${request.requestType} request`, validation.data.action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Self-Service Request Reviewed', 'SelfService', user._id, `${validation.data.action} ${request.requestType} request`, validation.data.action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, identity?.authUserId || null);
     return ok({ request });
   } catch (e) {
     return fail(e.message, 500);

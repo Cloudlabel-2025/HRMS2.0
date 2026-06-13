@@ -54,7 +54,12 @@ async function request(url, options = {}, retry = true) {
   }
 
   const json = await res.json();
-  if (!res.ok) throw new Error(json.error || 'Request failed');
+  if (!res.ok) {
+    const message = typeof json.error === 'object'
+      ? JSON.stringify(json.error)
+      : (json.error || 'Request failed');
+    throw new Error(message);
+  }
   return json.data;
 }
 

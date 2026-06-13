@@ -1,7 +1,7 @@
 import { connectDB } from '@/lib/db';
 import { Task } from '@/lib/models/Task';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess } from '@/lib/rbac';
 
@@ -59,17 +59,30 @@ export async function POST(req) {
       return fail('Access denied', 403);
     }
     await connectDB();
-
+    const ip = req.headers.get('x-forwarded-for') || '';
     const body = await req.json();
 
-    // team_lead can only assign to their own team members
+    if (!body.title) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: title is required', 'low', ip, null, user._id);
+      return fail('Task title is required', 400);
+    }
+    if (!body.assignedTo) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: assignedTo is required', 'low', ip, null, user._id);
+      return fail('Assigned user is required', 400);
+    }
+
     if (user.role === 'team_lead') {
       const member = await User.findOne({ _id: body.assignedTo, teamLeadId: user._id });
-      if (!member) return fail('You can only assign tasks to your team members', 403);
+      if (!member) {
+        auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to non-team member (${body.assignedTo})`, 'low', ip, null, user._id);
+        return fail('You can only assign tasks to your team members', 403);
+      }
     }
 
     const task = await Task.create({ ...body, assignedBy: user._id });
     await task.populate('assignedTo', 'name avatar');
+    const assignee = await User.findById(body.assignedTo).select('name').catch(() => null);
+    auditLog('Task Created', 'Tasks', user._id, `Created task "${body.title}" assigned to ${assignee?.name || 'unknown'}`, 'low', ip, null, body.assignedTo);
     return ok(task, 201);
   } catch (e) {
     return fail(e.message, 500);

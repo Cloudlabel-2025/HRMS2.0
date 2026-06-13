@@ -1,8 +1,7 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
 
 export async function POST(req) {
   try {
@@ -25,10 +24,7 @@ export async function POST(req) {
     dbUser.isFirstLogin = false;
     await dbUser.save();
 
-    await AuditLog.create({
-      action: 'Password Setup', module: 'Auth', userId: dbUser._id,
-      details: `${dbUser.name} completed first-login password setup`, severity: 'low',
-    });
+    await auditLog('Password Setup', 'Auth', dbUser._id, 'First-login password setup completed', 'low', req.headers.get('x-forwarded-for') || '', null, dbUser._id);
 
     return ok({ message: 'Password updated successfully' });
   } catch (e) {

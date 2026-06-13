@@ -184,7 +184,9 @@ export async function PUT(req, { params }) {
       user._id,
       `${action} leave for ${leave.days} days (${leave.from} to ${leave.to})${action === 'held' ? ` — ${holdReason}` : ''}`,
       action === 'approved' ? 'medium' : 'low',
-      req.headers.get('x-forwarded-for') || ''
+      req.headers.get('x-forwarded-for') || '',
+      null,
+      applicantId
     );
 
     return ok(leave);
@@ -214,7 +216,7 @@ export async function DELETE(req, { params }) {
       }
     }
 
-    await auditLog('Leave Cancelled', 'Leave', user._id, `Cancelled leave for ${leave.days} days`, 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Leave Cancelled', 'Leave', user._id, `Cancelled leave for ${leave.days} days`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
     await leave.deleteOne();
     return ok({ deleted: true });
   } catch (e) {

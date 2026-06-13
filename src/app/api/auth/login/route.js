@@ -46,28 +46,26 @@ export async function POST(req) {
     await dbConnect();
     const user = await User.findOne({ email }).select('+password +loginAttempts +lockUntil');
     
-    const handleFailure = async (msg, status = 401, severity = 'low') => {
+    const handleFailure = async (msg, status = 401, severity = 'low', targetId = null) => {
       limit.count++;
       rateLimit.set(ip, limit);
-      
-      // Log failed attempt
       await AuditLog.create({
         action: 'Login Failed',
         module: 'Auth',
+        userId: targetId || undefined,
+        targetUserId: targetId || undefined,
         details: `Email: ${email}, Reason: ${msg}`,
         severity,
         ip,
       });
-      
       return fail(msg, status);
     };
 
     if (!user) return handleFailure('Invalid email or password', 401, 'low');
 
-    // Lockout check
     if (user.isLocked()) {
       const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
-      return handleFailure(`Account locked. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`, 423, 'medium');
+      return handleFailure(`Account locked. Try again in ${mins} minute${mins > 1 ? 's' : ''}.`, 423, 'medium', user._id);
     }
 
     const valid = await user.comparePassword(password);
@@ -76,15 +74,15 @@ export async function POST(req) {
       const remaining = 5 - user.loginAttempts;
       limit.count++;
       rateLimit.set(ip, limit);
-      
       await AuditLog.create({
         action: 'Login Failed - Invalid Password',
         module: 'Auth',
+        userId: user._id,
+        targetUserId: user._id,
         details: `Email: ${email}, Attempts Remaining: ${remaining}`,
         severity: 'medium',
         ip,
       });
-      
       return fail(
         remaining > 0
           ? `Invalid email or password. ${remaining} attempt${remaining > 1 ? 's' : ''} remaining.`
@@ -94,13 +92,18 @@ export async function POST(req) {
     }
 
     if (user.status !== 'active') {
-      return handleFailure('Account is inactive', 403, 'medium');
+      return handleFailure('Account is inactive', 403, 'medium', user._id);
     }
 
     // Successful login — reset attempts
     limit.count = 0;
     rateLimit.set(ip, limit);
     await user.resetLoginAttempts();
+
+    // Record first login timestamp
+    if (user.isFirstLogin && !user.firstLoginAt) {
+      await User.findByIdAndUpdate(user._id, { firstLoginAt: new Date() });
+    }
 
     const token        = signToken({ id: user._id, role: user.role });
     const refreshToken = signRefreshToken({ id: user._id, role: user.role });
@@ -110,6 +113,7 @@ export async function POST(req) {
       action: 'Login Success',
       module: 'Auth',
       userId: user._id,
+      targetUserId: user._id,
       details: `User: ${user.name} (${user.email})`,
       severity: 'low',
       ip,

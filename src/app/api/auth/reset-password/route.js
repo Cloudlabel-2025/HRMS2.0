@@ -1,6 +1,7 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
+import { auditLog } from '@/lib/middleware';
 import crypto from 'crypto';
 
 export async function POST(req) {
@@ -22,12 +23,11 @@ export async function POST(req) {
     user.password = newPassword;
     user.resetToken = undefined;
     user.resetTokenExpiry = undefined;
-
-    // Also unlock the account if it was locked due to brute force
     user.loginAttempts = 0;
     user.lockUntil = undefined;
-
     await user.save();
+
+    await auditLog('Password Reset', 'Auth', user._id, 'Password successfully reset via reset link', 'medium', req.headers.get('x-forwarded-for') || '', null, user._id);
 
     return ok({ message: 'Password has been successfully reset' });
   } catch (e) {

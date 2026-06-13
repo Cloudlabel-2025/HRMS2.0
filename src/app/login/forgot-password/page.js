@@ -7,6 +7,10 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [fieldErrs, setFieldErrs] = useState({});
+  const fieldErrTimers = typeof window !== 'undefined' ? (window.__forgotErrTimers = window.__forgotErrTimers || {}) : {};
+  const setFErrs = (obj) => { setFieldErrs(obj); Object.keys(obj).forEach(k => { if(fieldErrTimers[k]) clearTimeout(fieldErrTimers[k]); fieldErrTimers[k] = setTimeout(() => setFieldErrs(p => { const n={...p}; delete n[k]; return n; }), 10000); }); };
+  const clearFErr = (k) => { if(fieldErrTimers[k]) { clearTimeout(fieldErrTimers[k]); delete fieldErrTimers[k]; } setFieldErrs(p => { const n={...p}; delete n[k]; return n; }); };
 
   const handleSubmit = async (e) => {
     e.preventDefault();

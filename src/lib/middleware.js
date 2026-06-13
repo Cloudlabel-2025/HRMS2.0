@@ -58,7 +58,8 @@ export async function auditLog(
   details = '',
   severity = 'low',
   ip = '',
-  changes = null
+  changes = null,
+  targetUserId = null
 ) {
   try {
     await connectDB();
@@ -66,6 +67,7 @@ export async function auditLog(
       action,
       module,
       userId,
+      targetUserId: targetUserId || null,
       details,
       severity,
       ip,
@@ -74,7 +76,27 @@ export async function auditLog(
     });
   } catch (e) {
     console.error('Audit log failed:', e);
-    // Don't fail the request due to audit failure
+  }
+}
+
+/**
+ * Log a page/module access event — always writes, no dedup.
+ * Called only from the dedicated /api/audit/page-view endpoint.
+ */
+export async function pageLog(module, userId, details = '', ip = '') {
+  try {
+    await connectDB();
+    await AuditLog.create({
+      action: `Viewed ${module}`,
+      module,
+      userId,
+      targetUserId: userId,
+      details: details || `Opened ${module} module`,
+      severity: 'low',
+      ip,
+    });
+  } catch (e) {
+    // non-fatal
   }
 }
 

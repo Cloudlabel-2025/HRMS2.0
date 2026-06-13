@@ -141,10 +141,10 @@ export default function Topbar({ title, onMenuClick }) {
                 </span>
               </div>
               <div style={{ padding: '8px' }}>
-                <button className="nav-item-link" style={{ color: '#64748b', fontSize: 13 }}>
+                <button className="nav-item-link" style={{ color: '#64748b', fontSize: 13 }} onClick={() => { setShowProfile(false); router.push('/profile'); }}>
                   <i className="bi bi-person" /> My Profile
                 </button>
-                <button className="nav-item-link" style={{ color: '#64748b', fontSize: 13 }}>
+                <button className="nav-item-link" style={{ color: '#64748b', fontSize: 13 }} onClick={() => { setShowProfile(false); router.push('/settings'); }}>
                   <i className="bi bi-gear" /> Settings
                 </button>
               </div>

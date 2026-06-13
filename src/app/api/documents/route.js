@@ -35,10 +35,10 @@ export async function POST(req) {
     await connectDB();
     
     const body = await req.json();
-    
-    // SECURITY: Validate and prevent mass assignment
+    const ip = req.headers.get('x-forwarded-for') || '';
     const validation = validateRequest(CreateDocumentSchema, body);
     if (!validation.valid) {
+      auditLog('Document Upload Failed', 'Documents', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, user._id);
       return fail('Validation failed: ' + validation.error, 400);
     }
     
@@ -56,7 +56,9 @@ export async function POST(req) {
       user._id,
       `Uploaded: ${doc.name} (${doc.fileType}), Access: ${doc.access}`,
       'low',
-      req.headers.get('x-forwarded-for') || ''
+      req.headers.get('x-forwarded-for') || '',
+      null,
+      doc.employeeId || null
     );
 
     return ok({ document: doc }, 201);

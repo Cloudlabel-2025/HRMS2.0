@@ -20,7 +20,7 @@ export async function DELETE(req, { params }) {
     request.cancelledAt = new Date();
     await request.save();
 
-    await auditLog('Self-Service Request Cancelled', 'SelfService', user._id, `Cancelled ${request.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Self-Service Request Cancelled', 'SelfService', user._id, `Cancelled ${request.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
     return ok({ request });
   } catch (e) {
     return fail(e.message, 500);
@@ -45,7 +45,7 @@ export async function PUT(req, { params }) {
     if (rest.payload) request.payload = rest.payload;
     await request.save();
 
-    await auditLog('Self-Service Request Updated', 'SelfService', user._id, `Updated ${request.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Self-Service Request Updated', 'SelfService', user._id, `Updated ${request.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
     return ok({ request });
   } catch (e) {
     return fail(e.message, 500);

@@ -820,7 +820,12 @@ body {
 .section-title { font-size: 17px; font-weight: 750; color: var(--text); margin-bottom: 16px; }
 .text-muted { color: #64748b !important; }
 .form-control, .form-select { border-color: #e2e8f0; border-radius: 8px; font-size: 15px; min-height: 42px; }
+.form-control::placeholder { color: #b8c2d2; opacity: 1; }
+.form-control:focus::placeholder { color: transparent; opacity: 0; }
 .form-control:focus, .form-select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+.employee-form .form-label { font-size: 12.5px; font-weight: 700; color: #334155; margin-bottom: 6px; }
+.employee-form-section { font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0; padding-top: 10px; border-top: 1px solid #eef2f7; }
+.employee-form .col-12:first-child .employee-form-section { padding-top: 0; border-top: 0; }
 .modal-content { border-radius: 8px; border: none; }
 .modal-header { border-bottom: 1px solid #f1f5f9; padding: 20px 24px; }
 .modal-footer { border-top: 1px solid #f1f5f9; padding: 16px 24px; }

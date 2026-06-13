@@ -18,6 +18,13 @@ const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // Break = 30 min allowance, Lunch = 60 min allowance
 const BREAK_ALLOWANCE_MINS = 30;
 const LUNCH_ALLOWANCE_MINS = 60;
+const WORK_STATUSES = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'work_in_progress', label: 'Work in Progress' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'task_blocked', label: 'Task Blocked' },
+  { value: 'stopped', label: 'Stopped' },
+];
 
 function toMinutes(timeStr) {
   if (!timeStr) return 0;
@@ -57,6 +64,12 @@ export default function AttendancePage() {
   // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
   const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
   const [breakLoading, setBreakLoading] = useState(false);
+
+  // Progress tab states
+  const [progressSearch, setProgressSearch] = useState('');
+  const [selectedProgressUserId, setSelectedProgressUserId] = useState('');
+  const [progressRecord, setProgressRecord] = useState(null);
+  const [progressLoading, setProgressLoading] = useState(false);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -98,6 +111,30 @@ export default function AttendancePage() {
     catch { setRegRequests([]); }
   };
 
+  const loadProgressRecord = async (uid) => {
+    if (!uid) { setProgressRecord(null); return; }
+    setProgressLoading(true);
+    try {
+      const records = await api.get('/api/attendance?scope=team&userId=' + uid + '&date=' + today);
+      setProgressRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
+    } catch { setProgressRecord(null); }
+    finally { setProgressLoading(false); }
+  };
+
+  useEffect(() => {
+    if (tab === 'progress' && selectedProgressUserId) {
+      loadProgressRecord(selectedProgressUserId);
+    }
+  }, [selectedProgressUserId, tab]);
+
+  // Fire page-view audit exactly once per mount — useRef prevents double-fire in React Strict Mode
+  const pageViewFired = useRef(false);
+  useEffect(() => {
+    if (!user || pageViewFired.current) return;
+    pageViewFired.current = true;
+    api.post('/api/audit/page-view', { module: 'Attendance', details: 'Opened Attendance module' }).catch(() => {});
+  }, [user]);
+
   useEffect(() => {
     if (!user) return;
     Promise.all([
@@ -127,6 +164,70 @@ export default function AttendancePage() {
   const getBreaks = (type) => (todayRecord?.breaks || []).filter(b => b.type === type);
 
   const activeBreak = (type) => getBreaks(type).find(b => b.start && !b.end);
+  const anyActiveBreak = () => (todayRecord?.breaks || []).find(b => b.start && !b.end);
+  const getWorkProgress = () => todayRecord?.workProgress || [];
+  const activeWorkIndex = () => getWorkProgress().findIndex(row => row.startTime && !row.endTime);
+
+  const persistTodayRecord = async (updates) => {
+    const updated = await api.put('/api/attendance', { date: today, ...updates });
+    setTodayRecord(updated);
+    return updated;
+  };
+
+  const buildTaskRow = (startTime, taskDetails = '') => ({
+    type: 'task',
+    taskDetails,
+    startTime,
+    endTime: null,
+    status: 'work_in_progress',
+    remarks: '',
+    feedback: '',
+  });
+
+  const buildBreakRow = (type, startTime) => ({
+    type,
+    taskDetails: type === 'lunch' ? 'Lunch break' : 'Break',
+    startTime,
+    endTime: null,
+    status: 'work_in_progress',
+    remarks: '',
+    feedback: '',
+  });
+
+  const closeActiveWork = (rows, endTime, status = 'stopped') => {
+    const idx = rows.findIndex(row => row.startTime && !row.endTime);
+    if (idx === -1) return rows;
+    return rows.map((row, i) => i === idx ? { ...row, endTime, status: row.status === 'work_in_progress' ? status : row.status } : row);
+  };
+
+  const updateWorkRow = (idx, patch) => {
+    setTodayRecord(prev => ({
+      ...prev,
+      workProgress: (prev?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row),
+    }));
+  };
+
+  const saveWorkProgress = async (rows = todayRecord?.workProgress || []) => {
+    try { await persistTodayRecord({ workProgress: rows }); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const commitWorkRow = async (idx, patch) => {
+    const rows = (todayRecord?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row);
+    try { await persistTodayRecord({ workProgress: rows }); }
+    catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const endCurrentTask = async () => {
+    if (!clockedIn || clockedOut || anyActiveBreak()) return;
+    const now = nowTimeStr();
+    let rows = closeActiveWork([...(todayRecord?.workProgress || [])], now, 'completed');
+    rows.push(buildTaskRow(now));
+    try {
+      await persistTodayRecord({ workProgress: rows });
+      showToast('Task ended at ' + now);
+    } catch (e) { showToast(e.message, 'error'); }
+  };
 
   const totalBreakMins = (type) =>
     getBreaks(type).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
@@ -143,14 +244,28 @@ export default function AttendancePage() {
       const active = activeBreak(type);
       let updatedBreaks = [...(todayRecord?.breaks || [])];
 
+      let updatedWorkProgress = [...(todayRecord?.workProgress || [])];
+
       if (!active) {
         // Start break/lunch
+        // Limit to 1 break and 1 lunch per day
+        if (getBreaks(type).length > 0) {
+          showToast(`You have already taken your ${type === 'break' ? 'break' : 'lunch break'} for today. Only 1 is allowed.`, 'error');
+          setBreakLoading(false);
+          return;
+        }
         updatedBreaks.push({ type, start: now, end: null });
+        updatedWorkProgress = closeActiveWork(updatedWorkProgress, now, 'stopped');
+        updatedWorkProgress.push(buildBreakRow(type, now));
         showToast(`${type === 'break' ? 'Break' : 'Lunch'} started at ${now}`);
       } else {
         // End break/lunch
         const idx = updatedBreaks.findIndex(b => b.type === type && b.start && !b.end);
         if (idx !== -1) updatedBreaks[idx] = { ...updatedBreaks[idx], end: now };
+        const workIdx = updatedWorkProgress.findIndex(row => row.type === type && row.startTime && !row.endTime);
+        if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
+        const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
+        if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
         const elapsed = diffMins(active.start, now);
         const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
         const over = Math.max(0, elapsed - allowance);
@@ -173,15 +288,70 @@ export default function AttendancePage() {
       const baseHours = todayRecord?.baseHoursWorked ?? todayRecord?.hoursWorked ?? 0;
       const effectiveHours = Math.max(0, baseHours - totalDeduction);
 
-      setTodayRecord(prev => ({
-        ...prev,
+      await persistTodayRecord({
         breaks: updatedBreaks,
-        baseHoursWorked: prev.baseHoursWorked ?? prev.hoursWorked ?? 0,
+        workProgress: updatedWorkProgress,
+        baseHoursWorked: todayRecord.baseHoursWorked ?? todayRecord.hoursWorked ?? 0,
         hoursWorked: effectiveHours,
         breakDeduction: totalDeduction,
-      }));
+      });
     } catch (e) { showToast(e.message, 'error'); }
     finally { setBreakLoading(false); }
+  };
+
+  const downloadExcel = () => {
+    const dbRows = getWorkProgress();
+    let exportRows = dbRows.map(r => ({ ...r }));
+    if (todayRecord?.clockIn) {
+      exportRows.unshift({
+        type: 'clock_in',
+        taskDetails: 'Clocked In',
+        startTime: todayRecord.clockIn,
+        endTime: todayRecord.clockIn,
+        status: 'completed',
+        remarks: '',
+        feedback: ''
+      });
+    }
+    if (todayRecord?.clockOut) {
+      exportRows.push({
+        type: 'clock_out',
+        taskDetails: 'Clocked Out',
+        startTime: todayRecord.clockOut,
+        endTime: todayRecord.clockOut,
+        status: 'completed',
+        remarks: '',
+        feedback: ''
+      });
+    }
+
+    const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Status', 'Remarks', 'Feedback'];
+    const csvRows = [headers.join(',')];
+
+    exportRows.forEach((row, idx) => {
+      const values = [
+        idx + 1,
+        row.type || 'task',
+        `"${(row.taskDetails || '').replace(/"/g, '""')}"`,
+        row.startTime || '',
+        row.endTime || '',
+        row.status || '',
+        `"${(row.remarks || '').replace(/"/g, '""')}"`,
+        `"${(row.feedback || '').replace(/"/g, '""')}"`
+      ];
+      csvRows.push(values.join(','));
+    });
+
+    const csvContent = '\uFEFF' + csvRows.join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `work_progress_${todayRecord?.date || today}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   // ── Regularization ──────────────────────────────────────────────────────────
@@ -216,11 +386,11 @@ export default function AttendancePage() {
 
   const formatMins = (mins) => { if (!mins) return '--'; return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'; };
 
-  const tabs = ['today', 'monthly', ...(isAdmin ? ['team'] : []), 'regularize'];
-  const tabLabels = { today: 'Today', monthly: 'Monthly', team: 'Team', regularize: 'Regularize' };
+  const tabs = ['today', 'monthly', ...(isAdmin ? ['team'] : []), 'regularize', ...(isAdmin ? ['progress'] : [])];
+  const tabLabels = { today: 'Today', monthly: 'Monthly', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
 
   // Break/Lunch UI helpers
-  const BreakLunchPanel = ({ type }) => {
+  const renderBreakLunchPanel = (type) => {
     const label     = type === 'break' ? 'Break' : 'Lunch';
     const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
     const color     = type === 'break' ? '#f59e0b' : '#8b5cf6';
@@ -291,6 +461,168 @@ export default function AttendancePage() {
           <div style={{ marginTop: 10, fontSize: 12, color, background: color + '10', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="spinner-grow spinner-grow-sm" style={{ width: 8, height: 8, background: color }} />
             {label} in progress since {active.start}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderWorkProgressSheet = () => {
+    const dbRows = getWorkProgress();
+    const activeIdx = activeWorkIndex();
+    const canEndTask = clockedIn && !clockedOut && !anyActiveBreak() && activeIdx !== -1 && dbRows[activeIdx]?.type === 'task';
+
+    // Build virtual rows with dbIdx so edits point to the right array elements
+    const rows = dbRows.map((row, dbIdx) => ({
+      ...(row.toObject ? row.toObject() : row),
+      dbIdx
+    }));
+
+    if (todayRecord?.clockIn) {
+      rows.unshift({
+        type: 'clock_in',
+        taskDetails: 'Clocked In',
+        startTime: todayRecord.clockIn,
+        endTime: todayRecord.clockIn,
+        status: 'completed',
+        remarks: '',
+        feedback: '',
+        dbIdx: -1
+      });
+    }
+
+    if (todayRecord?.clockOut) {
+      rows.push({
+        type: 'clock_out',
+        taskDetails: 'Clocked Out',
+        startTime: todayRecord.clockOut,
+        endTime: todayRecord.clockOut,
+        status: 'completed',
+        remarks: '',
+        feedback: '',
+        dbIdx: -1
+      });
+    }
+
+    return (
+      <div className="card" style={{ marginTop: 16 }}>
+        <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <i className="bi bi-list-check" style={{ color: '#2563eb', fontSize: 16 }} />
+          <span style={{ fontWeight: 750, fontSize: 14.5 }}>Daily Work Progress Sheet</span>
+          <span className="badge" style={{ 
+            background: clockedOut ? '#fee2e2' : clockedIn ? '#dcfce7' : '#f1f5f9', 
+            color: clockedOut ? '#dc2626' : clockedIn ? '#16a34a' : '#64748b',
+            fontSize: '11px',
+            fontWeight: 700,
+            marginLeft: 8
+          }}>
+            {clockedOut ? 'Clocked Out' : clockedIn ? 'Clocked In' : 'Not Clocked In'}
+          </span>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {clockedOut && (
+              <button className="btn btn-sm btn-outline-success" style={{ fontSize: 12 }} onClick={downloadExcel}>
+                <i className="bi bi-file-earmark-excel me-1" />Download Progress (Excel)
+              </button>
+            )}
+            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={!canEndTask} onClick={endCurrentTask}>
+              <i className="bi bi-check2-circle me-1" />End Current Task
+            </button>
+          </div>
+        </div>
+        {rows.length === 0 ? (
+          <div className="empty-state"><i className="bi bi-list-task" /><p>Clock in to start today&apos;s first task</p></div>
+        ) : (
+          <div className="table-responsive">
+            <table className="table mb-0">
+              <thead>
+                <tr>
+                  <th style={{ width: 56 }}>S.no</th>
+                  <th style={{ minWidth: 220 }}>Task Details</th>
+                  <th style={{ width: 110 }}>Start Time</th>
+                  <th style={{ width: 110 }}>End Time</th>
+                  <th style={{ minWidth: 160 }}>Status</th>
+                  <th style={{ minWidth: 190 }}>Remarks</th>
+                  <th style={{ minWidth: 190 }}>Feedback</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row, idx) => {
+                  const isBreakRow = row.type === 'break' || row.type === 'lunch';
+                  const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
+                  const active = row.startTime && !row.endTime;
+                  return (
+                    <tr key={idx} style={{ background: isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
+                      <td style={{ fontSize: 13, fontWeight: 700 }}>{idx + 1}</td>
+                      <td>
+                        {isVirtual ? (
+                          row.type === 'clock_in' ? (
+                            <span className="badge" style={{ background: '#dcfce7', color: '#16a34a', fontSize: '11.5px', fontWeight: 700 }}>
+                              <i className="bi bi-box-arrow-in-right me-1" />Clocked In
+                            </span>
+                          ) : (
+                            <span className="badge" style={{ background: '#fee2e2', color: '#dc2626', fontSize: '11.5px', fontWeight: 700 }}>
+                              <i className="bi bi-box-arrow-right me-1" />Clocked Out
+                            </span>
+                          )
+                        ) : isBreakRow ? (
+                          <span className="badge" style={{ background: row.type === 'lunch' ? '#f5f3ff' : '#fffbeb', color: row.type === 'lunch' ? '#7c3aed' : '#d97706' }}>
+                            <i className={`bi ${row.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{row.taskDetails || (row.type === 'lunch' ? 'Lunch break' : 'Break')}
+                          </span>
+                        ) : (
+                          <textarea
+                            className="form-control"
+                            rows={2}
+                            placeholder={active ? 'Enter current task details' : 'Task details'}
+                            value={row.taskDetails || ''}
+                            onChange={e => updateWorkRow(row.dbIdx, { taskDetails: e.target.value })}
+                            onBlur={() => saveWorkProgress()}
+                            style={{ fontSize: 12, minWidth: 210 }}
+                          />
+                        )}
+                      </td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}>{row.startTime || '--:--'}</td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}>{row.endTime || (active ? 'Running' : '--:--')}</td>
+                      <td>
+                        <select
+                          className="form-select form-select-sm"
+                          value={row.status || (active ? 'work_in_progress' : 'pending')}
+                          disabled={isBreakRow || isVirtual}
+                          onChange={e => commitWorkRow(row.dbIdx, { status: e.target.value })}
+                          style={{ fontSize: 12 }}>
+                          {isVirtual ? <option value="completed">Completed</option> : WORK_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        {isVirtual ? null : (
+                          <textarea
+                            className="form-control"
+                            rows={2}
+                            placeholder="Remarks"
+                            value={row.remarks || ''}
+                            onChange={e => updateWorkRow(row.dbIdx, { remarks: e.target.value })}
+                            onBlur={() => saveWorkProgress()}
+                            style={{ fontSize: 12 }}
+                          />
+                        )}
+                      </td>
+                      <td>
+                        {isVirtual ? null : (
+                          <textarea
+                            className="form-control"
+                            rows={2}
+                            placeholder="Feedback"
+                            value={row.feedback || ''}
+                            onChange={e => updateWorkRow(row.dbIdx, { feedback: e.target.value })}
+                            onBlur={() => saveWorkProgress()}
+                            style={{ fontSize: 12 }}
+                          />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>
@@ -376,7 +708,7 @@ export default function AttendancePage() {
       {tab === 'today' && (
         <div className="row g-3">
           {/* Attendance Record */}
-          <div className={clockedIn ? 'col-lg-7' : 'col-12'}>
+          <div className={clockedIn ? 'col-lg-6' : 'col-12'}>
             <div className="card p-3 p-md-4">
               {todayRecord ? (
                 <div>
@@ -421,7 +753,7 @@ export default function AttendancePage() {
 
           {/* Break / Lunch panel — only shown after clock-in */}
           {clockedIn && (
-            <div className="col-lg-5">
+            <div className="col-lg-6">
               <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
                 {/* Sub-tabs */}
                 <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
@@ -449,11 +781,14 @@ export default function AttendancePage() {
                   ))}
                 </div>
                 <div style={{ padding: 16 }}>
-                  <BreakLunchPanel type={breakTab} />
+                  {renderBreakLunchPanel(breakTab)}
                 </div>
               </div>
             </div>
           )}
+          <div className="col-12">
+            {renderWorkProgressSheet()}
+          </div>
         </div>
       )}
 
@@ -660,7 +995,7 @@ export default function AttendancePage() {
             <div className="mb-3">
               <select className="form-select" style={{ fontSize: 13, maxWidth: 260 }} value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}>
                 <option value="">— Today&apos;s Overview —</option>
-                {employees.map(e => <option key={e._id} value={e._id}>{e.name} — Monthly</option>)}
+                {employees.map(e => <option key={e.userId} value={e.userId}>{e.name} — Monthly</option>)}
               </select>
             </div>
           )}
@@ -763,6 +1098,270 @@ export default function AttendancePage() {
             </>
           )}
         </>
+      )}
+
+      {/* VIEW DAILY PROGRESS TAB */}
+      {tab === 'progress' && isAdmin && (
+        <div className="row g-3">
+          {/* Left Panel: Employee list */}
+          <div className="col-md-4 col-lg-3">
+            <div className="card p-3">
+              <h6 style={{ fontWeight: 700, marginBottom: 12 }}>Employees</h6>
+              <div className="input-group mb-3">
+                <span className="input-group-text bg-transparent border-end-0">
+                  <i className="bi bi-search text-muted" style={{ fontSize: 13 }} />
+                </span>
+                <input
+                  type="text"
+                  className="form-control border-start-0"
+                  placeholder="Search name..."
+                  value={progressSearch}
+                  onChange={e => setProgressSearch(e.target.value)}
+                  style={{ fontSize: 13 }}
+                />
+              </div>
+              <div style={{ maxHeight: 500, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {employees
+                  .filter(e => {
+                    // Search filter
+                    if (progressSearch && !e.name.toLowerCase().includes(progressSearch.toLowerCase())) return false;
+                    // RBAC filters
+                    if (['super_admin', 'admin_full'].includes(user?.role)) return true;
+                    if (user?.role === 'team_lead') return true;
+                    if (user?.role === 'team_admin') return e.role !== 'team_lead';
+                    return false;
+                  })
+                  .map(e => {
+                    // Find if clocked in today from teamToday
+                    const todayRec = teamToday.find(r => r.userId?._id === e.userId);
+                    const isClockedIn = !!todayRec?.clockIn;
+                    const isClockedOut = !!todayRec?.clockOut;
+                    const isSelected = selectedProgressUserId === e.userId;
+
+                    return (
+                      <div
+                        key={e._id}
+                        onClick={() => setSelectedProgressUserId(e.userId)}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '10px 12px',
+                          borderRadius: 10,
+                          cursor: 'pointer',
+                          background: isSelected ? '#3b82f615' : 'transparent',
+                          border: isSelected ? '1px solid #3b82f650' : '1px solid transparent',
+                          transition: 'all 0.15s'
+                        }}>
+                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+                          {e.avatar || e.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{e.name}</div>
+                          <div style={{ fontSize: 10, color: '#64748b' }}>{e.designation || e.role}</div>
+                        </div>
+                        {/* Attendance status indicator dot */}
+                        <div style={{
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: isClockedOut ? '#ef4444' : isClockedIn ? '#10b981' : '#cbd5e1'
+                        }} title={isClockedOut ? 'Clocked Out' : isClockedIn ? 'Clocked In' : 'Not Clocked In'} />
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+          </div>
+
+          {/* Right Panel: Employee work progress sheet */}
+          <div className="col-md-8 col-lg-9">
+            {selectedProgressUserId ? (
+              progressLoading ? (
+                <div className="card p-5 text-center"><div className="spinner-border text-primary" /></div>
+              ) : progressRecord ? (
+                <div className="card">
+                  <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700 }}>
+                        {progressRecord.userId?.avatar || progressRecord.userId?.name.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <span style={{ fontWeight: 750, fontSize: 14.5 }}>{progressRecord.userId?.name}&apos;s Progress Sheet</span>
+                        <div style={{ fontSize: 11, color: '#64748b' }}>{formatDate(today)}</div>
+                      </div>
+                    </div>
+
+                    <span className="badge ms-2" style={{
+                      background: progressRecord.clockOut ? '#fee2e2' : progressRecord.clockIn ? '#dcfce7' : '#f1f5f9',
+                      color: progressRecord.clockOut ? '#dc2626' : progressRecord.clockIn ? '#16a34a' : '#64748b',
+                      fontSize: '11px',
+                      fontWeight: 700
+                    }}>
+                      {progressRecord.clockOut ? 'Clocked Out' : progressRecord.clockIn ? 'Clocked In' : 'Not Clocked In'}
+                    </span>
+
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+                      {progressRecord.clockOut && (
+                        <button className="btn btn-sm btn-outline-success" style={{ fontSize: 12 }} onClick={() => {
+                          // Download Excel/CSV for this selected employee
+                          const exportRows = [...(progressRecord.workProgress || [])];
+                          if (progressRecord.clockIn) {
+                            exportRows.unshift({
+                              type: 'clock_in',
+                              taskDetails: 'Clocked In',
+                              startTime: progressRecord.clockIn,
+                              endTime: progressRecord.clockIn,
+                              status: 'completed',
+                              remarks: '',
+                              feedback: ''
+                            });
+                          }
+                          if (progressRecord.clockOut) {
+                            exportRows.push({
+                              type: 'clock_out',
+                              taskDetails: 'Clocked Out',
+                              startTime: progressRecord.clockOut,
+                              endTime: progressRecord.clockOut,
+                              status: 'completed',
+                              remarks: '',
+                              feedback: ''
+                            });
+                          }
+
+                          const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Status', 'Remarks', 'Feedback'];
+                          const csvRows = [headers.join(',')];
+
+                          exportRows.forEach((row, idx) => {
+                            const values = [
+                              idx + 1,
+                              row.type || 'task',
+                              `"${(row.taskDetails || '').replace(/"/g, '""')}"`,
+                              row.startTime || '',
+                              row.endTime || '',
+                              row.status || '',
+                              `"${(row.remarks || '').replace(/"/g, '""')}"`,
+                              `"${(row.feedback || '').replace(/"/g, '""')}"`
+                            ];
+                            csvRows.push(values.join(','));
+                          });
+
+                          const csvContent = '\uFEFF' + csvRows.join('\n');
+                          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                          const url = URL.createObjectURL(blob);
+                          const link = document.createElement('a');
+                          link.setAttribute('href', url);
+                          link.setAttribute('download', `work_progress_${progressRecord.userId?.name}_${today}.csv`);
+                          link.style.visibility = 'hidden';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }}>
+                          <i className="bi bi-file-earmark-excel me-1" />Download Progress (Excel)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Work Progress Table */}
+                  <div className="table-responsive">
+                    <table className="table mb-0">
+                      <thead>
+                        <tr>
+                          <th style={{ width: 56 }}>S.no</th>
+                          <th style={{ minWidth: 220 }}>Task Details</th>
+                          <th style={{ width: 110 }}>Start Time</th>
+                          <th style={{ width: 110 }}>End Time</th>
+                          <th style={{ minWidth: 160 }}>Status</th>
+                          <th style={{ minWidth: 190 }}>Remarks</th>
+                          <th style={{ minWidth: 190 }}>Feedback</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          const dbRows = progressRecord.workProgress || [];
+                          const rows = [...dbRows];
+                          if (progressRecord.clockIn) {
+                            rows.unshift({
+                              type: 'clock_in',
+                              taskDetails: 'Clocked In',
+                              startTime: progressRecord.clockIn,
+                              endTime: progressRecord.clockIn,
+                              status: 'completed',
+                              remarks: '',
+                              feedback: ''
+                            });
+                          }
+                          if (progressRecord.clockOut) {
+                            rows.push({
+                              type: 'clock_out',
+                              taskDetails: 'Clocked Out',
+                              startTime: progressRecord.clockOut,
+                              endTime: progressRecord.clockOut,
+                              status: 'completed',
+                              remarks: '',
+                              feedback: ''
+                            });
+                          }
+
+                          return rows.map((row, idx) => {
+                            const isBreakRow = row.type === 'break' || row.type === 'lunch';
+                            const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
+                            return (
+                              <tr key={idx} style={{ background: isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
+                                <td style={{ fontSize: 13, fontWeight: 700 }}>{idx + 1}</td>
+                                <td>
+                                  {isVirtual ? (
+                                    row.type === 'clock_in' ? (
+                                      <span className="badge" style={{ background: '#dcfce7', color: '#16a34a', fontSize: '11.5px', fontWeight: 700 }}>
+                                        <i className="bi bi-box-arrow-in-right me-1" />Clocked In
+                                      </span>
+                                    ) : (
+                                      <span className="badge" style={{ background: '#fee2e2', color: '#dc2626', fontSize: '11.5px', fontWeight: 700 }}>
+                                        <i className="bi bi-box-arrow-right me-1" />Clocked Out
+                                      </span>
+                                    )
+                                  ) : isBreakRow ? (
+                                    <span className="badge" style={{ background: row.type === 'lunch' ? '#f5f3ff' : '#fffbeb', color: row.type === 'lunch' ? '#7c3aed' : '#d97706' }}>
+                                      <i className={`bi ${row.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{row.taskDetails || (row.type === 'lunch' ? 'Lunch break' : 'Break')}
+                                    </span>
+                                  ) : (
+                                    <span style={{ fontSize: 12 }}>{row.taskDetails || '—'}</span>
+                                  )}
+                                </td>
+                                <td style={{ fontSize: 13, fontWeight: 600 }}>{row.startTime || '--:--'}</td>
+                                <td style={{ fontSize: 13, fontWeight: 600 }}>{row.endTime || '--:--'}</td>
+                                <td>
+                                  <span className="badge" style={{ background: '#e2e8f0', color: '#475569', fontSize: 12 }}>
+                                    {row.status || 'pending'}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: 12, color: '#475569' }}>{row.remarks || '—'}</td>
+                                <td style={{ fontSize: 12, color: '#475569' }}>{row.feedback || '—'}</td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="card p-5 text-center">
+                  <i className="bi bi-calendar-x text-muted" style={{ fontSize: 32 }} />
+                  <h6 className="mt-3" style={{ fontWeight: 700 }}>No record today</h6>
+                  <p style={{ fontSize: 13, color: '#64748b' }}>This employee has not clocked in or has no attendance record for today.</p>
+                </div>
+              )
+            ) : (
+              <div className="card p-5 text-center">
+                <i className="bi bi-people text-muted" style={{ fontSize: 32 }} />
+                <h6 className="mt-3" style={{ fontWeight: 700 }}>Select an Employee</h6>
+                <p style={{ fontSize: 13, color: '#64748b' }}>Select an employee from the left panel to view their daily progress sheet.</p>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </AppShell>
   );

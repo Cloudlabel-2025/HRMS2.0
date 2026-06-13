@@ -36,6 +36,10 @@ export default function LeavePage() {
   const [loading, setLoading]       = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [toast, setToast]           = useState(null);
+  const [fieldErrs, setFieldErrs]   = useState({});
+  const fieldErrTimers = typeof window !== 'undefined' ? (window.__leaveErrTimers = window.__leaveErrTimers || {}) : {};
+  const setFErrs = (obj) => { setFieldErrs(obj); Object.keys(obj).forEach(k => { if(fieldErrTimers[k]) clearTimeout(fieldErrTimers[k]); fieldErrTimers[k] = setTimeout(() => setFieldErrs(p => { const n={...p}; delete n[k]; return n; }), 10000); }); };
+  const clearFErr = (k) => { if(fieldErrTimers[k]) { clearTimeout(fieldErrTimers[k]); delete fieldErrTimers[k]; } setFieldErrs(p => { const n={...p}; delete n[k]; return n; }); };
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -281,7 +285,7 @@ export default function LeavePage() {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Apply for Leave</h5>
-                <button className="btn-close" onClick={() => setShowModal(false)} />
+                <button className="btn-close" onClick={() => { setShowModal(false); setFieldErrs({}); }} />
               </div>
               <div className="modal-body">
                 <div className="mb-3">
@@ -293,16 +297,19 @@ export default function LeavePage() {
                 <div className="row g-3 mb-3">
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>From Date</label>
-                    <input type="date" className="form-control" value={form.from} onChange={e => setForm(p => ({ ...p, from: e.target.value }))} />
+                    <input type="date" className={`form-control ${fieldErrs.from?'is-invalid':''}`} value={form.from} onChange={e => { setForm(p => ({ ...p, from: e.target.value })); clearFErr('from'); }} />
+                    {fieldErrs.from && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.from}</div>}
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>To Date</label>
-                    <input type="date" className="form-control" value={form.to} onChange={e => setForm(p => ({ ...p, to: e.target.value }))} />
+                    <input type="date" className={`form-control ${fieldErrs.to?'is-invalid':''}`} value={form.to} onChange={e => { setForm(p => ({ ...p, to: e.target.value })); clearFErr('to'); }} />
+                    {fieldErrs.to && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.to}</div>}
                   </div>
                 </div>
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason</label>
-                  <textarea className="form-control" rows={3} value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
+                  <textarea className={`form-control ${fieldErrs.reason?'is-invalid':''}`} rows={3} value={form.reason} onChange={e => { setForm(p => ({ ...p, reason: e.target.value })); clearFErr('reason'); }} />
+                  {fieldErrs.reason && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.reason}</div>}
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
                   <i className="bi bi-info-circle me-2 text-primary" />

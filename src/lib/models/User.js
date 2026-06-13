@@ -41,6 +41,7 @@ const UserSchema = new mongoose.Schema({
 
   // First-login password reset enforcement
   isFirstLogin: { type: Boolean, default: true },
+  firstLoginAt: { type: Date, default: null },  // timestamp of first successful login
 
   // Login lockout
   loginAttempts:  { type: Number, default: 0 },

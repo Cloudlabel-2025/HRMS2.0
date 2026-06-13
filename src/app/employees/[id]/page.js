@@ -12,7 +12,11 @@ const TABS = [
   { key: 'attendance', label: 'Attendance',     icon: 'bi-clock-history' },
   { key: 'assets',     label: 'Assets & Docs',  icon: 'bi-box-seam' },
   { key: 'payroll',    label: 'Payroll',        icon: 'bi-cash-stack' },
+  { key: 'audit',      label: 'Audit Log',      icon: 'bi-shield-check' },
 ];
+
+const SEV_COLOR = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
+const SEV_BG    = { low: '#f0fdf4', medium: '#fffbeb', high: '#fef2f2' };
 
 function InfoRow({ icon, label, value }) {
   if (!value) return null;
@@ -43,6 +47,10 @@ function SectionCard({ title, icon, children }) {
   );
 }
 
+function composeAddressLine(form) {
+  return [form.addressLine1, form.addressLine2, form.addressLine3].map(v => String(v || '').trim()).filter(Boolean).join(', ');
+}
+
 export default function EmployeeProfilePage() {
   const { id } = useParams();
   const router = useRouter();
@@ -67,6 +75,13 @@ export default function EmployeeProfilePage() {
     setToast({ msg, type });
     setTimeout(() => setToast({ msg: '', type: 'success' }), 3000);
   };
+  const recordAuditAction = (action, details, severity = 'low') => {
+    api.post('/api/audit/action', { action, module: 'Employees', details, severity }).catch(() => {});
+  };
+  const rejectEdit = (message) => {
+    showToast(message, 'error');
+    recordAuditAction('Employee Profile Validation Failed', `${data?.employee?.name || 'Employee'}: ${message}`, 'medium');
+  };
 
   useEffect(() => {
     if (id) {
@@ -83,10 +98,21 @@ export default function EmployeeProfilePage() {
   const openEdit = () => {
     const emp = data?.employee;
     if (!emp) return;
+    const currentAddress = data?.identity?.addressHistory?.find(a => a.isCurrent) || data?.identity?.addressHistory?.[0] || {};
+    const emergency = data?.identity?.emergencyContacts?.find(c => c.isPrimary) || data?.identity?.emergencyContacts?.[0] || {};
     setEditForm({
       name: emp.name || '',
       email: emp.email || '',
       phone: emp.phone || '',
+      bloodGroup: data?.identity?.bloodGroup || '',
+      gender: data?.identity?.gender || '',
+      addressLine1: currentAddress.line1 || '',
+      addressLine2: currentAddress.line2 || '',
+      addressLine3: currentAddress.landmark || '',
+      cityTown: currentAddress.city || '',
+      pinCode: currentAddress.postalCode || '',
+      emergencyContactName: emergency.name || '',
+      emergencyContactPhone: emergency.phone || '',
       department: emp.department || '',
       designation: emp.designation || '',
       role: emp.role || 'employee',
@@ -101,14 +127,40 @@ export default function EmployeeProfilePage() {
   const saveEdit = async () => {
     const NAME_RE = /^[A-Za-z\s]+$/;
     const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!editForm.name?.trim()) return showToast('Name is required', 'error');
-    if (!NAME_RE.test(editForm.name.trim())) return showToast('Name must contain only letters and spaces', 'error');
-    if (!editForm.email?.trim() || !EMAIL_RE.test(editForm.email.trim())) return showToast('Valid email is required', 'error');
-    if (editForm.phone && !/^[0-9]{10}$/.test(editForm.phone.trim())) return showToast('Phone must be exactly 10 digits', 'error');
+    if (!editForm.name?.trim()) return rejectEdit('Name is required');
+    if (!NAME_RE.test(editForm.name.trim())) return rejectEdit('Name must contain only letters and spaces');
+    if (!editForm.email?.trim() || !EMAIL_RE.test(editForm.email.trim())) return rejectEdit('Valid email is required');
+    if (editForm.phone && !/^[0-9]{10}$/.test(editForm.phone.trim())) return rejectEdit('Phone must be exactly 10 digits');
+    if (editForm.pinCode && !/^[0-9]{6}$/.test(editForm.pinCode)) return rejectEdit('Pin code must be exactly 6 digits');
     setEditSaving(true);
     try {
       const payload = { ...editForm, skills: editForm.skills.split(',').map(s => s.trim()).filter(Boolean) };
       await api.put(`/api/employees/${id}`, payload);
+      if (data?.identity?._id) {
+        await api.put(`/api/core/identities/${data.identity._id}`, {
+          preferredName: editForm.name,
+          primaryEmail: editForm.email,
+          personalPhone: editForm.phone || '',
+          gender: editForm.gender || data.identity.gender || 'prefer_not_to_say',
+          bloodGroup: editForm.bloodGroup || '',
+          addressHistory: editForm.addressLine1 || editForm.cityTown || editForm.pinCode ? [{
+            addressType: 'current',
+            line1: composeAddressLine(editForm) || editForm.addressLine1,
+            city: editForm.cityTown || 'N/A',
+            state: 'N/A',
+            country: 'India',
+            postalCode: editForm.pinCode || '000000',
+            landmark: editForm.addressLine3 || '',
+            isCurrent: true,
+          }] : data.identity.addressHistory || [],
+          emergencyContacts: editForm.emergencyContactName || editForm.emergencyContactPhone ? [{
+            name: editForm.emergencyContactName || 'Emergency Contact',
+            relation: 'Emergency',
+            phone: editForm.emergencyContactPhone || '0000000000',
+            isPrimary: true,
+          }] : data.identity.emergencyContacts || [],
+        });
+      }
       showToast('Employee updated successfully');
       setShowEditModal(false);
       const res = await api.get(`/api/employees/${id}/details`);
@@ -138,12 +190,12 @@ export default function EmployeeProfilePage() {
   const AADHAAR_RE = /^[0-9]{12}$/;
 
   const saveIdentifiers = async () => {
-    if (!data?.identity?._id) return showToast('No identity record found', 'error');
-    if (!idForm.panNumber && !idForm.aadhaarNumber) return showToast('Enter PAN or Aadhaar to save', 'error');
+    if (!data?.identity?._id) return rejectEdit('No identity record found');
+    if (!idForm.panNumber && !idForm.aadhaarNumber) return rejectEdit('Enter PAN or Aadhaar to save');
     const pan = idForm.panNumber.toUpperCase().trim();
     const aadhaar = idForm.aadhaarNumber.replace(/\D/g, '');
-    if (pan && !PAN_RE.test(pan)) return showToast('Invalid PAN — must be 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)', 'error');
-    if (aadhaar && !AADHAAR_RE.test(aadhaar)) return showToast('Invalid Aadhaar — must be exactly 12 digits', 'error');
+    if (pan && !PAN_RE.test(pan)) return rejectEdit('Invalid PAN - must be 5 letters, 4 digits, 1 letter (e.g. ABCDE1234F)');
+    if (aadhaar && !AADHAAR_RE.test(aadhaar)) return rejectEdit('Invalid Aadhaar - must be exactly 12 digits');
     setIdSaving(true);
     try {
       const payload = { identifiers: {} };
@@ -164,6 +216,7 @@ export default function EmployeeProfilePage() {
   };
   const visibleTabs = TABS.filter(t => {
     if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
+    if (t.key === 'audit' && (!['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString())) return false;
     return true;
   });
 
@@ -623,6 +676,46 @@ export default function EmployeeProfilePage() {
         </div>
       )}
 
+      {/* AUDIT LOG TAB */}
+      {tab === 'audit' && (
+        <div className="card" style={{ borderRadius: 12, overflow: 'hidden' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <i className="bi bi-shield-check" style={{ color: '#3b82f6', fontSize: 15 }} />
+            <span style={{ fontWeight: 750, fontSize: 14.5 }}>Activity Audit Log</span>
+            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>{data.auditLogs?.length || 0} entries</span>
+          </div>
+          {!data.auditLogs?.length ? (
+            <div className="empty-state"><i className="bi bi-shield-check" /><p>No activity recorded yet</p></div>
+          ) : (
+            <div className="table-responsive">
+              <table className="table mb-0">
+                <thead>
+                  <tr><th>Action</th><th>Module</th><th>By</th><th>Details</th><th>Severity</th><th>Time</th></tr>
+                </thead>
+                <tbody>
+                  {data.auditLogs.map(log => (
+                    <tr key={log._id}>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</td>
+                      <td><span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontSize: 11 }}>{log.module}</span></td>
+                      <td style={{ fontSize: 12, color: '#334155', fontWeight: 600 }}>{log.userId?.name || '—'}</td>
+                      <td style={{ fontSize: 12, color: '#64748b', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.details || '—'}</td>
+                      <td>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: SEV_BG[log.severity] || '#f8fafc', color: SEV_COLOR[log.severity] || '#64748b', textTransform: 'capitalize' }}>
+                          {log.severity}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Inline Edit Modal */}
       {showEditModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
@@ -639,6 +732,23 @@ export default function EmployeeProfilePage() {
                     <input type="text" className="form-control" value={editForm.name || ''}
                       onChange={e => setEditForm(p => ({ ...p, name: e.target.value.replace(/[^A-Za-z\s]/g, '') }))} />
                   </div>
+                  <div className="col-md-3">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Blood Group</label>
+                    <select className="form-select" value={editForm.bloodGroup || ''} onChange={e => setEditForm(p => ({ ...p, bloodGroup: e.target.value }))}>
+                      <option value="">Select</option>
+                      {['A+','A-','B+','B-','AB+','AB-','O+','O-'].map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-3">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Gender</label>
+                    <select className="form-select" value={editForm.gender || ''} onChange={e => setEditForm(p => ({ ...p, gender: e.target.value }))}>
+                      <option value="">Select</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="non_binary">Non-Binary</option>
+                      <option value="prefer_not_to_say">Prefer not to say</option>
+                    </select>
+                  </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Email *</label>
                     <input type="email" className="form-control" autoComplete="off" value={editForm.email || ''}
@@ -649,6 +759,19 @@ export default function EmployeeProfilePage() {
                     <input type="tel" className="form-control" maxLength={10} value={editForm.phone || ''}
                       onChange={e => setEditForm(p => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} />
                     <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Numbers only, 10 digits</div>
+                  </div>
+                  <div className="col-12">
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4, paddingTop: 8, borderTop: '1px solid #f1f5f9' }}>Address Details</div>
+                  </div>
+                  <div className="col-md-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Address Line 1</label><input className="form-control" value={editForm.addressLine1 || ''} onChange={e => setEditForm(p => ({ ...p, addressLine1: e.target.value }))} /></div>
+                  <div className="col-md-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Address Line 2</label><input className="form-control" value={editForm.addressLine2 || ''} onChange={e => setEditForm(p => ({ ...p, addressLine2: e.target.value }))} /></div>
+                  <div className="col-md-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Address Line 3</label><input className="form-control" value={editForm.addressLine3 || ''} onChange={e => setEditForm(p => ({ ...p, addressLine3: e.target.value }))} /></div>
+                  <div className="col-md-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>City / Town</label><input className="form-control" value={editForm.cityTown || ''} onChange={e => setEditForm(p => ({ ...p, cityTown: e.target.value }))} /></div>
+                  <div className="col-md-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Pin Code</label><input className="form-control" maxLength={6} value={editForm.pinCode || ''} onChange={e => setEditForm(p => ({ ...p, pinCode: e.target.value.replace(/\D/g, '').slice(0, 6) }))} /></div>
+                  <div className="col-md-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Emergency Contact Name</label><input className="form-control" value={editForm.emergencyContactName || ''} onChange={e => setEditForm(p => ({ ...p, emergencyContactName: e.target.value.replace(/[^A-Za-z\s]/g, '') }))} /></div>
+                  <div className="col-md-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Emergency Contact Phone</label><input className="form-control" maxLength={10} value={editForm.emergencyContactPhone || ''} onChange={e => setEditForm(p => ({ ...p, emergencyContactPhone: e.target.value.replace(/\D/g, '').slice(0, 10) }))} /></div>
+                  <div className="col-12">
+                    <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 4, paddingTop: 8, borderTop: '1px solid #f1f5f9' }}>Work Details</div>
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Join Date</label>

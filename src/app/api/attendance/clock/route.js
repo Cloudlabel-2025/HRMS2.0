@@ -28,19 +28,25 @@ export async function POST(req) {
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
-    if (action === 'in') {
-      if (record?.clockIn) return fail('Already clocked in today', 400);
+    const ip = req.headers.get('x-forwarded-for') || '';
 
-      // Block clock-in if employee has an approved leave covering today
+    if (action === 'in') {
+      if (record?.clockIn) {
+        auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in today`, 'low', ip, null, user._id);
+        return fail('Already clocked in today', 400);
+      }
+
       const onLeave = await Leave.findOne({
         userId: user._id,
         status: 'approved',
         from: { $lte: today },
         to:   { $gte: today },
       });
-      if (onLeave) return fail(`You are on approved ${onLeave.type} today (${onLeave.from} to ${onLeave.to}). Clock-in is not allowed.`, 400);
+      if (onLeave) {
+        auditLog('Clock In Blocked', 'Attendance', user._id, `On approved ${onLeave.type} (${onLeave.from} to ${onLeave.to})`, 'low', ip, null, user._id);
+        return fail(`You are on approved ${onLeave.type} today (${onLeave.from} to ${onLeave.to}). Clock-in is not allowed.`, 400);
+      }
 
-      // Late detection: compare against 09:00
       const [h, m] = timeStr.split(':').map(Number);
       const minutesSince9 = (h - 9) * 60 + m;
       const lateFlag = minutesSince9 > LATE_THRESHOLD_MINUTES;
@@ -48,44 +54,66 @@ export async function POST(req) {
 
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },
-        { clockIn: timeStr, status, lateFlag },
+        {
+          $set: {
+            clockIn: timeStr,
+            status,
+            lateFlag,
+          },
+          $setOnInsert: {
+            workProgress: [{
+              type: 'task',
+              taskDetails: '',
+              startTime: timeStr,
+              endTime: null,
+              status: 'work_in_progress',
+              remarks: '',
+              feedback: '',
+            }],
+            breaks: [],
+            breakDeduction: 0,
+            baseHoursWorked: 0,
+          },
+        },
         { upsert: true, new: true }
       );
 
-      // Audit log
-      await auditLog(
-        'Clock In',
-        'Attendance',
-        user._id,
-        `Clocked in at ${timeStr}, Status: ${status}`,
-        'low',
-        req.headers.get('x-forwarded-for') || ''
-      );
+      await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}`, 'low', ip, null, user._id);
 
     } else if (action === 'out') {
-      if (!record?.clockIn) return fail('You have not clocked in yet', 400);
-      if (record?.clockOut) return fail('Already clocked out today', 400);
+      if (!record?.clockIn) {
+        auditLog('Clock Out Attempted', 'Attendance', user._id, `Not clocked in yet`, 'low', ip, null, user._id);
+        return fail('You have not clocked in yet', 400);
+      }
+      if (record?.clockOut) {
+        auditLog('Clock Out Attempted', 'Attendance', user._id, `Already clocked out today`, 'low', ip, null, user._id);
+        return fail('Already clocked out today', 400);
+      }
 
-      // Calculate hours worked
       const [ih, im] = record.clockIn.split(':').map(Number);
       const [oh, om] = timeStr.split(':').map(Number);
       const minutes  = (oh * 60 + om) - (ih * 60 + im);
+      const deduction = record.breakDeduction || 0;
 
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },
-        { clockOut: timeStr, hoursWorked: minutes },
+        {
+          clockOut: timeStr,
+          hoursWorked: Math.max(0, minutes - deduction),
+          baseHoursWorked: record.baseHoursWorked || minutes,
+          workProgress: (record.workProgress || []).map(row => (
+            row.startTime && !row.endTime
+              ? { ...(row.toObject ? row.toObject() : row), endTime: timeStr, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
+              : row
+          )),
+          breaks: (record.breaks || []).map(row => (
+            row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: timeStr } : row
+          )),
+        },
         { new: true }
       );
 
-      // Audit log
-      await auditLog(
-        'Clock Out',
-        'Attendance',
-        user._id,
-        `Clocked out at ${timeStr}, Hours worked: ${Math.round(minutes/60)} hrs`,
-        'low',
-        req.headers.get('x-forwarded-for') || ''
-      );
+      await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${timeStr}, Hours worked: ${Math.floor(minutes/60)}h ${minutes%60}m`, 'low', ip, null, user._id);
 
     } else {
       return fail('Invalid action. Use "in" or "out"', 400);

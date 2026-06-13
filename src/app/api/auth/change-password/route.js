@@ -1,8 +1,7 @@
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { connectDB } from '@/lib/db';
 import User from '@/lib/models/User';
-import { AuditLog } from '@/lib/models/index';
 
 export async function POST(req) {
   try {
@@ -26,11 +25,7 @@ export async function POST(req) {
     fullUser.isFirstLogin = false;
     await fullUser.save();
 
-    await AuditLog.create({
-      action: 'Password Changed', module: 'Auth', userId: user._id,
-      details: fullUser.isFirstLogin ? 'First-login password reset' : 'Password changed',
-      severity: 'medium',
-    });
+    await auditLog('Password Changed', 'Auth', user._id, 'Password changed by user', 'medium', req.headers.get('x-forwarded-for') || '', null, user._id);
 
     return ok({ message: 'Password updated successfully' });
   } catch (e) {

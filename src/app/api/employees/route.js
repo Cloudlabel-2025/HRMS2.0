@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog, Employee, Department } from '@/lib/models/index';
+import { AuditLog, Employee, Department, Applicant } from '@/lib/models/index';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { hasAccess } from '@/lib/rbac';
@@ -79,18 +79,21 @@ export async function POST(req) {
     await dbConnect();
 
     const body = await req.json();
-    
-    // Validate request against schema
+    const ip = req.headers.get('x-forwarded-for') || '';
+
     const validation = validateRequest(CreateEmployeeSchema, body);
     if (!validation.valid) {
+      auditLog('Employee Create Failed', 'Employees', user._id, `Validation failed: ${validation.error}`, 'medium', ip, null, user._id);
       return fail('Validation failed: ' + validation.error, 400);
     }
-    
+
     const validated = validation.data;
 
-    // Check if email already exists
     const existingUser = await User.findOne({ email: validated.email });
-    if (existingUser) return fail('Email already exists', 409);
+    if (existingUser) {
+      auditLog('Employee Create Failed', 'Employees', user._id, `Email already exists: ${validated.email}`, 'medium', ip, null, user._id);
+      return fail('Email already exists', 409);
+    }
 
     // Generate temporary password if not provided
     let generatedPassword = null;
@@ -145,11 +148,12 @@ export async function POST(req) {
       );
     }
 
-    const ip = req.headers.get('x-forwarded-for') || '';
-
     // 3-5. Auto-create Core Identity + Profile (non-blocking — employee already saved)
     try {
       const nameParts = validated.name.trim().replace(/\s+/g, ' ').split(' ');
+      const sourceApplicant = validated.sourceApplicantId
+        ? await Applicant.findById(validated.sourceApplicantId).catch(() => null)
+        : null;
       const identityPayload = {
         authUserId:      authUser._id,
         legalFirstName:  nameParts[0] || validated.name,
@@ -162,7 +166,7 @@ export async function POST(req) {
         bloodGroup:      validated.bloodGroup || '',
         maritalStatus:   'prefer_not_to_say',
         nationality:     'Indian',
-        sourceSystem:    'manual',
+        sourceSystem:    sourceApplicant ? 'recruitment' : 'manual',
       };
 
       // Address
@@ -209,7 +213,7 @@ export async function POST(req) {
         designation:      validated.designation || '',
         shift:            validated.shift || 'Morning (9AM-6PM)',
         hireDate:         validated.joinDate || null,
-        sourceSystem:     'manual',
+        sourceSystem:     sourceApplicant ? 'recruitment' : 'manual',
       });
 
       await User.findByIdAndUpdate(authUser._id, {
@@ -230,15 +234,23 @@ export async function POST(req) {
         actorUserId: user._id,
         actorRole:   user.role,
         ip,
-        metadata:    { source: 'employee.register.auto' },
+        metadata:    { source: sourceApplicant ? 'employee.register.recruitment' : 'employee.register.auto', applicantId: sourceApplicant?._id },
       });
     } catch (coreErr) {
       console.error('Core profile auto-creation failed (non-fatal):', coreErr.message);
       // Still return success — employee login works, core profile can be created manually from Core HR
     }
 
+    if (validated.sourceApplicantId) {
+      await Applicant.findByIdAndUpdate(validated.sourceApplicantId, {
+        stage: 'Hired',
+        onboardedAt: new Date(),
+        onboardedEmployeeId: employee._id,
+      });
+    }
+
     // Audit log
-    await auditLog('Employee Created', 'Employees', user._id, `Created: ${employee.name} (${employee.email}), Role: ${employee.role}`, 'medium', ip);
+    await auditLog('Employee Created', 'Employees', user._id, `Created: ${employee.name} (${employee.email}), Role: ${employee.role}`, 'medium', ip, null, authUser._id);
 
     return ok({
       employee,

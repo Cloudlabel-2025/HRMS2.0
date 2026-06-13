@@ -130,12 +130,13 @@ const EmployeeSchema = new mongoose.Schema({
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 const AuditLogSchema = new mongoose.Schema({
-  action:   { type: String, required: true },
-  module:   { type: String, required: true },
-  userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  details:  { type: String },
-  severity: { type: String, enum: ['low','medium','high'], default: 'low' },
-  ip:       { type: String, default: '' },
+  action:        { type: String, required: true },
+  module:        { type: String, required: true },
+  userId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  targetUserId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  details:       { type: String },
+  severity:      { type: String, enum: ['low','medium','high'], default: 'low' },
+  ip:            { type: String, default: '' },
 }, { timestamps: true });
 
 // ── SME ───────────────────────────────────────────────────────────────────────
@@ -152,20 +153,88 @@ const SMESchema = new mongoose.Schema({
 
 // ── Recruitment ───────────────────────────────────────────────────────────────
 const JobSchema = new mongoose.Schema({
-  title:      { type: String, required: true },
-  department: { type: String },
-  type:       { type: String, enum: ['Full-time','Part-time','Contract','Intern'], default: 'Full-time' },
-  status:     { type: String, enum: ['active','closed'], default: 'active' },
+  // Auto-generated
+  jobCode:       { type: String, unique: true, sparse: true },
+
+  // Basic Information
+  title:         { type: String, required: true, trim: true },
+  department:    { type: String, default: '' },
+  designation:   { type: String, default: '' },
+  type:          { type: String, enum: ['Full-time','Part-time','Contract','Intern'], default: 'Full-time' },
+  employmentMode:{ type: String, enum: ['Remote','Hybrid','Onsite'], default: 'Onsite' },
+  location:      { type: String, default: '' },
+  openings:      { type: Number, default: 1, min: 1 },
+  status:        { type: String, enum: ['draft','active','paused','closed','archived'], default: 'draft' },
+
+  // Job Requirements
+  experienceLevel: { type: String, enum: ['fresher','experienced'], default: 'fresher' },
+  minExperience:   { type: Number, default: null },
+  maxExperience:   { type: Number, default: null },
+  qualifications:  [{ type: String }],
+  requiredSkills:  [{ type: String }],
+  preferredSkills: [{ type: String }],
+  description:     { type: String, default: '' },
+
+  // Compensation
+  salaryType:    { type: String, enum: ['fixed','range','not_disclosed'], default: 'not_disclosed' },
+  fixedSalary:   { type: Number, default: null },
+  minSalary:     { type: Number, default: null },
+  maxSalary:     { type: Number, default: null },
+  salaryCurrency:{ type: String, enum: ['INR','USD','EUR','GBP'], default: 'INR' },
+  salaryPeriod:  { type: String, enum: ['monthly','annual'], default: 'annual' },
+  benefits:      [{ type: String }],
+  salaryRange:   { type: String, default: '' }, // legacy display field
+
+  // Recruitment Process
+  hiringManagerId:    { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  recruiterId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  applicationDeadline:{ type: Date, default: null },
+  interviewRounds:    { type: Number, default: 1, min: 1 },
+  assessmentRequired: { type: Boolean, default: false },
+
+  // Screening Questions
+  screeningQuestions: [{
+    question: { type: String },
+    type:     { type: String, enum: ['text','yes_no','multiple_choice'], default: 'text' },
+    options:  [{ type: String }],
+    required: { type: Boolean, default: false },
+  }],
+
+  // Publishing
+  isInternal: { type: Boolean, default: false },
+  autoClose:  { type: Boolean, default: false },
+  publishedAt:{ type: Date, default: null },
+
   createdBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  updatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 
 const ApplicantSchema = new mongoose.Schema({
   jobId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Job', required: true },
   name:    { type: String, required: true },
   email:   { type: String, required: true },
+  phone:   { type: String, default: '' },
   stage:   { type: String, enum: ['Applied','Screening','Interview','Offer','Hired','Rejected'], default: 'Applied' },
   score:   { type: Number, default: 0 },
   resume:  { type: String, default: '' },
+  qualification: { type: String, default: '' },
+  skills: [{ type: String }],
+  isFresher: { type: Boolean, default: true },
+  experienceYears: { type: Number, default: 0 },
+  referralName: { type: String, default: '' },
+  referralFromOffice: { type: Boolean, default: false },
+  referralEmployeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
+  rejectionReason: { type: String, default: '' },
+  rejectedAt: { type: Date, default: null },
+  rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  previousRejection: {
+    matchedBy: { type: String, enum: ['email', 'phone', 'email_phone', ''], default: '' },
+    applicantId: { type: mongoose.Schema.Types.ObjectId, ref: 'Applicant', default: null },
+    reason: { type: String, default: '' },
+    rejectedAt: { type: Date, default: null },
+  },
+  onboardedAt: { type: Date, default: null },
+  onboardedEmployeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Employee', default: null },
 }, { timestamps: true });
 
 // ── Attendance Regularization ────────────────────────────────────────────────

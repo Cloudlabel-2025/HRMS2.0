@@ -51,10 +51,10 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
-    
-    // Validate request
+    const ip = req.headers.get('x-forwarded-for') || '';
     const validation = validateRequest(AttendanceRegularizeSchema, body);
     if (!validation.valid) {
+      auditLog('Regularization Request Failed', 'Attendance', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, user._id);
       return fail('Validation failed: ' + validation.error, 400);
     }
 
@@ -76,7 +76,9 @@ export async function POST(req) {
       user._id,
       `Requested regularization for ${date}`,
       'low',
-      req.headers.get('x-forwarded-for') || ''
+      req.headers.get('x-forwarded-for') || '',
+      null,
+      user._id
     );
 
     return ok(request, 201);
@@ -109,8 +111,8 @@ export async function PUT(req) {
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
 
-    // Check if already processed
     if (reg.status !== 'pending') {
+      auditLog(`Regularization Review Attempted`, 'Attendance', user._id, `Attempted to ${action} already-processed request (status: ${reg.status})`, 'low', req.headers.get('x-forwarded-for') || '', null, reg.userId);
       return fail('This request has already been processed', 400);
     }
 
@@ -140,7 +142,9 @@ export async function PUT(req) {
       user._id,
       `${action} regularization request for ${reg.userId} on ${reg.date}`,
       action === 'approved' ? 'medium' : 'low',
-      req.headers.get('x-forwarded-for') || ''
+      req.headers.get('x-forwarded-for') || '',
+      null,
+      reg.userId
     );
 
     return ok(reg);

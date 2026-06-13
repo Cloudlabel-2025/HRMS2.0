@@ -77,24 +77,41 @@ export async function POST(req) {
 
     await dbConnect();
     const body = await req.json();
+    const ip = req.headers.get('x-forwarded-for') || '';
     const validation = validateRequest(CreateSelfServiceRequestSchema, body);
-    if (!validation.valid) return fail(`Validation failed: ${validation.error}`, 400);
+    if (!validation.valid) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, user._id);
+      return fail(`Validation failed: ${validation.error}`, 400);
+    }
 
     const identityId = user.identityId;
-    if (!identityId) return fail('Identity link not found for this user', 404);
+    if (!identityId) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Identity link not found', 'low', ip, null, user._id);
+      return fail('Identity link not found for this user', 404);
+    }
 
     const identity = await UsrIdentity.findById(identityId);
-    if (!identity) return fail('Identity not found', 404);
+    if (!identity) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Identity record not found', 'low', ip, null, user._id);
+      return fail('Identity not found', 404);
+    }
 
     const profile = await EmpProfile.findOne({ identityId: identity._id });
-    if (!profile) return fail('Employment profile not found', 404);
+    if (!profile) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Employment profile not found', 'low', ip, null, user._id);
+      return fail('Employment profile not found', 404);
+    }
 
     if (body.requestType === 'resignation' && ['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus)) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Resignation request failed: profile already separated', 'low', ip, null, user._id);
       return fail('This profile is already separated', 400);
     }
 
     const existingPending = await SelfServiceRequest.findOne({ identityId: identity._id, status: 'pending', requestType: body.requestType });
-    if (existingPending) return fail('You already have a pending request of this type', 409);
+    if (existingPending) {
+      auditLog('Self-Service Request Failed', 'SelfService', user._id, `Already has pending ${body.requestType} request`, 'low', ip, null, user._id);
+      return fail('You already have a pending request of this type', 409);
+    }
 
     const request = await SelfServiceRequest.create({
       identityId: identity._id,
@@ -105,7 +122,7 @@ export async function POST(req) {
       requestSource: 'employee',
     });
 
-    await auditLog('Self-Service Request Created', 'SelfService', user._id, `Created ${body.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Self-Service Request Created', 'SelfService', user._id, `Created ${body.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
 
     // Notify all HR admins
     const hrAdmins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id');

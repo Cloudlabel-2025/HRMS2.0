@@ -64,31 +64,40 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
+    const ip = req.headers.get('x-forwarded-for') || '';
     const validation = validateRequest(CreateLeaveSchema, body);
-    if (!validation.valid) return fail('Validation failed: ' + validation.error, 400);
+    if (!validation.valid) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Validation failed: ${validation.error}`, 'low', ip, null, user._id);
+      return fail('Validation failed: ' + validation.error, 400);
+    }
 
     const { type, from, to, reason } = validation.data;
     const days = Math.ceil((new Date(to) - new Date(from)) / (1000 * 60 * 60 * 24)) + 1;
 
     if (user.role === 'intern' && !['Casual Leave', 'Sick Leave'].includes(type)) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Intern not allowed to apply for ${type}`, 'low', ip, null, user._id);
       return fail('Interns can only apply for Casual or Sick Leave', 400);
     }
 
     const existing = await Leave.findOne({ userId: user._id, status: 'pending' });
-    if (existing) return fail('You already have a pending leave application. Wait for it to be resolved before applying again.', 400);
+    if (existing) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, 'Already has a pending leave application', 'low', ip, null, user._id);
+      return fail('You already have a pending leave application. Wait for it to be resolved before applying again.', 400);
+    }
 
-    // Check for date overlap with any approved or pending leave
     const overlap = await Leave.findOne({
       userId: user._id,
       status: { $in: ['pending', 'approved'] },
       from: { $lte: to },
       to:   { $gte: from },
     });
-    if (overlap) return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+    if (overlap) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
+      return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+    }
 
     const leave = await Leave.create({ userId: user._id, type, from, to, days, reason, status: 'pending' });
 
-    // Notify all admins (super_admin + admin_full)
     const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] } }).select('_id');
     if (admins.length) {
       await notify(
@@ -100,7 +109,7 @@ export async function POST(req) {
       );
     }
 
-    await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${type} (${from} to ${to})`, 'low', req.headers.get('x-forwarded-for') || '');
+    await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${type} (${from} to ${to})`, 'low', ip, null, user._id);
     return ok(leave, 201);
   } catch (e) {
     return fail(e.message, 500);

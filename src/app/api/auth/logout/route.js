@@ -29,14 +29,7 @@ export async function POST(req) {
     });
 
     // Audit log
-    await auditLog(
-      'Logout',
-      'Auth',
-      user._id,
-      `User ${user.name} logged out`,
-      'low',
-      ip
-    );
+    await auditLog('Logout', 'Auth', user._id, `User ${user.name} logged out`, 'low', ip, null, user._id);
 
     return ok({ message: 'Logged out successfully' });
   } catch (e) {

@@ -2,9 +2,8 @@ import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
 
 export async function POST(req) {
   try {
@@ -60,11 +59,10 @@ export async function POST(req) {
       results.push(payroll);
     }
 
-    await AuditLog.create({
-      action: 'Payroll Run', module: 'Payroll', userId: user._id,
-      details: `Payroll draft generated for ${month} — ${results.length} employees`,
-      severity: 'high',
-    });
+    const ip = req.headers.get('x-forwarded-for') || '';
+    await Promise.all(results.map(r =>
+      auditLog('Payroll Run', 'Payroll', user._id, `Payroll draft generated for ${month}`, 'high', ip, null, r.userId)
+    ));
 
     return ok({ processed: results.length, month });
   } catch (e) {
