@@ -56,8 +56,19 @@ export async function GET(req) {
       query.userId = user._id;
     }
 
-    if (date)      query.date = date;
-    else if (month) query.date = { $regex: '^' + month };
+    const fromDate = searchParams.get('fromDate');
+    const toDate = searchParams.get('toDate');
+
+    if (date) {
+      query.date = date;
+    } else if (fromDate || toDate) {
+      const dateRange = {};
+      if (fromDate) dateRange.$gte = fromDate;
+      if (toDate) dateRange.$lte = toDate;
+      query.date = dateRange;
+    } else if (month) {
+      query.date = { $regex: '^' + month };
+    }
 
     const records = await Attendance.find(query)
       .populate('userId', 'name avatar department role')

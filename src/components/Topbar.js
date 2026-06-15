@@ -79,8 +79,9 @@ export default function Topbar({ title, onMenuClick }) {
 
       <div className="topbar-right">
         <div className="topbar-search d-none d-md-flex">
-          <i className="bi bi-search" style={{ color: '#94a3b8', fontSize: 13 }} />
+          <i className="bi bi-search" style={{ color: '#94a3b8', fontSize: 14 }} />
           <input placeholder="Search..." />
+          <kbd style={{ fontSize: 10, color: '#94a3b8', background: '#e2e8f0', borderRadius: 4, padding: '1px 5px', fontFamily: 'inherit', letterSpacing: 0.5 }}>⌘K</kbd>
         </div>
 
         <div style={{ position: 'relative' }}>
@@ -128,7 +129,7 @@ export default function Topbar({ title, onMenuClick }) {
 
         <div style={{ position: 'relative' }}>
           <div className="avatar" onClick={() => { setShowProfile(p => !p); setShowNotif(false); }}
-            style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #1e293b)` }}>
+            style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)` }}>
             {user.avatar}
           </div>
           {showProfile && (

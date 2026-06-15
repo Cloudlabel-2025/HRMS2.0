@@ -38,7 +38,7 @@ function composeAddress(form) {
 
 export default function EmployeesPage() {
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatDateTime } = useSettings();
   const { errors: formErrs, setErrors: setFormErrs, clearError: clearFormErr, clearAll: clearFormErrs, Err: FErr } = useFormErrors();
   const [employees, setEmployees]   = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -207,23 +207,28 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      <div className="page-header">
+      {/* Page header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, marginBottom: 24 }}>
         <div>
-          <h4>Employee Management</h4>
-          <p>{employees.filter(e => e.status === 'active').length} active · {employees.filter(e => e.status === 'inactive').length} inactive</p>
+          <h4 style={{ fontSize: 24, fontWeight: 800, color: '#0f172a', margin: 0, letterSpacing: '-0.01em' }}>Employee Management</h4>
+          <p style={{ fontSize: 14, color: '#64748b', margin: '4px 0 0' }}>
+            <span style={{ fontWeight: 600, color: '#10b981' }}>{employees.filter(e => e.status === 'active').length} active</span>
+            <span style={{ color: '#cbd5e1', margin: '0 8px' }}>·</span>
+            <span style={{ fontWeight: 600, color: '#94a3b8' }}>{employees.filter(e => e.status === 'inactive').length} inactive</span>
+          </p>
         </div>
         {canAdd && (
-          <button className="btn btn-primary" onClick={openAdd}>
+          <button className="btn btn-primary" onClick={openAdd} style={{ borderRadius: 999, padding: '10px 24px', fontSize: 13.5 }}>
             <i className="bi bi-plus-lg me-2" />Add Employee
           </button>
         )}
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f1f4f9', borderRadius: 14, padding: 4, width: 'fit-content' }}>
         {['directory', 'orgchart', 'firstlogin'].map(t => (
           <button key={t} onClick={() => { setTab(t); if (t === 'firstlogin') loadFirstLogins(); }}
-            style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#1e293b' : '#64748b', boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
+            style={{ padding: '8px 20px', borderRadius: 10, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#0f172a' : '#64748b', boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.08)' : 'none', transition: 'all 0.2s' }}>
             {t === 'directory' ? 'Directory' : t === 'orgchart' ? 'Org Chart' : <><i className="bi bi-box-arrow-in-right me-1" />First Login</>}
           </button>
         ))}
@@ -231,42 +236,48 @@ export default function EmployeesPage() {
 
       {tab === 'directory' && (
         <>
-          <div className="card p-3 mb-3">
-            <div className="row g-2">
-              <div className="col-md-4">
+          {/* Filters */}
+          <div className="card" style={{ padding: '16px 20px', marginBottom: 20, borderRadius: 14 }}>
+            <div className="row g-2 align-items-end">
+              <div className="col-md-3">
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, display: 'block' }}>Search</label>
                 <div style={{ position: 'relative' }}>
-                  <i className="bi bi-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 13 }} />
-                  <input className="form-control" placeholder="Search by name, email, department..." style={{ paddingLeft: 32, fontSize: 13 }} value={search} onChange={e => setSearch(e.target.value)} />
+                  <i className="bi bi-search" style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 13 }} />
+                  <input className="form-control" placeholder="Search by name, email, department..." style={{ paddingLeft: 34, fontSize: 13, borderRadius: 10, minHeight: 40 }} value={search} onChange={e => setSearch(e.target.value)} />
                 </div>
               </div>
               <div className="col-md-2">
-                <select className="form-select" style={{ fontSize: 13 }} value={filterDept} onChange={e => setFilterDept(e.target.value)}>
-                  <option value="">All Departments</option>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, display: 'block' }}>Department</label>
+                <select className="form-select" style={{ fontSize: 13, borderRadius: 10, minHeight: 40 }} value={filterDept} onChange={e => setFilterDept(e.target.value)}>
+                  <option value="">All</option>
                   {allDepts.map(d => <option key={d}>{d}</option>)}
                 </select>
               </div>
               <div className="col-md-2">
-                <select className="form-select" style={{ fontSize: 13 }} value={filterRole} onChange={e => setFilterRole(e.target.value)}>
-                  <option value="">All Roles</option>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, display: 'block' }}>Role</label>
+                <select className="form-select" style={{ fontSize: 13, borderRadius: 10, minHeight: 40 }} value={filterRole} onChange={e => setFilterRole(e.target.value)}>
+                  <option value="">All</option>
                   {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </div>
               <div className="col-md-2">
-                <select className="form-select" style={{ fontSize: 13 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-                  <option value="">All Status</option>
+                <label style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6, display: 'block' }}>Status</label>
+                <select className="form-select" style={{ fontSize: 13, borderRadius: 10, minHeight: 40 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+                  <option value="">All</option>
                   <option value="active">Active</option>
                   <option value="inactive">Inactive</option>
                 </select>
               </div>
-              <div className="col-md-2">
-                <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setSearch(''); setFilterDept(''); setFilterRole(''); setFilterStatus(''); }}>
-                  <i className="bi bi-x-circle me-1" />Clear
+              <div className="col-md-3">
+                <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13, borderRadius: 10, minHeight: 40 }} onClick={() => { setSearch(''); setFilterDept(''); setFilterRole(''); setFilterStatus(''); }}>
+                  <i className="bi bi-x-circle me-1" />Clear Filters
                 </button>
               </div>
             </div>
           </div>
 
-          <div className="card">
+          {/* Table */}
+          <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
             {loading ? (
               <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
             ) : (
@@ -282,31 +293,31 @@ export default function EmployeesPage() {
                     {filtered.length === 0 ? (
                       <tr><td colSpan={8}><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></td></tr>
                     ) : filtered.map(emp => (
-                      <tr key={emp._id}>
+                      <tr key={emp._id} style={{ transition: 'background 0.15s' }}>
                         <td>
                           <Link href={`/employees/${emp._id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <div style={{ width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                              <div style={{ width: 38, height: 38, borderRadius: 12, background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #6366f1)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
                                 {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
                               </div>
                               <div>
-                                <div style={{ fontWeight: 600, fontSize: 13 }} className="text-primary text-decoration-none">{emp.name}</div>
-                                <div style={{ fontSize: 11, color: '#94a3b8' }}>{emp.email}</div>
+                                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{emp.name}</div>
+                                <div style={{ fontSize: 12, color: '#94a3b8' }}>{emp.email}</div>
                               </div>
                             </div>
                           </Link>
                         </td>
-                        <td style={{ fontSize: 13 }}>{emp.employeeNumber ? <span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontWeight: 700 }}>{emp.employeeNumber}</span> : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>}</td>
-                        <td style={{ fontSize: 13 }}>{emp.department}</td>
-                        <td style={{ fontSize: 13 }}>{emp.designation}</td>
-                        <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b' }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
-                        <td><span className={`badge ${emp.status === 'active' ? 'status-approved' : 'status-rejected'}`}>{emp.status === 'active' ? 'Active' : 'Inactive'}</span></td>
-                        <td>{emp.employmentStatus ? <span className="badge" style={{ background: '#f8fafc', color: '#475569', textTransform: 'capitalize', border: '1px solid #e2e8f0' }}>{emp.employmentStatus.replace(/_/g, ' ')}</span> : <span style={{ color: '#94a3b8', fontSize: 12 }}>—</span>}</td>
+                        <td style={{ fontSize: 13 }}>{emp.employeeNumber ? <span className="badge" style={{ background: '#eef2ff', color: '#4f46e5', fontWeight: 700, borderRadius: 8 }}>{emp.employeeNumber}</span> : <span style={{ color: '#cbd5e1', fontSize: 12 }}>—</span>}</td>
+                        <td style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>{emp.department}</td>
+                        <td style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>{emp.designation}</td>
+                        <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b', borderRadius: 8 }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
+                        <td><span className={`badge ${emp.status === 'active' ? 'status-approved' : 'status-rejected'}`} style={{ borderRadius: 8 }}>{emp.status === 'active' ? 'Active' : 'Inactive'}</span></td>
+                        <td>{emp.employmentStatus ? <span className="badge" style={{ background: '#f1f5f9', color: '#475569', textTransform: 'capitalize', borderRadius: 8 }}>{emp.employmentStatus.replace(/_/g, ' ')}</span> : <span style={{ color: '#cbd5e1', fontSize: 12 }}>—</span>}</td>
                         {canManage && (
                           <td>
                             <div style={{ display: 'flex', gap: 4 }}>
-                              <button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(emp)}><i className="bi bi-pencil" /></button>
-                              <button className="btn btn-sm btn-outline-secondary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => toggleStatus(emp)}><i className={`bi ${emp.status === 'active' ? 'bi-pause-circle' : 'bi-play-circle'}`} /></button>
+                              <button className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, background: '#eff6ff', color: '#2563eb', border: '1px solid #dbeafe' }} onClick={() => openEdit(emp)}><i className="bi bi-pencil" /></button>
+                              <button className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, background: '#f8fafc', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={() => toggleStatus(emp)}><i className={`bi ${emp.status === 'active' ? 'bi-pause-circle' : 'bi-play-circle'}`} /></button>
                             </div>
                           </td>
                         )}
@@ -321,24 +332,36 @@ export default function EmployeesPage() {
       )}
 
       {tab === 'orgchart' && (
-        <div className="card p-4">
-          <div className="section-title mb-4">Organization Chart</div>
+        <div className="card" style={{ borderRadius: 14, padding: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 24 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className="bi bi-diagram-3" style={{ color: '#3b82f6', fontSize: 15 }} />
+            </div>
+            <span style={{ fontSize: 16, fontWeight: 700, color: '#0f172a' }}>Organization Chart</span>
+          </div>
           {deptGroups.length === 0 && <div className="empty-state"><i className="bi bi-diagram-3" /><p>No employees yet</p></div>}
           {deptGroups.map(g => (
             <div key={g.dept} style={{ marginBottom: 28 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>{g.dept}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1 }}>{g.dept}</span>
+                <span style={{ fontSize: 11, color: '#94a3b8', background: '#f1f4f9', borderRadius: 999, padding: '1px 8px', fontWeight: 600 }}>{g.members.length}</span>
+              </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
                 {g.members.map(emp => (
-                  <div key={emp._id} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '14px 16px', minWidth: 180, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: '50%', background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-                      {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
+                  <Link key={emp._id} href={`/employees/${emp._id}`} style={{ textDecoration: 'none' }}>
+                    <div style={{ background: '#fff', border: '1px solid #f1f5f9', borderRadius: 14, padding: '16px 20px', minWidth: 200, display: 'flex', alignItems: 'center', gap: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', transition: 'all 0.2s' }}
+                      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 16px rgba(0,0,0,0.06)'; e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                      onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; e.currentTarget.style.borderColor = '#f1f5f9'; e.currentTarget.style.transform = 'none'; }}>
+                      <div style={{ width: 42, height: 42, borderRadius: 12, background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #6366f1)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 700, flexShrink: 0 }}>
+                        {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 650, fontSize: 13.5, color: '#0f172a' }}>{emp.name}</div>
+                        <div style={{ fontSize: 11.5, color: '#64748b' }}>{emp.designation}</div>
+                        <span className="badge mt-1" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b', fontSize: 10, borderRadius: 6 }}>{ROLE_LABELS[emp.role] || emp.role}</span>
+                      </div>
                     </div>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{emp.name}</div>
-                      <div style={{ fontSize: 11, color: '#64748b' }}>{emp.designation}</div>
-                      <span className="badge mt-1" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b', fontSize: 10 }}>{ROLE_LABELS[emp.role] || emp.role}</span>
-                    </div>
-                  </div>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -347,15 +370,20 @@ export default function EmployeesPage() {
       )}
 
       {tab === 'firstlogin' && (
-        <div className="card">
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <i className="bi bi-box-arrow-in-right" style={{ color: '#3b82f6', fontSize: 15 }} />
-            <span style={{ fontWeight: 750, fontSize: 14.5 }}>First Login Tracker</span>
-            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto' }}>
-              {firstLogins.filter(e => e.neverLoggedIn).length} pending · {firstLogins.filter(e => !e.neverLoggedIn).length} logged in
+        <div className="card" style={{ borderRadius: 14, overflow: 'hidden', border: '1px solid rgba(226,232,240,0.8)' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', border: '1px solid #3b82f610', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className="bi bi-box-arrow-in-right" style={{ color: '#3b82f6', fontSize: 15 }} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>First Login Tracker</span>
+            <span style={{ fontSize: 12, color: '#94a3b8', marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ background: '#fef3c7', color: '#d97706', borderRadius: 999, padding: '2px 10px', fontWeight: 600, border: '1px solid #fde68a' }}>{firstLogins.filter(e => e.neverLoggedIn).length} pending</span>
+              <span style={{ background: '#dcfce7', color: '#16a34a', borderRadius: 999, padding: '2px 10px', fontWeight: 600, border: '1px solid #bbf7d0' }}>{firstLogins.filter(e => !e.neverLoggedIn).length} logged in</span>
             </span>
-            <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12 }} onClick={loadFirstLogins}>
-              <i className="bi bi-arrow-clockwise" />
+            <button className="btn btn-sm" style={{ fontSize: 12, borderRadius: 8, background: '#f1f4f9', border: '1px solid #e2e8f0', color: '#64748b', padding: '6px 12px', transition: 'all 0.2s' }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#e2e8f0'; }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#f1f4f9'; }} onClick={loadFirstLogins}>
+              <i className="bi bi-arrow-clockwise me-1" />Refresh
             </button>
           </div>
           {firstLoginsLoading ? (
@@ -378,33 +406,48 @@ export default function EmployeesPage() {
                 </thead>
                 <tbody>
                   {firstLogins.map(emp => (
-                    <tr key={emp._id}>
+                    <tr key={emp._id} style={{ transition: 'background 0.15s' }}>
                       <td>
                         <Link href={`/employees/${emp._id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 36, height: 36, borderRadius: '50%', background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                            <div style={{ width: 38, height: 38, borderRadius: 12, background: `linear-gradient(135deg, ${ROLE_COLORS[emp.role] || '#64748b'}, #6366f1)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
                               {emp.name?.slice(0, 2).toUpperCase()}
                             </div>
                             <div>
-                              <div style={{ fontWeight: 600, fontSize: 13, color: '#2563eb' }}>{emp.name}</div>
-                              <div style={{ fontSize: 11, color: '#94a3b8' }}>{emp.email}</div>
+                              <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{emp.name}</div>
+                              <div style={{ fontSize: 12, color: '#94a3b8' }}>{emp.email}</div>
                             </div>
                           </div>
                         </Link>
                       </td>
-                      <td style={{ fontSize: 13 }}>{emp.department || '—'}</td>
-                      <td style={{ fontSize: 13 }}>{emp.designation || '—'}</td>
-                      <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b' }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
-                      <td style={{ fontSize: 12, color: '#64748b' }}>{emp.accountCreatedAt ? formatDate(emp.accountCreatedAt) : '—'}</td>
+                      <td style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>{emp.department || <span style={{ color: '#cbd5e1' }}>—</span>}</td>
+                      <td style={{ fontSize: 13, fontWeight: 500, color: '#334155' }}>{emp.designation || <span style={{ color: '#cbd5e1' }}>—</span>}</td>
+                      <td><span className="badge" style={{ background: (ROLE_COLORS[emp.role] || '#64748b') + '20', color: ROLE_COLORS[emp.role] || '#64748b', borderRadius: 8, fontSize: 12, padding: '4px 10px' }}>{ROLE_LABELS[emp.role] || emp.role}</span></td>
+                      <td style={{ fontSize: 12, color: '#64748b' }}>
+                        {emp.accountCreatedAt ? (
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <i className="bi bi-calendar3" style={{ fontSize: 11, color: '#94a3b8' }} />
+                            {formatDateTime(emp.accountCreatedAt)}
+                          </span>
+                        ) : <span style={{ color: '#cbd5e1' }}>—</span>}
+                      </td>
                       <td style={{ fontSize: 12 }}>
-                        {emp.firstLoginAt
-                          ? <span style={{ color: '#10b981', fontWeight: 600 }}>{new Date(emp.firstLoginAt).toLocaleString()}</span>
-                          : <span style={{ color: '#94a3b8', fontStyle: 'italic' }}>Not yet</span>}
+                        {emp.firstLoginAt ? (
+                          <span style={{ color: '#16a34a', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <i className="bi bi-check-circle-fill" style={{ fontSize: 11 }} />
+                            {new Date(emp.firstLoginAt).toLocaleString()}
+                          </span>
+                        ) : (
+                          <span style={{ color: '#94a3b8', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <i className="bi bi-clock" style={{ fontSize: 11 }} />
+                            Not yet
+                          </span>
+                        )}
                       </td>
                       <td>
                         {emp.neverLoggedIn
-                          ? <span className="badge" style={{ background: '#fef3c7', color: '#d97706' }}><i className="bi bi-clock me-1" />Pending</span>
-                          : <span className="badge" style={{ background: '#dcfce7', color: '#16a34a' }}><i className="bi bi-check-circle me-1" />Logged In</span>}
+                          ? <span className="badge" style={{ background: '#fffbeb', color: '#d97706', borderRadius: 8, border: '1px solid #fde68a', fontSize: 12, padding: '4px 10px' }}><i className="bi bi-clock me-1" style={{ fontSize: 10 }} />Pending</span>
+                          : <span className="badge" style={{ background: '#f0fdf4', color: '#16a34a', borderRadius: 8, border: '1px solid #bbf7d0', fontSize: 12, padding: '4px 10px' }}><i className="bi bi-check-circle me-1" style={{ fontSize: 10 }} />Logged In</span>}
                       </td>
                     </tr>
                   ))}
@@ -417,11 +460,11 @@ export default function EmployeesPage() {
 
       {/* Add/Edit Modal */}
       {showModal && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">{editEmp ? 'Edit Employee' : 'Add New Employee'}</h5>
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable" style={{ animation: 'dropIn 0.2s cubic-bezier(0.4,0,0.2,1)' }}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <div className="modal-header" style={{ borderBottom: '1px solid #f1f5f9', padding: '20px 24px' }}>
+                <h5 className="modal-title" style={{ fontWeight: 700, fontSize: 17 }}>{editEmp ? 'Edit Employee' : 'Add New Employee'}</h5>
                 <button className="btn-close" onClick={() => setShowModal(false)} />
               </div>
               <div className="modal-body">
@@ -515,30 +558,30 @@ export default function EmployeesPage() {
 
       {/* Temp Password Modal */}
       {tempPasswordModal && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-header border-0 pb-0">
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.6)', backdropFilter: 'blur(4px)' }}>
+          <div className="modal-dialog modal-dialog-centered" style={{ animation: 'dropIn 0.2s cubic-bezier(0.4,0,0.2,1)' }}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)' }}>
+              <div className="modal-header border-0 pb-0" style={{ padding: '20px 24px 0' }}>
                 <button className="btn-close" onClick={() => setTempPasswordModal(null)} />
               </div>
-              <div className="modal-body text-center pt-0 pb-4">
-                <div style={{ width: 56, height: 56, borderRadius: '50%', background: '#10b98120', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+              <div className="modal-body text-center" style={{ padding: '8px 24px 28px' }}>
+                <div style={{ width: 64, height: 64, borderRadius: 16, background: 'linear-gradient(135deg, #10b98120, #05966910)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', border: '1px solid #10b98120' }}>
                   <i className="bi bi-key-fill" style={{ color: '#10b981', fontSize: 28 }} />
                 </div>
-                <h5 style={{ fontWeight: 700 }}>Employee Created</h5>
-                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24 }}>Share this temporary password with the new employee. They will be forced to change it on first login.</p>
-                <div style={{ background: '#f8fafc', border: '1px dashed #cbd5e1', borderRadius: 8, padding: 16, marginBottom: 24 }}>
-                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Email</div>
-                  <div style={{ fontWeight: 600, marginBottom: 12 }}>{tempPasswordModal.email}</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Temporary Password</div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12 }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 2, fontFamily: 'monospace' }}>{tempPasswordModal.password}</div>
-                    <button className="btn btn-sm btn-light border" style={{ padding: '4px 8px' }} onClick={() => { navigator.clipboard.writeText(tempPasswordModal.password); showToast('Password copied!'); }}>
+                <h5 style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>Employee Created</h5>
+                <p style={{ color: '#64748b', fontSize: 13, marginBottom: 24, maxWidth: 320, marginLeft: 'auto', marginRight: 'auto' }}>Share this temporary password with the new employee. They will be forced to change it on first login.</p>
+                <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 20, marginBottom: 24 }}>
+                  <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Email</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a', marginBottom: 16 }}>{tempPasswordModal.email}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>Temporary Password</div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                    <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 3, fontFamily: 'monospace', color: '#0f172a', background: '#fff', border: '1px dashed #cbd5e1', borderRadius: 8, padding: '8px 16px' }}>{tempPasswordModal.password}</div>
+                    <button className="btn btn-sm" style={{ padding: '8px 10px', borderRadius: 8, background: '#f1f4f9', border: '1px solid #e2e8f0', color: '#64748b' }} onClick={() => { navigator.clipboard.writeText(tempPasswordModal.password); showToast('Password copied!'); }}>
                       <i className="bi bi-copy" />
                     </button>
                   </div>
                 </div>
-                <button className="btn btn-primary w-100" onClick={() => setTempPasswordModal(null)}>Done</button>
+                <button className="btn btn-primary w-100" style={{ borderRadius: 999, padding: '12px' }} onClick={() => setTempPasswordModal(null)}>Done</button>
               </div>
             </div>
           </div>

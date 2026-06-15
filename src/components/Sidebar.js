@@ -12,12 +12,10 @@ const NAV_ITEMS = [
   { module: 'attendance',    href: '/attendance',    icon: 'bi-clock',                 label: 'Attendance',    section: 'TIME' },
   { module: 'absence',       href: '/absence',       icon: 'bi-calendar-x',            label: 'Absence',       section: 'TIME' },
   { module: 'leave',         href: '/leave',         icon: 'bi-calendar-check',        label: 'Leave',         section: 'TIME' },
-  { module: 'tasks',         href: '/tasks',         icon: 'bi-check2-square',         label: 'Tasks',         section: 'WORK' },
-  { module: 'projects',      href: '/projects',      icon: 'bi-kanban',                label: 'Projects',      section: 'WORK' },
-  { module: 'monitoring',    href: '/monitoring',    icon: 'bi-activity',              label: 'Monitoring',    section: 'WORK' },
-  { module: 'payroll',       href: '/payroll',       icon: 'bi-cash-stack',            label: 'Payroll',       section: 'FINANCE' },
-  { module: 'finance',       href: '/finance',       icon: 'bi-bar-chart-line',        label: 'Finance',       section: 'FINANCE' },
-  { module: 'invoicing',     href: '/invoicing',     icon: 'bi-receipt',               label: 'Invoicing',     section: 'FINANCE' },
+  { module: 'tasks',         href: '/tasks',         icon: 'bi-check2-square',         label: 'Tasks & Projects',  section: 'WORK' },
+  { module: 'monitoring',    href: '/monitoring',    icon: 'bi-activity',              label: 'Monitoring',         section: 'WORK' },
+  { module: 'payroll',       href: '/payroll',       icon: 'bi-cash-stack',            label: 'Payroll',            section: 'FINANCE' },
+  { module: 'finance',       href: '/finance',       icon: 'bi-bar-chart-line',        label: 'Finance & Invoices', section: 'FINANCE' },
   { module: 'inventory',     href: '/inventory',     icon: 'bi-box-seam',              label: 'Inventory',     section: 'FINANCE' },
   { module: 'performance',   href: '/performance',   icon: 'bi-graph-up-arrow',        label: 'Performance',   section: 'HR' },
   { module: 'documents',     href: '/documents',     icon: 'bi-folder2',               label: 'Documents',     section: 'HR' },
@@ -71,13 +69,21 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
 
       <div className={`sidebar ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <div>
-            <h5><i className="bi bi-hexagon-fill me-2" style={{ color: '#3b82f6' }} />HRMS Pro</h5>
-            <span>Enterprise HR Platform</span>
-          </div>
+          <h5><i className="bi bi-hexagon-fill me-2" style={{ background: 'inherit', WebkitBackgroundClip: 'inherit', WebkitTextFillColor: 'initial', color: '#60a5fa', fontSize: 18 }} />HRMS</h5>
           <button className="sidebar-close d-md-none" onClick={onMobileClose} aria-label="Close navigation">
             <i className="bi bi-x-lg" />
           </button>
+        </div>
+
+        {/* User profile card */}
+        <div className="sidebar-user">
+          <div className="sidebar-user-avatar" style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)` }}>
+            {user.avatar}
+          </div>
+          <div className="sidebar-user-info">
+            <div className="sidebar-user-name">{user.name}</div>
+            <div className="sidebar-user-role">{ROLE_LABELS[user.role]}</div>
+          </div>
         </div>
 
         <div className="sidebar-nav">
@@ -105,16 +111,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
         </div>
 
         <div className="sidebar-footer">
-          <div className="nav-item-link" style={{ marginBottom: 4, cursor: 'default' }}>
-            <div className="avatar" style={{ width: 28, height: 28, fontSize: 11, background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #1e293b)` }}>
-              {user.avatar}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: '#e2e8f0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.name}</div>
-              <div style={{ fontSize: 10, color: '#64748b' }}>{ROLE_LABELS[user.role]}</div>
-            </div>
-          </div>
-          <button className="nav-item-link" onClick={handleLogout} style={{ color: '#ef4444', background: 'none', border: 'none', width: '100%', textAlign: 'left' }}>
+          <button className="nav-item-link" onClick={handleLogout} style={{ border: 'none', width: '100%', textAlign: 'left' }}>
             <i className="bi bi-box-arrow-right" />
             Logout
           </button>

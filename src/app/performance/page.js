@@ -22,7 +22,7 @@ function StarRating({ value }) {
   );
 }
 
-const EMPTY_GOAL = { title: '', kpi: '', target: '', progress: 0, cycle: '' };
+const EMPTY_GOAL = { title: '', kpi: '', target: '', progress: 0, cycle: '', userId: '' };
 const EMPTY_REVIEW = { userId: '', cycle: '', selfScore: '', selfComment: '', peerScore: '', peerComment: '', managerScore: '', managerComment: '', status: 'pending' };
 
 export default function PerformancePage() {
@@ -65,6 +65,7 @@ export default function PerformancePage() {
 
   const saveGoal = async () => {
     if (!goalForm.title) return showToast('Goal title required', 'error');
+    if (goalForm.progress < 0 || goalForm.progress > 100) return showToast('Progress must be between 0 and 100', 'error');
     setSaving(true);
     try {
       await api.post('/api/performance/goals', goalForm);
@@ -100,7 +101,17 @@ export default function PerformancePage() {
     }
   };
 
-  const myGoals = goals.filter(g => g.userId?._id === user?._id || g.userId === user?._id);
+  const myGoals = goals.filter(g => g.userId?._id === user?.id || g.userId === user?.id);
+
+  const assignableEmployees = (() => {
+    if (!user) return [];
+    if (['super_admin', 'admin_full'].includes(user.role)) return employees;
+    if (user.role === 'team_lead') return employees.filter(e => e.teamLeadId?.toString() === user.id || e.userId?.toString() === user.id);
+    if (user.role === 'team_admin') return employees.filter(e => e.teamAdminId?.toString() === user.id || e.userId?.toString() === user.id);
+    return [];
+  })();
+
+  const showAssigneeSelector = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
 
   return (
     <AppShell title="Performance">
@@ -269,6 +280,7 @@ export default function PerformancePage() {
               <div className="modal-body">
                 <div className="row g-3">
                   <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value }))} /></div>
+                  {showAssigneeSelector && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To</label><select className="form-select" value={goalForm.userId} onChange={e => setGoalForm(p => ({ ...p, userId: e.target.value }))}><option value="">Myself</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>}
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>KPI</label><input className="form-control" value={goalForm.kpi} onChange={e => setGoalForm(p => ({ ...p, kpi: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date</label><input className="form-control" value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" placeholder="e.g. Q3 2025" value={goalForm.cycle} onChange={e => setGoalForm(p => ({ ...p, cycle: e.target.value }))} /></div>
@@ -291,7 +303,7 @@ export default function PerformancePage() {
               <div className="modal-header"><h5 className="modal-title">Add Review</h5><button className="btn-close" onClick={() => setShowReviewModal(false)} /></div>
               <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee *</label><select className="form-select" value={reviewForm.userId} onChange={e => setReviewForm(p => ({ ...p, userId: e.target.value }))}><option value="">Select</option>{employees.map(e => <option key={e._id} value={e._id}>{e.name}</option>)}</select></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee *</label><select className="form-select" value={reviewForm.userId} onChange={e => setReviewForm(p => ({ ...p, userId: e.target.value }))}><option value="">Select</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle *</label><input className="form-control" placeholder="e.g. Q2 2025" value={reviewForm.cycle} onChange={e => setReviewForm(p => ({ ...p, cycle: e.target.value }))} /></div>
                   {[['Self Score (1-5)', 'selfScore'], ['Peer Score (1-5)', 'peerScore'], ['Manager Score (1-5)', 'managerScore']].map(([label, key]) => (
                     <div key={key} className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label><input type="number" min="1" max="5" step="0.1" className="form-control" value={reviewForm[key]} onChange={e => setReviewForm(p => ({ ...p, [key]: e.target.value }))} /></div>

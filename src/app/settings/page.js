@@ -323,6 +323,10 @@ export default function SettingsPage() {
                   <input type="date" className="form-control" value={toDateInputValue(config.payrollStartDay)} onChange={e => setConfig(p => ({ ...p, payrollStartDay: e.target.value }))} />
                 </div>
                 <div className="col-md-6">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle End Day</label>
+                  <input type="date" className="form-control" value={toDateInputValue(config.payrollEndDay)} onChange={e => setConfig(p => ({ ...p, payrollEndDay: e.target.value }))} />
+                </div>
+                <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Late Login Threshold (minutes)</label>
                   <input type="number" className="form-control" value={config.lateThreshold} onChange={e => setConfig(p => ({ ...p, lateThreshold: e.target.value }))} />
                 </div>

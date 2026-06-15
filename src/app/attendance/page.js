@@ -48,8 +48,6 @@ export default function AttendancePage() {
   const { formatDate } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
-  const [monthly, setMonthly]           = useState([]);
-  const [teamMonthly, setTeamMonthly]   = useState([]);
   const [teamToday, setTeamToday]       = useState([]);
   const [employees, setEmployees]       = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -71,29 +69,34 @@ export default function AttendancePage() {
   const [progressRecord, setProgressRecord] = useState(null);
   const [progressLoading, setProgressLoading] = useState(false);
 
+  // Work progress save
+  const [saveWorkLoading, setSaveWorkLoading] = useState(false);
+  const handleSaveWork = async () => {
+    setSaveWorkLoading(true);
+    try {
+      await persistTodayRecord({ workProgress: todayRecord?.workProgress || [] });
+      showToast('Work progress saved');
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setSaveWorkLoading(false); }
+  };
+
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
+  const isSuperAdmin = user?.role === 'super_admin';
   const today   = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
   const month   = today.slice(0, 7);
+
+  // Team tab filters
+  const [teamMonth, setTeamMonth] = useState(month);
+  const [teamFromDate, setTeamFromDate] = useState('');
+  const [teamToDate, setTeamToDate] = useState('');
 
   const loadTodayRecord = async () => {
     try {
       const records = await api.get('/api/attendance?date=' + today + '&scope=my');
       setTodayRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
     } catch { setTodayRecord(null); }
-  };
-
-  const loadMonthly = async () => {
-    try { const r = await api.get('/api/attendance?scope=my&month=' + month); setMonthly(Array.isArray(r) ? r : []); }
-    catch { setMonthly([]); }
-  };
-
-  const loadTeamMonthly = async (uid) => {
-    try {
-      const url = uid ? '/api/attendance?scope=team&userId=' + uid + '&month=' + month : '/api/attendance?scope=team&month=' + month;
-      const r = await api.get(url); setTeamMonthly(Array.isArray(r) ? r : []);
-    } catch { setTeamMonthly([]); }
   };
 
   const loadTeamToday = async () => {
@@ -138,14 +141,12 @@ export default function AttendancePage() {
   useEffect(() => {
     if (!user) return;
     Promise.all([
-      loadTodayRecord(), loadMonthly(),
+      loadTodayRecord(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
       loadRegRequests(isAdmin ? 'approvals' : 'my'),
     ]).finally(() => setLoading(false));
   }, [user]);
-
-  useEffect(() => { if (isAdmin && selectedUserId) loadTeamMonthly(selectedUserId); }, [selectedUserId]);
 
   const handleClock = async (action) => {
     setClockLoading(true);
@@ -379,15 +380,10 @@ export default function AttendancePage() {
   const clockedIn  = !!todayRecord?.clockIn;
   const clockedOut = !!todayRecord?.clockOut;
 
-  const presentCount = monthly.filter(r => r.status === 'present').length;
-  const lateCount    = monthly.filter(r => r.status === 'late').length;
-  const absentCount  = monthly.filter(r => r.status === 'absent').length;
-  const leaveCount   = monthly.filter(r => r.status === 'leave').length;
-
   const formatMins = (mins) => { if (!mins) return '--'; return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'; };
 
-  const tabs = ['today', 'monthly', ...(isAdmin ? ['team'] : []), 'regularize', ...(isAdmin ? ['progress'] : [])];
-  const tabLabels = { today: 'Today', monthly: 'Monthly', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
+  const tabs = ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])];
+  const tabLabels = { today: 'Today', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
 
   // Break/Lunch UI helpers
   const renderBreakLunchPanel = (type) => {
@@ -524,6 +520,9 @@ export default function AttendancePage() {
                 <i className="bi bi-file-earmark-excel me-1" />Download Progress (Excel)
               </button>
             )}
+            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={saveWorkLoading || !clockedIn} onClick={handleSaveWork}>
+              {saveWorkLoading ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Saving...</> : <><i className="bi bi-floppy me-1" />Save</>}
+            </button>
             <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={!canEndTask} onClick={endCurrentTask}>
               <i className="bi bi-check2-circle me-1" />End Current Task
             </button>
@@ -642,49 +641,27 @@ export default function AttendancePage() {
       <div className="page-header">
         <div>
           <h4>Time & Attendance</h4>
-          <p>Track daily attendance, shifts, and working hours</p>
+          <p>{isSuperAdmin ? 'Team-wide attendance overview' : 'Track daily attendance, shifts, and working hours'}</p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {!clockedIn && !clockedOut && (
-            <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
-              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
-            </button>
-          )}
-          {clockedIn && !clockedOut && (
-            <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
-              {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
-            </button>
-          )}
-          {clockedIn && clockedOut && (
-            <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
-              <i className="bi bi-check-circle me-2" />Attendance Complete
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Stat cards */}
-      <div className="row g-3 mb-4">
-        {[
-          { label: 'Status',      value: clockedOut ? 'Completed' : clockedIn ? 'Clocked In' : 'Not Clocked In', icon: 'bi-circle-fill', color: clockedOut ? '#8b5cf6' : clockedIn ? '#10b981' : '#94a3b8' },
-          { label: 'Clock In',    value: todayRecord?.clockIn  || '--:--', icon: 'bi-box-arrow-in-right', color: '#3b82f6' },
-          { label: 'Clock Out',   value: todayRecord?.clockOut || '--:--', icon: 'bi-box-arrow-right',    color: '#f59e0b' },
-          { label: 'Hours Today', value: todayRecord?.hoursWorked ? formatMins(todayRecord.hoursWorked) : '--', icon: 'bi-clock', color: '#8b5cf6' },
-        ].map((s, i) => (
-          <div key={i} className="col-6 col-xl-3">
-            <div className="stat-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>{s.label}</div>
-                  <div style={{ fontSize: 16, fontWeight: 800, color: '#1e293b', wordBreak: 'break-word' }}>{s.value}</div>
-                </div>
-                <div className="stat-icon" style={{ background: s.color + '15', flexShrink: 0 }}>
-                  <i className={'bi ' + s.icon} style={{ color: s.color }} />
-                </div>
-              </div>
-            </div>
+        {!isSuperAdmin && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            {!clockedIn && !clockedOut && (
+              <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
+                {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
+              </button>
+            )}
+            {clockedIn && !clockedOut && (
+              <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
+                {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
+              </button>
+            )}
+            {clockedIn && clockedOut && (
+              <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
+                <i className="bi bi-check-circle me-2" />Attendance Complete
+              </span>
+            )}
           </div>
-        ))}
+        )}
       </div>
 
       {/* Tabs */}
@@ -706,127 +683,60 @@ export default function AttendancePage() {
 
       {/* TODAY TAB */}
       {tab === 'today' && (
-        <div className="row g-3">
-          {/* Attendance Record */}
-          <div className={clockedIn ? 'col-lg-6' : 'col-12'}>
-            <div className="card p-3 p-md-4">
-              {todayRecord ? (
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
-                  <div className="row g-3">
-                    {[
-                      ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
-                      ['Clock In',  todayRecord.clockIn  || '—'],
-                      ['Clock Out', todayRecord.clockOut || '—'],
-                      ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
-                    ].map(([label, val]) => (
-                      <div key={label} className="col-6 col-md-3">
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Deduction summary */}
-                  {(todayRecord.breakDeduction > 0) && (
-                    <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <i className="bi bi-dash-circle" />
-                      <span><strong>{todayRecord.breakDeduction} min</strong> deducted from working hours (excess break/lunch time)</span>
-                    </div>
-                  )}
-
-                  {todayRecord.lateFlag && (
-                    <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
-                      <i className="bi bi-exclamation-triangle me-2" />Late login detected
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <i className="bi bi-clock" />
-                  <h6>No attendance record for today</h6>
-                  <p>Click &quot;Clock In&quot; to mark your attendance</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Break / Lunch panel — only shown after clock-in */}
-          {clockedIn && (
-            <div className="col-lg-6">
-              <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
-                {/* Sub-tabs */}
-                <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                  {[
-                    { key: 'break', label: 'Break', icon: 'bi-cup-hot',    color: '#f59e0b' },
-                    { key: 'lunch', label: 'Lunch', icon: 'bi-egg-fried', color: '#8b5cf6' },
-                  ].map(bt => (
-                    <button key={bt.key} onClick={() => setBreakTab(bt.key)}
-                      style={{
-                        flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
-                        background: 'transparent',
-                        color: breakTab === bt.key ? bt.color : '#94a3b8',
-                        borderBottom: breakTab === bt.key ? `3px solid ${bt.color}` : '3px solid transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        transition: 'all 0.15s',
-                      }}>
-                      <i className={`bi ${bt.icon}`} style={{ fontSize: 14 }} />{bt.label}
-                      {/* Badge showing over-time */}
-                      {overMins(bt.key) > 0 && (
-                        <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
-                          −{overMins(bt.key)}m
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ padding: 16 }}>
-                  {renderBreakLunchPanel(breakTab)}
-                </div>
-              </div>
-            </div>
-          )}
-          <div className="col-12">
-            {renderWorkProgressSheet()}
-          </div>
-        </div>
-      )}
-
-      {/* MONTHLY TAB */}
-      {tab === 'monthly' && (
-        <div>
-          <div className="row g-3 mb-3">
-            {[['Present', presentCount, '#10b981'], ['Late', lateCount, '#f59e0b'], ['Absent', absentCount, '#ef4444'], ['On Leave', leaveCount, '#3b82f6']].map(([l, v, c]) => (
-              <div key={l} className="col-6 col-md-3">
-                <div className="stat-card" style={{ textAlign: 'center' }}>
-                  <div style={{ fontSize: 26, fontWeight: 800, color: c }}>{v}</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{l}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
-          ) : monthly.length === 0 ? (
-            <div className="card"><div className="empty-state"><i className="bi bi-calendar2" /><p>No records for this month</p></div></div>
-          ) : (
+        <>
+          {isSuperAdmin ? (
+            // Super Admin: Team overview stats
             <>
-              <div className="card d-none d-md-block">
+              <div className="row g-3 mb-4">
+                {[
+                  { label: 'Present', value: teamToday.filter(r => r.status === 'present').length, icon: 'bi-person-check', color: '#10b981' },
+                  { label: 'Absent', value: teamToday.filter(r => r.status === 'absent').length, icon: 'bi-person-x', color: '#ef4444' },
+                  { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
+                  { label: 'Working on Task', value: teamToday.filter(r => r.clockIn && !r.clockOut && r.workProgress?.length > 0).length, icon: 'bi-list-check', color: '#8b5cf6' },
+                ].map((s, i) => (
+                  <div key={i} className="col-6 col-xl-3">
+                    <div className="stat-card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4 }}>{s.label}</div>
+                          <div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div>
+                        </div>
+                        <div className="stat-icon" style={{ background: s.color + '15', flexShrink: 0 }}>
+                          <i className={'bi ' + s.icon} style={{ color: s.color }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="card">
+                <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <i className="bi bi-people" style={{ color: '#3b82f6', fontSize: 15 }} />
+                  <span style={{ fontWeight: 750, fontSize: 14.5 }}>Today's Attendance — {formatDate(today)}</span>
+                  <span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontSize: 11, marginLeft: 'auto' }}>{teamToday.length} employees</span>
+                </div>
                 <div className="table-responsive">
                   <table className="table mb-0">
-                    <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
+                    <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
                     <tbody>
-                      {monthly.map(row => {
-                        const d = new Date(row.date);
+                      {teamToday.map(row => {
                         const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
                         return (
                           <tr key={row._id}>
-                            <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
-                            <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700 }}>
+                                  {row.userId?.avatar || (row.userId?.name || '?').slice(0, 2).toUpperCase()}
+                                </div>
+                                <span style={{ fontSize: 13, fontWeight: 600 }}>{row.userId?.name || '—'}</span>
+                              </div>
+                            </td>
+                            <td style={{ fontSize: 13, color: '#64748b' }}>{row.userId?.department || '—'}</td>
                             <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
-                            <td style={{ fontSize: 13 }}>{row.clockIn  || '—'}</td>
+                            <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
                             <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
                             <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                            <td>{row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}</td>
                           </tr>
                         );
                       })}
@@ -834,33 +744,155 @@ export default function AttendancePage() {
                   </table>
                 </div>
               </div>
-              <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {monthly.map(row => {
-                  const d = new Date(row.date);
-                  const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
-                  return (
-                    <div key={row._id} className="card p-3">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: 14 }}>{formatDate(row.date)}</div>
-                          <div style={{ fontSize: 12, color: '#64748b' }}>{DAYS[d.getDay()]}</div>
-                        </div>
-                        <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
-                      </div>
-                      <div className="row g-2">
-                        {[['Clock In', row.clockIn], ['Clock Out', row.clockOut], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
-                          <div key={lbl} className="col-4">
-                            <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>{lbl}</div>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{val || '—'}</div>
+            </>
+          ) : (
+            // Regular user: personal attendance
+            <div className="row g-3">
+              <div className={clockedIn ? 'col-lg-6' : 'col-12'}>
+                <div className="card p-3 p-md-4">
+                  {todayRecord ? (
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
+                      <div className="row g-3">
+                        {[
+                          ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
+                          ['Clock In',  todayRecord.clockIn  || '—'],
+                          ['Clock Out', todayRecord.clockOut || '—'],
+                          ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
+                        ].map(([label, val]) => (
+                          <div key={label} className="col-6 col-md-3">
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}</div>
+                            <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
                           </div>
                         ))}
                       </div>
+                      {(todayRecord.breakDeduction > 0) && (
+                        <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <i className="bi bi-dash-circle" />
+                          <span><strong>{todayRecord.breakDeduction} min</strong> deducted from working hours (excess break/lunch time)</span>
+                        </div>
+                      )}
+                      {todayRecord.lateFlag && (
+                        <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
+                          <i className="bi bi-exclamation-triangle me-2" />Late login detected
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
+                  ) : (
+                    <div className="empty-state">
+                      <i className="bi bi-clock" />
+                      <h6>No attendance record for today</h6>
+                      <p>Click &quot;Clock In&quot; to mark your attendance</p>
+                    </div>
+                  )}
+                </div>
               </div>
-            </>
+              {clockedIn && (
+                <div className="col-lg-6">
+                  <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
+                      {[
+                        { key: 'break', label: 'Break', icon: 'bi-cup-hot',    color: '#f59e0b' },
+                        { key: 'lunch', label: 'Lunch', icon: 'bi-egg-fried', color: '#8b5cf6' },
+                      ].map(bt => (
+                        <button key={bt.key} onClick={() => setBreakTab(bt.key)}
+                          style={{
+                            flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
+                            background: 'transparent',
+                            color: breakTab === bt.key ? bt.color : '#94a3b8',
+                            borderBottom: breakTab === bt.key ? `3px solid ${bt.color}` : '3px solid transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                            transition: 'all 0.15s',
+                          }}>
+                          <i className={`bi ${bt.icon}`} style={{ fontSize: 14 }} />{bt.label}
+                          {overMins(bt.key) > 0 && (
+                            <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
+                              −{overMins(bt.key)}m
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ padding: 16 }}>
+                      {renderBreakLunchPanel(breakTab)}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div className="col-12">
+                {renderWorkProgressSheet()}
+              </div>
+            </div>
           )}
+        </>
+      )}
+
+      {/* TEAM TAB — unified monthly view for all roles */}
+      {tab === 'team' && (
+        <div>
+          {/* Employee selector (only for admins; non-admins see their own data) */}
+          {isAdmin ? (
+            <div className="mb-3">
+              <select className="form-select" style={{ fontSize: 13, maxWidth: 300 }} value={selectedUserId} onChange={e => { setSelectedUserId(e.target.value); setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); }}>
+                <option value="">— Select Employee —</option>
+                {employees.map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
+              </select>
+            </div>
+          ) : null}
+
+          {/* Filters row */}
+          <div className="card mb-3" style={{ borderRadius: 12 }}>
+            <div style={{ padding: '12px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <i className="bi bi-funnel" style={{ color: '#3b82f6', fontSize: 14 }} />
+              <span style={{ fontWeight: 750, fontSize: 13.5 }}>Filters</span>
+            </div>
+            <div style={{ padding: '12px 18px' }}>
+              <div className="row g-2 align-items-end">
+                <div className="col-md-3">
+                  <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>Month</label>
+                  <input type="month" className="form-control" style={{ fontSize: 13 }} value={teamMonth} onChange={e => { setTeamMonth(e.target.value); setTeamFromDate(''); setTeamToDate(''); }} />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>From Date</label>
+                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={teamFromDate} onChange={e => setTeamFromDate(e.target.value)} max={teamToDate || undefined} />
+                </div>
+                <div className="col-md-3">
+                  <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>To Date</label>
+                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} />
+                </div>
+                <div className="col-md-3">
+                  <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); }}>
+                    <i className="bi bi-arrow-counterclockwise me-1" />Reset
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Data */}
+          {(() => {
+            const uid = isAdmin ? selectedUserId : user?._id;
+            if (!uid) {
+              return (
+                <div className="card"><div className="empty-state"><i className="bi bi-person" /><p>Select an employee to view attendance</p></div></div>
+              );
+            }
+
+            // Build date filter query params
+            let query = `?scope=team&userId=${uid}&month=${teamMonth}`;
+            if (teamFromDate) query += `&fromDate=${teamFromDate}`;
+            if (teamToDate) query += `&toDate=${teamToDate}`;
+
+            return <TeamAttendanceView
+              query={query}
+              uid={uid}
+              month={teamMonth}
+              formatDate={formatDate}
+              formatMins={formatMins}
+              STATUS_STYLE={STATUS_STYLE}
+              DAYS={DAYS}
+            />;
+          })()}
         </div>
       )}
 
@@ -988,117 +1020,7 @@ export default function AttendancePage() {
         </>
       )}
 
-      {/* TEAM TAB */}
-      {tab === 'team' && isAdmin && (
-        <>
-          {employees.length > 0 && (
-            <div className="mb-3">
-              <select className="form-select" style={{ fontSize: 13, maxWidth: 260 }} value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)}>
-                <option value="">— Today&apos;s Overview —</option>
-                {employees.map(e => <option key={e.userId} value={e.userId}>{e.name} — Monthly</option>)}
-              </select>
-            </div>
-          )}
-          {selectedUserId ? (
-            teamMonthly.length === 0 ? (
-              <div className="card"><div className="empty-state"><i className="bi bi-calendar2" /><p>No records for this month</p></div></div>
-            ) : (
-              <div className="card">
-                <div className="table-responsive">
-                  <table className="table mb-0">
-                    <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
-                    <tbody>
-                      {teamMonthly.map(row => {
-                        const d = new Date(row.date);
-                        const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
-                        return (
-                          <tr key={row._id}>
-                            <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
-                            <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
-                            <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
-                            <td style={{ fontSize: 13 }}>{row.clockIn  || '—'}</td>
-                            <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
-                            <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )
-          ) : loading ? (
-            <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
-          ) : teamToday.length === 0 ? (
-            <div className="card"><div className="empty-state"><i className="bi bi-people" /><p>No attendance records for today</p></div></div>
-          ) : (
-            <>
-              <div className="card d-none d-md-block">
-                <div className="table-responsive">
-                  <table className="table mb-0">
-                    <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
-                    <tbody>
-                      {teamToday.map(row => {
-                        const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
-                        return (
-                          <tr key={row._id}>
-                            <td>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700 }}>
-                                  {row.userId?.avatar || (row.userId?.name || '?').slice(0, 2).toUpperCase()}
-                                </div>
-                                <span style={{ fontSize: 13, fontWeight: 600 }}>{row.userId?.name || '—'}</span>
-                              </div>
-                            </td>
-                            <td style={{ fontSize: 13, color: '#64748b' }}>{row.userId?.department || '—'}</td>
-                            <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
-                            <td style={{ fontSize: 13 }}>{row.clockIn  || '—'}</td>
-                            <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
-                            <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
-                            <td>{row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-              <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {teamToday.map(row => {
-                  const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
-                  return (
-                    <div key={row._id} className="card p-3">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                            {row.userId?.avatar || (row.userId?.name || '?').slice(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: 14 }}>{row.userId?.name || '—'}</div>
-                            <div style={{ fontSize: 12, color: '#64748b' }}>{row.userId?.department || '—'}</div>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                          <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
-                          {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
-                        </div>
-                      </div>
-                      <div className="row g-2">
-                        {[['Clock In', row.clockIn], ['Clock Out', row.clockOut], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
-                          <div key={lbl} className="col-4">
-                            <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>{lbl}</div>
-                            <div style={{ fontSize: 13, fontWeight: 600 }}>{val || '—'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
-      )}
+
 
       {/* VIEW DAILY PROGRESS TAB */}
       {tab === 'progress' && isAdmin && (
@@ -1364,5 +1286,106 @@ export default function AttendancePage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+// ── Team Attendance View (used inside the Team tab) ──────────────────────
+function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_STYLE, DAYS }) {
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!uid) return;
+    setLoading(true);
+    api.get('/api/attendance' + query)
+      .then(r => setRecords(Array.isArray(r) ? r : []))
+      .catch(() => setRecords([]))
+      .finally(() => setLoading(false));
+  }, [query, uid]);
+
+  const present = records.filter(r => r.status === 'present').length;
+  const absent = records.filter(r => r.status === 'absent').length;
+  const leave = records.filter(r => r.status === 'leave').length;
+  const late = records.filter(r => r.status === 'late').length;
+
+  if (loading) {
+    return <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>;
+  }
+
+  if (records.length === 0) {
+    return <div className="card"><div className="empty-state"><i className="bi bi-calendar2" /><p>No records found for this period</p></div></div>;
+  }
+
+  return (
+    <>
+      {/* Stat cards */}
+      <div className="row g-3 mb-3">
+        {[
+          { label: 'Days Present', value: present, color: '#10b981' },
+          { label: 'Days Absent', value: absent, color: '#ef4444' },
+          { label: 'Days of Leave', value: leave, color: '#3b82f6' },
+          { label: 'Late Clock-ins', value: late, color: '#f59e0b' },
+        ].map((s, i) => (
+          <div key={i} className="col-6 col-md-3">
+            <div className="stat-card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{s.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="card d-none d-md-block">
+        <div className="table-responsive">
+          <table className="table mb-0">
+            <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
+            <tbody>
+              {records.map(row => {
+                const d = new Date(row.date + 'T00:00:00');
+                const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+                return (
+                  <tr key={row._id}>
+                    <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
+                    <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
+                    <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
+                    <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
+                    <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
+                    <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Mobile cards */}
+      <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {records.map(row => {
+          const d = new Date(row.date + 'T00:00:00');
+          const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+          return (
+            <div key={row._id} className="card p-3">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{formatDate(row.date)}</div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>{DAYS[d.getDay()]}</div>
+                </div>
+                <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
+              </div>
+              <div className="row g-2">
+                {[['Clock In', row.clockIn], ['Clock Out', row.clockOut], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
+                  <div key={lbl} className="col-4">
+                    <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>{lbl}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{val || '—'}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }
