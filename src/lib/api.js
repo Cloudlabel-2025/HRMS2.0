@@ -27,14 +27,15 @@ async function tryRefresh() {
 
 async function request(url, options = {}, retry = true) {
   const token = getToken();
-  const res = await fetch(url, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  });
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+  if (typeof window !== 'undefined' && window.__impersonatedUser?._id) {
+    headers['X-Impersonate'] = window.__impersonatedUser._id;
+  }
+  const res = await fetch(url, { ...options, headers });
 
   // Auto-refresh on 401 then retry once
   if (res.status === 401 && retry) {

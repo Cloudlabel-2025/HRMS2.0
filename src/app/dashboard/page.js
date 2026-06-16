@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
@@ -149,7 +150,7 @@ export default function DashboardPage() {
             <h6 style={{ fontSize: 13, fontWeight: 700, color: '#64748b', marginBottom: 14, letterSpacing: 0.5, textTransform: 'uppercase' }}>Quick Actions</h6>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
               {quickActions.map((a, i) => (
-                <a key={i} href={a.href}
+                <Link key={i} href={a.href}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 8,
                     padding: '10px 18px', borderRadius: 999,
@@ -162,8 +163,8 @@ export default function DashboardPage() {
                   onMouseEnter={e => { e.currentTarget.style.background = a.color; e.currentTarget.style.color = '#fff'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 12px ${a.color}30`; }}
                   onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.color = a.color; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; }}>
                   <i className={`bi ${a.icon}`} style={{ fontSize: 15 }} />
-                  {a.label}
-                </a>
+                  <span>{a.label}</span>
+                </Link>
               ))}
             </div>
           </div>

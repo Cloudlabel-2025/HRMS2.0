@@ -8,10 +8,18 @@ import Topbar from './Topbar';
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export default function AppShell({ title, children }) {
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, isReadOnly } = useAuth();
   const router = useRouter();
   const timerRef = useRef(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setToast(null), 2000);
+  };
 
   const recordAction = (action, details = '', severity = 'low') => {
     const token = getToken();
@@ -93,6 +101,27 @@ export default function AppShell({ title, children }) {
     return () => document.removeEventListener('click', handleClick, true);
   }, [user, title]);
 
+  useEffect(() => {
+    if (!isReadOnly) return;
+
+    const mutationSelectors = 'button:not([data-readonly-allow]), input[type="submit"], input[type="button"]:not([data-readonly-allow]), [role="button"]:not([data-readonly-allow])';
+
+    const handleMutationClick = (event) => {
+      const target = event.target?.closest?.(mutationSelectors);
+      if (!target) return;
+
+      const isNavLink = target.tagName === 'A' && target.getAttribute('href');
+      if (isNavLink) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      showToast('Read-only mode: you cannot perform actions while viewing as this employee');
+    };
+
+    document.addEventListener('click', handleMutationClick, true);
+    return () => document.removeEventListener('click', handleMutationClick, true);
+  }, [isReadOnly]);
+
   if (loading || !user) return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
       <div className="spinner-border text-primary" />
@@ -102,10 +131,16 @@ export default function AppShell({ title, children }) {
   return (
     <>
       <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
-      <Topbar title={title} onMenuClick={() => setMobileNavOpen(true)} />
+      <Topbar title={title} onMenuClick={() => setMobileNavOpen(true)} isReadOnly={isReadOnly} />
       <main className="main-content">
         {children}
       </main>
+      {toast && <div style={{
+        position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
+        zIndex: 100000, background: '#1e293b', color: '#fff', padding: '10px 20px',
+        borderRadius: 8, fontSize: 13, boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
+        maxWidth: '90vw', textAlign: 'center',
+      }}>{toast}</div>}
     </>
   );
 }

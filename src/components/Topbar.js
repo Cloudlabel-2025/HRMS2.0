@@ -17,7 +17,7 @@ function getNotifRoute(n) {
   return null;
 }
 
-export default function Topbar({ title, onMenuClick }) {
+export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const { user } = useAuth();
   const { formatDateTime } = useSettings();
   const router = useRouter();
@@ -75,6 +75,14 @@ export default function Topbar({ title, onMenuClick }) {
           <i className="bi bi-list" style={{ fontSize: 20 }} />
         </button>
         <span className="topbar-title">{title}</span>
+        {isReadOnly && <span style={{
+          marginLeft: 10, background: '#fef3c7', color: '#92400e', fontSize: 11,
+          fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+          border: '1px solid #fcd34d', whiteSpace: 'nowrap',
+        }}>
+          <i className="bi bi-eye" style={{ fontSize: 10, marginRight: 3 }} />
+          Viewing {user?.name} — Read Only
+        </span>}
       </div>
 
       <div className="topbar-right">
@@ -127,20 +135,21 @@ export default function Topbar({ title, onMenuClick }) {
           )}
         </div>
 
+
         <div style={{ position: 'relative' }}>
           <div className="avatar" onClick={() => { setShowProfile(p => !p); setShowNotif(false); }}
             style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)` }}>
             {user.avatar}
           </div>
           {showProfile && (
-            <div className="dropdown-panel" style={{ right: 0, width: 220 }}>
-              <div style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{user.name}</div>
-                <div style={{ fontSize: 12, color: '#64748b' }}>{user.email}</div>
-                <span className="badge mt-1" style={{ background: ROLE_COLORS[user.role] + '20', color: ROLE_COLORS[user.role], fontSize: 10 }}>
-                  {ROLE_LABELS[user.role]}
-                </span>
-              </div>
+              <div className="dropdown-panel" style={{ right: 0, width: 220 }}>
+                <div style={{ padding: '14px 16px', borderBottom: '1px solid #f1f5f9' }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{user.name}</div>
+                  <div style={{ fontSize: 12, color: '#64748b' }}>{user.email}</div>
+                  <span className="badge mt-1" style={{ background: ROLE_COLORS[user.role] + '20', color: ROLE_COLORS[user.role], fontSize: 10 }}>
+                    {ROLE_LABELS[user.role]}
+                  </span>
+                </div>
               <div style={{ padding: '8px' }}>
                 <button className="nav-item-link" style={{ color: '#64748b', fontSize: 13 }} onClick={() => { setShowProfile(false); router.push('/profile'); }}>
                   <i className="bi bi-person" /> My Profile

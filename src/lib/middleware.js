@@ -20,6 +20,16 @@ export async function requireAuth(req) {
   const user = await User.findById(decoded.id).select('-password');
   if (!user || user.status !== 'active') return { error: fail('User not found or inactive', 401) };
 
+  // Impersonation: if X-Impersonate header is set and the authenticated user is super_admin,
+  // serve the request as the impersonated user instead
+  const impersonateId = req.headers.get('x-impersonate');
+  if (impersonateId && user.role === 'super_admin') {
+    const impersonated = await User.findById(impersonateId).select('-password');
+    if (impersonated && impersonated.status === 'active') {
+      return { user: impersonated, __isImpersonated: true };
+    }
+  }
+
   return { user };
 }
 

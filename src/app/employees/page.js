@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useFormErrors } from '@/lib/useFormErrors';
 import Link from 'next/link';
-import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
+import { useAuth, ROLE_COLORS, ROLE_LABELS, setImpersonatedUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
@@ -137,6 +137,7 @@ export default function EmployeesPage() {
 
     if (!name) errs.name = 'Full name is required';
     else if (!NAME_REGEX.test(name)) errs.name = 'Name must contain only letters and spaces';
+    else if (name.length > 30) errs.name = 'Name must be 30 characters or less';
     if (!email) errs.email = 'Email is required';
     else if (!EMAIL_REGEX.test(email)) errs.email = 'Please enter a valid email address';
     if (!phone) errs.phone = 'Phone number is required';
@@ -144,16 +145,24 @@ export default function EmployeesPage() {
     if (!form.department) errs.department = 'Department is required';
     if (!form.designation) errs.designation = 'Designation is required';
     if (!form.addressLine1?.trim()) errs.addressLine1 = 'Address line 1 is required';
+    else if (form.addressLine1.trim().length > 30) errs.addressLine1 = 'Line 1 must be 30 characters or less';
+    if (form.addressLine2?.trim() && form.addressLine2.trim().length > 30) errs.addressLine2 = 'Line 2 must be 30 characters or less';
+    if (form.addressLine3?.trim() && form.addressLine3.trim().length > 30) errs.addressLine3 = 'Line 3 must be 30 characters or less';
     if (!form.cityTown?.trim()) errs.cityTown = 'City or town name is required';
+    else if (!ALPHA_SPACE_REGEX.test(form.cityTown.trim())) errs.cityTown = 'City can only contain alphabets';
+    else if (form.cityTown.trim().length > 25) errs.cityTown = 'City must be 25 characters or less';
     if (!/^[0-9]{6}$/.test(form.pinCode || '')) errs.pinCode = 'Pin code must be exactly 6 digits';
     if (!form.emergencyContactName?.trim()) errs.emergencyContactName = 'Emergency contact name is required';
     else if (!NAME_REGEX.test(form.emergencyContactName.trim())) errs.emergencyContactName = 'Must contain only letters and spaces';
+    else if (form.emergencyContactName.trim().length > 25) errs.emergencyContactName = 'Name must be 25 characters or less';
+    else if (!/^[A-Z]/.test(form.emergencyContactName.trim())) errs.emergencyContactName = 'First letter must be uppercase';
     if (!form.emergencyContactPhone?.trim()) errs.emergencyContactPhone = 'Emergency contact phone is required';
     else if (!/^[0-9]{10}$/.test(form.emergencyContactPhone.trim())) errs.emergencyContactPhone = 'Must be exactly 10 digits';
     if (!form.gender) errs.gender = 'Gender is required';
     if (!form.bloodGroup) errs.bloodGroup = 'Blood group is required';
     if (!form.shift) errs.shift = 'Shift is required';
     if (!form.joinDate) errs.joinDate = 'Join date is required';
+    else if (form.joinDate < '2022-03-21') errs.joinDate = 'Join date cannot be before 21 March 2022';
     if (!form.role) errs.role = 'Role is required';
     const idError = validateIdentifiers(form.panNumber, form.aadhaarNumber);
     if (idError) errs.panNumber = idError;
@@ -317,6 +326,30 @@ export default function EmployeesPage() {
                           <td>
                             <div style={{ display: 'flex', gap: 4 }}>
                               <button className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, background: '#eff6ff', color: '#2563eb', border: '1px solid #dbeafe' }} onClick={() => openEdit(emp)}><i className="bi bi-pencil" /></button>
+                              {user?.role === 'super_admin' && (
+                                <button className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }}
+                                  onClick={() => {
+                                    api.get(`/api/employees/${emp._id}/details`).then(res => {
+                                      const e = res.employee;
+                                      if (!e) return;
+                                      setImpersonatedUser({
+                                        _id: e.userId, name: e.name, email: e.email, role: e.role,
+                                        avatar: e.avatar || e.name?.slice(0, 2).toUpperCase(),
+                                        department: e.department,
+                                        identityId: res.identity?._id || null,
+                                        profileId: res.profile?._id || null,
+                                      });
+                                      api.post('/api/notifications', {
+                                        userId: e.userId,
+                                        title: `${user?.name} is viewing your profile`,
+                                        message: `${user?.name} (Super Admin) is currently viewing your account.`,
+                                        type: 'viewing',
+                                      }).catch(() => {});
+                                    });
+                                  }}>
+                                  <i className="bi bi-eye" />
+                                </button>
+                              )}
                               <button className="btn btn-sm" style={{ padding: '5px 10px', fontSize: 12, borderRadius: 8, background: '#f8fafc', color: '#64748b', border: '1px solid #e2e8f0' }} onClick={() => toggleStatus(emp)}><i className={`bi ${emp.status === 'active' ? 'bi-pause-circle' : 'bi-play-circle'}`} /></button>
                             </div>
                           </td>
@@ -472,7 +505,7 @@ export default function EmployeesPage() {
                   <div className="col-12"><div className="employee-form-section">Personal Details</div></div>
                   <div className="col-md-6">
                     <label className="form-label">Full Name *</label>
-                    <input type="text" className={`form-control ${formErrs.name ? 'is-invalid' : ''}`} placeholder="e.g. John Smith" value={form.name || ''} onChange={e => { setForm(p => ({ ...p, name: e.target.value.replace(/[^A-Za-z\s]/g, '') })); clearFormErr('name'); }} />
+                    <input type="text" className={`form-control ${formErrs.name ? 'is-invalid' : ''}`} placeholder="e.g. John Smith" value={form.name || ''} onChange={e => { let v = e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 30); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setForm(p => ({ ...p, name: v })); clearFormErr('name'); }} />
                     <FErr f="name" />
                   </div>
                   <div className="col-md-3">
@@ -493,10 +526,10 @@ export default function EmployeesPage() {
                   </div>
 
                   <div className="col-12"><div className="employee-form-section">Address Details</div></div>
-                  <div className="col-md-6"><label className="form-label">Address Line 1 *</label><input className={`form-control ${formErrs.addressLine1 ? 'is-invalid' : ''}`} placeholder="House no, street" value={form.addressLine1 || ''} onChange={e => { setForm(p => ({ ...p, addressLine1: e.target.value })); clearFormErr('addressLine1'); }} /><FErr f="addressLine1" /></div>
-                  <div className="col-md-6"><label className="form-label">Address Line 2</label><input className="form-control" placeholder="Area, landmark" value={form.addressLine2 || ''} onChange={e => setForm(p => ({ ...p, addressLine2: e.target.value }))} /></div>
-                  <div className="col-md-6"><label className="form-label">Address Line 3</label><input className="form-control" placeholder="District or extra address detail" value={form.addressLine3 || ''} onChange={e => setForm(p => ({ ...p, addressLine3: e.target.value }))} /></div>
-                  <div className="col-md-3"><label className="form-label">City / Town *</label><input className={`form-control ${formErrs.cityTown ? 'is-invalid' : ''}`} placeholder="City or town" value={form.cityTown || ''} onChange={e => { setForm(p => ({ ...p, cityTown: e.target.value })); clearFormErr('cityTown'); }} /><FErr f="cityTown" /></div>
+                  <div className="col-md-6"><label className="form-label">Address Line 1 *</label><input className={`form-control ${formErrs.addressLine1 ? 'is-invalid' : ''}`} placeholder="House no, street" value={form.addressLine1 || ''} onChange={e => { setForm(p => ({ ...p, addressLine1: e.target.value.slice(0, 30) })); clearFormErr('addressLine1'); }} /><FErr f="addressLine1" /></div>
+                  <div className="col-md-6"><label className="form-label">Address Line 2</label><input className={`form-control ${formErrs.addressLine2 ? 'is-invalid' : ''}`} placeholder="Area, landmark" value={form.addressLine2 || ''} onChange={e => { setForm(p => ({ ...p, addressLine2: e.target.value.slice(0, 30) })); clearFormErr('addressLine2'); }} /><FErr f="addressLine2" /></div>
+                  <div className="col-md-6"><label className="form-label">Address Line 3</label><input className={`form-control ${formErrs.addressLine3 ? 'is-invalid' : ''}`} placeholder="District or extra address detail" value={form.addressLine3 || ''} onChange={e => { setForm(p => ({ ...p, addressLine3: e.target.value.slice(0, 30) })); clearFormErr('addressLine3'); }} /><FErr f="addressLine3" /></div>
+                  <div className="col-md-3"><label className="form-label">City / Town *</label><input className={`form-control ${formErrs.cityTown ? 'is-invalid' : ''}`} placeholder="City or town" value={form.cityTown || ''} onChange={e => { const v = e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 25); setForm(p => ({ ...p, cityTown: v })); clearFormErr('cityTown'); }} /><FErr f="cityTown" /></div>
                   <div className="col-md-3"><label className="form-label">Pin Code *</label><input className={`form-control ${formErrs.pinCode ? 'is-invalid' : ''}`} placeholder="6 digits" maxLength={6} value={form.pinCode || ''} onChange={e => { const pin = e.target.value.replace(/\D/g, '').slice(0, 6); setForm(p => ({ ...p, pinCode: pin })); clearFormErr('pinCode'); if (pin.length === 6) lookupCityByPin(pin); }} /><FErr f="pinCode" /></div>
 
                   <div className="col-12"><div className="employee-form-section">Contact Details</div></div>
@@ -504,11 +537,11 @@ export default function EmployeesPage() {
                   <div className="col-md-6"><label className="form-label">Phone *</label><input type="tel" className={`form-control ${formErrs.phone ? 'is-invalid' : ''}`} placeholder="10-digit number" maxLength={10} autoComplete="off" value={form.phone || ''} onChange={e => { setForm(p => ({ ...p, phone: e.target.value.replace(/\D/g, '').slice(0, 10) })); clearFormErr('phone'); }} /><FErr f="phone" /></div>
 
                   <div className="col-12"><div className="employee-form-section">Emergency Contact</div></div>
-                  <div className="col-md-6"><label className="form-label">Emergency Contact Name *</label><input type="text" className={`form-control ${formErrs.emergencyContactName ? 'is-invalid' : ''}`} placeholder="e.g. Jane Smith" value={form.emergencyContactName || ''} onChange={e => { setForm(p => ({ ...p, emergencyContactName: e.target.value.replace(/[^A-Za-z\s]/g, '') })); clearFormErr('emergencyContactName'); }} /><FErr f="emergencyContactName" /></div>
+                  <div className="col-md-6"><label className="form-label">Emergency Contact Name *</label><input type="text" className={`form-control ${formErrs.emergencyContactName ? 'is-invalid' : ''}`} placeholder="e.g. Jane Smith" value={form.emergencyContactName || ''} onChange={e => { let v = e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 25); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setForm(p => ({ ...p, emergencyContactName: v })); clearFormErr('emergencyContactName'); }} /><FErr f="emergencyContactName" /></div>
                   <div className="col-md-6"><label className="form-label">Emergency Contact Phone *</label><input type="tel" className={`form-control ${formErrs.emergencyContactPhone ? 'is-invalid' : ''}`} placeholder="10-digit number" maxLength={10} value={form.emergencyContactPhone || ''} onChange={e => { setForm(p => ({ ...p, emergencyContactPhone: e.target.value.replace(/\D/g, '').slice(0, 10) })); clearFormErr('emergencyContactPhone'); }} /><FErr f="emergencyContactPhone" /></div>
 
                   <div className="col-12"><div className="employee-form-section">Work Details</div></div>
-                  <div className="col-md-6"><label className="form-label">Join Date *</label><input type="date" className={`form-control ${formErrs.joinDate ? 'is-invalid' : ''}`} value={form.joinDate || ''} onChange={e => { setForm(p => ({ ...p, joinDate: e.target.value })); clearFormErr('joinDate'); }} /><FErr f="joinDate" /></div>
+                  <div className="col-md-6"><label className="form-label">Join Date *</label><input type="date" className={`form-control ${formErrs.joinDate ? 'is-invalid' : ''}`} value={form.joinDate || ''} min="2022-03-21" onChange={e => { setForm(p => ({ ...p, joinDate: e.target.value })); clearFormErr('joinDate'); }} /><FErr f="joinDate" /></div>
                   <div className="col-md-6"><label className="form-label">Department *</label><FErr f="department" />{showNewDept ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="Letters and spaces only" value={newDeptName} onChange={e => setNewDeptName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} /><button type="button" className="btn btn-primary btn-sm" onClick={() => { if (!newDeptName.trim()) return; setDepartments(prev => [...prev, newDeptName.trim()]); setForm(p => ({ ...p, department: newDeptName.trim() })); setNewDeptName(''); setShowNewDept(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDept(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.department || ''} onChange={e => setForm(p => ({ ...p, department: e.target.value, designation: '' }))}><option value="">Select Department</option>{departments.map(d => <option key={d}>{d}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewDept(true)}><i className="bi bi-plus-lg" /></button></div>}</div>
                   <div className="col-md-6"><label className="form-label">Designation *</label><FErr f="designation" />{showNewDesig ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="Letters and spaces only" value={newDesigName} onChange={e => setNewDesigName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} /><button type="button" className="btn btn-primary btn-sm" onClick={async () => { if (!newDesigName.trim()) return; try { await api.post('/api/settings', { type: 'designations', name: newDesigName.trim(), department: form.department || '' }); await loadDesignations(); setForm(p => ({ ...p, designation: newDesigName.trim() })); } catch {} setNewDesigName(''); setShowNewDesig(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDesig(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.designation || ''} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))}><option value="">Select Designation</option>{designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewDesig(true)}><i className="bi bi-plus-lg" /></button></div>}</div>
                   <div className="col-md-6"><label className="form-label">Shift *</label><FErr f="shift" />{showNewShift ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="e.g. Morning (9AM-6PM)" value={newShiftName} onChange={e => setNewShiftName(e.target.value)} /><button type="button" className="btn btn-primary btn-sm" onClick={async () => { if (!newShiftName.trim()) return; try { await api.post('/api/settings', { type: 'shifts', name: newShiftName.trim(), startTime: '09:00', endTime: '18:00' }); await loadShifts(); setForm(p => ({ ...p, shift: newShiftName.trim() })); } catch {} setNewShiftName(''); setShowNewShift(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewShift(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.shift || ''} onChange={e => setForm(p => ({ ...p, shift: e.target.value }))}><option value="">Select Shift</option>{shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}-${s.endTime})` : ''}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewShift(true)}><i className="bi bi-plus-lg" /></button></div>}</div>

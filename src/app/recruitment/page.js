@@ -14,7 +14,7 @@ const EMPTY_JOB = {
   employmentMode: 'Onsite', location: '', openings: '1', status: 'active',
   // Requirements
   experienceLevel: 'fresher', minExperience: '', maxExperience: '',
-  qualifications: [], requiredSkills: [], preferredSkills: [], description: '',
+  qualifications: '', requiredSkills: '', preferredSkills: '', description: '',
   // Compensation
   salaryType: 'not_disclosed', fixedSalary: '', minSalary: '', maxSalary: '',
   salaryCurrency: 'INR', salaryPeriod: 'annual', benefits: [],
@@ -61,9 +61,7 @@ export default function RecruitmentPage() {
       }, 10000);
     });
   };
-  const [reqSkillInput, setReqSkillInput] = useState('');
-  const [prefSkillInput, setPrefSkillInput] = useState('');
-  const [qualInput, setQualInput] = useState('');
+
   const [hrUsers, setHrUsers] = useState([]);
   const [toast, setToast] = useState(null);
   const [departments, setDepartments] = useState([]);
@@ -124,9 +122,6 @@ export default function RecruitmentPage() {
     setEditJobModal(null);
     setJobForm(EMPTY_JOB);
     setJobErrors({});
-    setReqSkillInput('');
-    setPrefSkillInput('');
-    setQualInput('');
     setShowJobModal(true);
   };
   const buildJobPayload = (id = null) => ({
@@ -142,9 +137,9 @@ export default function RecruitmentPage() {
     experienceLevel: jobForm.experienceLevel,
     minExperience: jobForm.minExperience,
     maxExperience: jobForm.maxExperience,
-    qualifications: jobForm.qualifications,
-    requiredSkills: jobForm.requiredSkills,
-    preferredSkills: jobForm.preferredSkills,
+    qualifications: jobForm.qualifications.split(',').map(s => s.trim()).filter(Boolean),
+    requiredSkills: jobForm.requiredSkills.split(',').map(s => s.trim()).filter(Boolean),
+    preferredSkills: jobForm.preferredSkills.split(',').map(s => s.trim()).filter(Boolean),
     description: jobForm.description,
     salaryType: jobForm.salaryType,
     fixedSalary: jobForm.fixedSalary,
@@ -196,30 +191,46 @@ export default function RecruitmentPage() {
     const jf = jobForm;
 
     if (!jf.title.trim()) errs.title = 'Job title is required';
-    else if (jf.title.trim().length < 3) errs.title = 'Title must be at least 3 characters';
+    else if (!/^[A-Za-z\s]+$/.test(jf.title.trim())) errs.title = 'Title can only contain letters and spaces';
+    else if (jf.title.trim().length > 30) errs.title = 'Title must be 30 characters or less';
 
     if (!jf.department) errs.department = 'Department is required';
     if (!jf.employmentMode) errs.employmentMode = 'Employment mode is required';
     if (jf.employmentMode !== 'Remote' && !jf.location.trim()) errs.location = 'Location is required for non-remote jobs';
+    else if (jf.location.trim() && !/^[A-Za-z\s]+$/.test(jf.location.trim())) errs.location = 'Location can only contain alphabets';
+    else if (jf.location.trim().length > 25) errs.location = 'Location must be 25 characters or less';
+    if (jf.openings && !/^\d{1,2}$/.test(jf.openings)) errs.openings = 'Openings must be 1-99';
+    if (!jf.qualifications.trim()) errs.qualifications = 'At least one qualification is required';
     if (!jf.description.trim()) errs.description = 'Job description is required';
     else if (jf.description.trim().length < 50) errs.description = 'Description must be at least 50 characters';
     if (!jf.hiringManagerId) errs.hiringManagerId = 'Hiring manager is required to publish';
     if (jf.experienceLevel === 'experienced') {
       if (jf.minExperience === '' || jf.minExperience === null) errs.minExperience = 'Minimum experience is required';
+      else if (!/^\d$/.test(jf.minExperience)) errs.minExperience = 'Must be a single digit';
       if (jf.maxExperience === '' || jf.maxExperience === null) errs.maxExperience = 'Maximum experience is required';
+      else if (!/^\d$/.test(jf.maxExperience)) errs.maxExperience = 'Must be a single digit';
       if (jf.minExperience !== '' && jf.maxExperience !== '' && Number(jf.maxExperience) < Number(jf.minExperience))
         errs.maxExperience = 'Max experience must be greater than min';
     }
-    if (jf.salaryType === 'fixed' && (!jf.fixedSalary || Number(jf.fixedSalary) < 1))
-      errs.fixedSalary = 'Fixed salary is required';
+    const maxSalaryDigits = jf.salaryPeriod === 'monthly' ? 6 : 7;
+    if (jf.salaryType === 'fixed') {
+      if (!jf.fixedSalary || Number(jf.fixedSalary) < 1) errs.fixedSalary = 'Fixed salary is required';
+      else if (jf.fixedSalary.length > maxSalaryDigits) errs.fixedSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
+    }
     if (jf.salaryType === 'range') {
       if (!jf.minSalary || Number(jf.minSalary) < 1) errs.minSalary = 'Minimum salary is required';
+      else if (jf.minSalary.length > maxSalaryDigits) errs.minSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
       if (!jf.maxSalary || Number(jf.maxSalary) < 1) errs.maxSalary = 'Maximum salary is required';
+      else if (jf.maxSalary.length > maxSalaryDigits) errs.maxSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
       if (jf.minSalary && jf.maxSalary && Number(jf.maxSalary) <= Number(jf.minSalary))
         errs.maxSalary = 'Max salary must be greater than min salary';
     }
-    if (jf.applicationDeadline && new Date(jf.applicationDeadline) < new Date())
-      errs.applicationDeadline = 'Deadline must be a future date';
+    if (!jf.applicationDeadline) errs.applicationDeadline = 'Application deadline is required';
+    else {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const deadline = new Date(jf.applicationDeadline);
+      if (deadline <= today) errs.applicationDeadline = 'Deadline must be after today';
+    }
     (jf.screeningQuestions || []).forEach((q, i) => {
       if (!q.question.trim()) errs['sq_' + i + '_question'] = 'Question ' + (i + 1) + ' text is required';
       if (q.type === 'multiple_choice' && (!q.options || q.options.filter(opt => String(opt || '').trim()).length < 2))
@@ -239,7 +250,6 @@ export default function RecruitmentPage() {
       setEditJobModal(null);
       setJobForm(EMPTY_JOB);
       setJobErrors({});
-      setReqSkillInput(''); setPrefSkillInput(''); setQualInput('');
       load();
     } catch (e) {
       try {
@@ -258,6 +268,8 @@ export default function RecruitmentPage() {
     const errors = {};
 
     if (!name) errors.name = 'Name is required';
+    else if (name.length > 30) errors.name = 'Name must be 30 characters or less';
+    else if (!/^[A-Z]/.test(name)) errors.name = 'First letter must be uppercase';
     if (!email) errors.email = 'Email is required';
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = 'Please enter a valid email address';
     if (!appForm.phone) errors.phone = 'Phone is required';
@@ -390,9 +402,9 @@ export default function RecruitmentPage() {
       experienceLevel: job.experienceLevel || 'fresher',
       minExperience: toStr(job.minExperience ?? ''),
       maxExperience: toStr(job.maxExperience ?? ''),
-      qualifications: Array.isArray(job.qualifications) ? job.qualifications : [],
-      requiredSkills: Array.isArray(job.requiredSkills) ? job.requiredSkills : [],
-      preferredSkills: Array.isArray(job.preferredSkills) ? job.preferredSkills : [],
+      qualifications: Array.isArray(job.qualifications) ? job.qualifications.join(', ') : '',
+      requiredSkills: Array.isArray(job.requiredSkills) ? job.requiredSkills.join(', ') : '',
+      preferredSkills: Array.isArray(job.preferredSkills) ? job.preferredSkills.join(', ') : '',
       description: job.description || '',
       salaryType: job.salaryType || 'not_disclosed',
       fixedSalary: toStr(job.fixedSalary ?? ''),
@@ -419,25 +431,43 @@ export default function RecruitmentPage() {
     const errs = {};
     const jf = jobForm;
     if (!jf.title.trim()) errs.title = 'Job title is required';
-    else if (jf.title.trim().length < 3) errs.title = 'Title must be at least 3 characters';
+    else if (!/^[A-Za-z\s]+$/.test(jf.title.trim())) errs.title = 'Title can only contain letters and spaces';
+    else if (jf.title.trim().length > 30) errs.title = 'Title must be 30 characters or less';
     if (!jf.department) errs.department = 'Department is required';
     if (jf.employmentMode !== 'Remote' && !jf.location.trim()) errs.location = 'Location is required for non-remote jobs';
+    else if (jf.location.trim() && !/^[A-Za-z\s]+$/.test(jf.location.trim())) errs.location = 'Location can only contain alphabets';
+    else if (jf.location.trim().length > 25) errs.location = 'Location must be 25 characters or less';
+    if (jf.openings && !/^\d{1,2}$/.test(jf.openings)) errs.openings = 'Openings must be 1-99';
+    if (!jf.qualifications.trim()) errs.qualifications = 'At least one qualification is required';
     if (!jf.description.trim()) errs.description = 'Job description is required';
     else if (jf.description.trim().length < 50) errs.description = 'Description must be at least 50 characters';
     if (!jf.hiringManagerId) errs.hiringManagerId = 'Hiring manager is required to publish';
     if (jf.experienceLevel === 'experienced') {
-      if (jf.minExperience === '') errs.minExperience = 'Minimum experience is required';
-      if (jf.maxExperience === '') errs.maxExperience = 'Maximum experience is required';
+      if (jf.minExperience === '' || jf.minExperience === null) errs.minExperience = 'Minimum experience is required';
+      else if (!/^\d$/.test(jf.minExperience)) errs.minExperience = 'Must be a single digit';
+      if (jf.maxExperience === '' || jf.maxExperience === null) errs.maxExperience = 'Maximum experience is required';
+      else if (!/^\d$/.test(jf.maxExperience)) errs.maxExperience = 'Must be a single digit';
       if (jf.minExperience !== '' && jf.maxExperience !== '' && Number(jf.maxExperience) < Number(jf.minExperience))
         errs.maxExperience = 'Max experience must be greater than min';
     }
-    if (jf.salaryType === 'fixed' && (!jf.fixedSalary || Number(jf.fixedSalary) < 1)) errs.fixedSalary = 'Fixed salary is required';
+    const maxSalaryDigits = jf.salaryPeriod === 'monthly' ? 6 : 7;
+    if (jf.salaryType === 'fixed') {
+      if (!jf.fixedSalary || Number(jf.fixedSalary) < 1) errs.fixedSalary = 'Fixed salary is required';
+      else if (jf.fixedSalary.length > maxSalaryDigits) errs.fixedSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
+    }
     if (jf.salaryType === 'range') {
       if (!jf.minSalary || Number(jf.minSalary) < 1) errs.minSalary = 'Minimum salary is required';
+      else if (jf.minSalary.length > maxSalaryDigits) errs.minSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
       if (!jf.maxSalary || Number(jf.maxSalary) < 1) errs.maxSalary = 'Maximum salary is required';
+      else if (jf.maxSalary.length > maxSalaryDigits) errs.maxSalary = `Max ${maxSalaryDigits} digits for ${jf.salaryPeriod} salary`;
       if (jf.minSalary && jf.maxSalary && Number(jf.maxSalary) <= Number(jf.minSalary)) errs.maxSalary = 'Max salary must be greater than min salary';
     }
-    if (jf.applicationDeadline && new Date(jf.applicationDeadline) < new Date()) errs.applicationDeadline = 'Deadline must be a future date';
+    if (!jf.applicationDeadline) errs.applicationDeadline = 'Application deadline is required';
+    else {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const deadline = new Date(jf.applicationDeadline);
+      if (deadline <= today) errs.applicationDeadline = 'Deadline must be after today';
+    }
     (jf.screeningQuestions || []).forEach((q, i) => {
       if (!q.question.trim()) errs['sq_' + i + '_question'] = 'Question ' + (i + 1) + ' text is required';
       if (q.type === 'multiple_choice' && (!q.options || q.options.filter(opt => String(opt || '').trim()).length < 2))
@@ -449,7 +479,7 @@ export default function RecruitmentPage() {
       await api.put('/api/recruitment/jobs', buildJobPayload(editJobModal));
       showToast('Job updated');
       setShowJobModal(false); setEditJobModal(null); setJobForm(EMPTY_JOB);
-      setJobErrors({}); setReqSkillInput(''); setPrefSkillInput(''); setQualInput('');
+      setJobErrors({});
       load();
     } catch (e) {
       try { const p = JSON.parse(e.message); if (p?.errors) { setFieldErrors(p.errors); return; } } catch {}
@@ -932,9 +962,6 @@ export default function RecruitmentPage() {
         const Err = ({ f }) => je[f] ? <div style={{ color: '#ef4444', fontSize: 11, marginTop: 3 }}><i className="bi bi-exclamation-circle me-1" />{je[f]}</div> : null;
         const secStyle = { background: '#f8fafc', borderRadius: 10, padding: '14px 16px', marginBottom: 16 };
         const secTitle = { fontSize: 12, fontWeight: 700, color: '#3b82f6', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 };
-        const addTag = (list, val, key) => { const t = val.trim(); if (t && !list.includes(t)) setJf(key, [...list, t]); };
-        const removeTag = (list, i, key) => setJf(key, list.filter((_, idx) => idx !== i));
-        const tagStyle = { display:'inline-flex', alignItems:'center', gap:4, background:'#eff6ff', color:'#2563eb', fontSize:11, fontWeight:600, padding:'2px 8px', borderRadius:20, margin:'2px' };
         const addSQ = () => setJf('screeningQuestions', [...jf.screeningQuestions, { question:'', type:'text', options:[], required:false }]);
         const updateSQ = (i, k, v) => { const sq=[...jf.screeningQuestions]; sq[i]={...sq[i],[k]:v}; setJf('screeningQuestions',sq); };
         const removeSQ = (i) => setJf('screeningQuestions', jf.screeningQuestions.filter((_,idx)=>idx!==i));
@@ -950,7 +977,7 @@ export default function RecruitmentPage() {
                   <h5 className="modal-title mb-0">{editJobModal ? 'Edit Job' : 'Post Job'}</h5>
                   <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>Job Code will be auto-generated on save</div>
                 </div>
-                <button className="btn-close" onClick={() => { setShowJobModal(false); setEditJobModal(null); setJobErrors({}); setJobForm(EMPTY_JOB); setReqSkillInput(''); setPrefSkillInput(''); setQualInput(''); }} />
+                <button className="btn-close" onClick={() => { setShowJobModal(false); setEditJobModal(null); setJobErrors({}); setJobForm(EMPTY_JOB); }} />
               </div>
               <div className="modal-body" style={{ padding: '20px 24px' }}>
 
@@ -960,7 +987,7 @@ export default function RecruitmentPage() {
                   <div className="row g-3">
                     <div className="col-md-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job Title *</label>
-                      <input className={`form-control ${je.title ? 'is-invalid' : ''}`} placeholder="e.g. Senior React Developer" value={jf.title} onChange={e => setJf('title', e.target.value)} />
+                      <input className={`form-control ${je.title ? 'is-invalid' : ''}`} placeholder="e.g. Senior React Developer" value={jf.title} onChange={e => setJf('title', e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 30))} />
                       <Err f="title" />
                     </div>
                     <div className="col-md-6">
@@ -1006,12 +1033,13 @@ export default function RecruitmentPage() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Location {jf.employmentMode !== 'Remote' ? '*' : ''}</label>
-                      <input className={`form-control ${je.location ? 'is-invalid' : ''}`} placeholder="e.g. Chennai, Mumbai" value={jf.location} onChange={e => setJf('location', e.target.value)} />
+                      <input className={`form-control ${je.location ? 'is-invalid' : ''}`} placeholder="e.g. Chennai, Mumbai" value={jf.location} onChange={e => setJf('location', e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 25))} />
                       <Err f="location" />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>No. of Openings *</label>
-                      <input type="number" min="1" className="form-control" value={jf.openings} onChange={e => setJf('openings', e.target.value.replace(/[^0-9]/g,''))} />
+                      <input type="text" inputMode="numeric" className={`form-control ${je.openings ? 'is-invalid' : ''}`} style={{ maxWidth: 80 }} value={jf.openings} onChange={e => setJf('openings', e.target.value.replace(/\D/g, '').slice(0, 2))} />
+                      <Err f="openings" />
                     </div>
                     <div className="col-md-4">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job Status</label>
@@ -1020,8 +1048,8 @@ export default function RecruitmentPage() {
                       </select>
                     </div>
                     <div className="col-md-4">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Application Deadline</label>
-                      <input type="date" className={`form-control ${je.applicationDeadline ? 'is-invalid' : ''}`} value={jf.applicationDeadline} onChange={e => setJf('applicationDeadline', e.target.value)} />
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Application Deadline *</label>
+                      <input type="date" className={`form-control ${je.applicationDeadline ? 'is-invalid' : ''}`} value={jf.applicationDeadline} min={new Date(Date.now() + 86400000).toISOString().split('T')[0]} onChange={e => setJf('applicationDeadline', e.target.value)} />
                       <Err f="applicationDeadline" />
                     </div>
                   </div>
@@ -1046,36 +1074,28 @@ export default function RecruitmentPage() {
                       <>
                         <div className="col-md-6">
                           <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Min Experience (years) *</label>
-                          <input type="number" min="0" max="50" className={`form-control ${je.minExperience ? 'is-invalid' : ''}`} placeholder="e.g. 2" value={jf.minExperience} onChange={e => setJf('minExperience', e.target.value)} />
+                          <input type="text" inputMode="numeric" className={`form-control ${je.minExperience ? 'is-invalid' : ''}`} style={{ maxWidth: 80 }} placeholder="e.g. 2" value={jf.minExperience} onChange={e => setJf('minExperience', e.target.value.replace(/\D/g, '').slice(0, 1))} />
                           <Err f="minExperience" />
                         </div>
                         <div className="col-md-6">
                           <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Max Experience (years) *</label>
-                          <input type="number" min="0" max="50" className={`form-control ${je.maxExperience ? 'is-invalid' : ''}`} placeholder="e.g. 6" value={jf.maxExperience} onChange={e => setJf('maxExperience', e.target.value)} />
+                          <input type="text" inputMode="numeric" className={`form-control ${je.maxExperience ? 'is-invalid' : ''}`} style={{ maxWidth: 80 }} placeholder="e.g. 6" value={jf.maxExperience} onChange={e => setJf('maxExperience', e.target.value.replace(/\D/g, '').slice(0, 1))} />
                           <Err f="maxExperience" />
                         </div>
                       </>
                     )}
                     <div className="col-12">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Qualifications <span style={{ color:'#94a3b8',fontWeight:400 }}>(press Enter to add)</span></label>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'6px 10px', border:'1px solid #e2e8f0', borderRadius:8, minHeight:40, background:'#fff', marginBottom:4 }}>
-                        {jf.qualifications.map((q,qi) => <span key={qi} style={tagStyle}>{q}<button onClick={()=>removeTag(jf.qualifications,qi,'qualifications')} style={{border:'none',background:'none',color:'#2563eb',cursor:'pointer',padding:0,fontSize:12}}>×</button></span>)}
-                        <input value={qualInput} onChange={e=>setQualInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addTag(jf.qualifications,qualInput,'qualifications');setQualInput('');}}} placeholder={jf.qualifications.length?'':'e.g. B.Tech, MBA'} style={{border:'none',outline:'none',fontSize:13,flex:1,minWidth:120,background:'transparent'}} />
-                      </div>
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Qualifications * <span style={{ color:'#94a3b8', fontWeight:400 }}>(comma separated)</span></label>
+                      <input className={`form-control ${je.qualifications ? 'is-invalid' : ''}`} value={jf.qualifications} onChange={e => setJf('qualifications', e.target.value)} placeholder="e.g. Diploma, UG, PG, PhD" />
+                      <Err f="qualifications" />
                     </div>
                     <div className="col-12">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Required Skills <span style={{ color:'#94a3b8',fontWeight:400 }}>(press Enter to add)</span></label>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'6px 10px', border:'1px solid #e2e8f0', borderRadius:8, minHeight:40, background:'#fff', marginBottom:4 }}>
-                        {jf.requiredSkills.map((s,si) => <span key={si} style={tagStyle}>{s}<button onClick={()=>removeTag(jf.requiredSkills,si,'requiredSkills')} style={{border:'none',background:'none',color:'#2563eb',cursor:'pointer',padding:0,fontSize:12}}>×</button></span>)}
-                        <input value={reqSkillInput} onChange={e=>setReqSkillInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addTag(jf.requiredSkills,reqSkillInput,'requiredSkills');setReqSkillInput('');}}} placeholder={jf.requiredSkills.length?'':'e.g. React, Node.js'} style={{border:'none',outline:'none',fontSize:13,flex:1,minWidth:120,background:'transparent'}} />
-                      </div>
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Required Skills <span style={{ color:'#94a3b8',fontWeight:400 }}>(comma separated)</span></label>
+                      <input className="form-control" value={jf.requiredSkills} onChange={e => setJf('requiredSkills', e.target.value)} placeholder="e.g. React, Node.js" />
                     </div>
                     <div className="col-12">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Preferred Skills <span style={{ color:'#94a3b8',fontWeight:400 }}>(optional, press Enter)</span></label>
-                      <div style={{ display:'flex', flexWrap:'wrap', gap:4, padding:'6px 10px', border:'1px solid #e2e8f0', borderRadius:8, minHeight:40, background:'#fff', marginBottom:4 }}>
-                        {jf.preferredSkills.map((s,si) => <span key={si} style={{...tagStyle, background:'#fdf4ff', color:'#7c3aed'}}>{s}<button onClick={()=>removeTag(jf.preferredSkills,si,'preferredSkills')} style={{border:'none',background:'none',color:'#7c3aed',cursor:'pointer',padding:0,fontSize:12}}>×</button></span>)}
-                        <input value={prefSkillInput} onChange={e=>setPrefSkillInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();addTag(jf.preferredSkills,prefSkillInput,'preferredSkills');setPrefSkillInput('');}}} placeholder={jf.preferredSkills.length?'':'e.g. AWS, Docker'} style={{border:'none',outline:'none',fontSize:13,flex:1,minWidth:120,background:'transparent'}} />
-                      </div>
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Preferred Skills <span style={{ color:'#94a3b8',fontWeight:400 }}>(optional, comma separated)</span></label>
+                      <input className="form-control" value={jf.preferredSkills} onChange={e => setJf('preferredSkills', e.target.value)} placeholder="e.g. AWS, Docker" />
                     </div>
                     <div className="col-12">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Job Description *</label>
@@ -1121,7 +1141,7 @@ export default function RecruitmentPage() {
                         {jf.salaryType === 'fixed' && (
                           <div className="col-md-6">
                             <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Fixed Salary *</label>
-                            <input type="number" min="1" className={`form-control ${je.fixedSalary ? 'is-invalid' : ''}`} placeholder="e.g. 600000" value={jf.fixedSalary} onChange={e => setJf('fixedSalary', e.target.value)} />
+                            <input type="text" inputMode="numeric" className={`form-control ${je.fixedSalary ? 'is-invalid' : ''}`} placeholder="e.g. 600000" value={jf.fixedSalary} onChange={e => setJf('fixedSalary', e.target.value.replace(/\D/g, '').slice(0, jf.salaryPeriod === 'monthly' ? 6 : 7))} />
                             <Err f="fixedSalary" />
                           </div>
                         )}
@@ -1129,12 +1149,12 @@ export default function RecruitmentPage() {
                           <>
                             <div className="col-md-3">
                               <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Min Salary *</label>
-                              <input type="number" min="1" className={`form-control ${je.minSalary ? 'is-invalid' : ''}`} placeholder="e.g. 600000" value={jf.minSalary} onChange={e => setJf('minSalary', e.target.value)} />
+                              <input type="text" inputMode="numeric" className={`form-control ${je.minSalary ? 'is-invalid' : ''}`} placeholder="e.g. 600000" value={jf.minSalary} onChange={e => setJf('minSalary', e.target.value.replace(/\D/g, '').slice(0, jf.salaryPeriod === 'monthly' ? 6 : 7))} />
                               <Err f="minSalary" />
                             </div>
                             <div className="col-md-3">
                               <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Max Salary *</label>
-                              <input type="number" min="1" className={`form-control ${je.maxSalary ? 'is-invalid' : ''}`} placeholder="e.g. 1200000" value={jf.maxSalary} onChange={e => setJf('maxSalary', e.target.value)} />
+                              <input type="text" inputMode="numeric" className={`form-control ${je.maxSalary ? 'is-invalid' : ''}`} placeholder="e.g. 1200000" value={jf.maxSalary} onChange={e => setJf('maxSalary', e.target.value.replace(/\D/g, '').slice(0, jf.salaryPeriod === 'monthly' ? 6 : 7))} />
                               <Err f="maxSalary" />
                             </div>
                           </>
@@ -1176,7 +1196,7 @@ export default function RecruitmentPage() {
                     </div>
                     <div className="col-md-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Interview Rounds</label>
-                      <input type="number" min="1" max="10" className="form-control" value={jf.interviewRounds} onChange={e => setJf('interviewRounds', e.target.value)} />
+                      <input type="text" inputMode="numeric" min="1" max="9" className="form-control" style={{ maxWidth: 80 }} value={jf.interviewRounds} onChange={e => setJf('interviewRounds', e.target.value.replace(/\D/g, '').slice(0, 1))} />
                     </div>
                     <div className="col-md-6" style={{ display:'flex', alignItems:'center' }}>
                       <label style={{ display:'flex', alignItems:'center', gap:10, marginTop:24, cursor:'pointer', fontSize:13, fontWeight:600, color:'#334155' }}>
@@ -1242,7 +1262,7 @@ export default function RecruitmentPage() {
 
               </div>
               <div className="modal-footer" style={{ borderTop:'1px solid #e2e8f0', justifyContent:'space-between' }}>
-                <button className="btn btn-outline-secondary" onClick={() => { setShowJobModal(false); setJobErrors({}); setJobForm(EMPTY_JOB); setReqSkillInput(''); setPrefSkillInput(''); setQualInput(''); setEditJobModal(null); }}>Cancel</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowJobModal(false); setJobErrors({}); setJobForm(EMPTY_JOB); setEditJobModal(null); }}>Cancel</button>
                 <div style={{ display:'flex', gap:8 }}>
                   <button className="btn btn-success" onClick={() => editJobModal ? saveEditJob() : saveJob()} disabled={saving}>
                     {saving ? <><span className="spinner-border spinner-border-sm me-2" />Publishing...</> : <><i className="bi bi-send me-2" />{editJobModal ? 'Update & Publish' : 'Publish'}</>}
@@ -1266,7 +1286,7 @@ export default function RecruitmentPage() {
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Name *</label>
                     <input className={`form-control ${appErrors.name ? 'is-invalid' : ''}`} placeholder="Full name" value={appForm.name}
-                      onChange={e => setAppField('name', e.target.value.replace(/[^A-Za-z\s]/g, ''))} />
+                      onChange={e => { let v = e.target.value.replace(/[^A-Za-z\s]/g, '').slice(0, 30); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setAppField('name', v); }} />
                     <AppError field="name" />
                   </div>
                   <div className="col-md-6">

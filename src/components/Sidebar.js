@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess } from '@/lib/auth';
+import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess, clearImpersonatedUser, isImpersonating } from '@/lib/auth';
 import { api } from '@/lib/api';
 
 const NAV_ITEMS = [
@@ -51,6 +51,11 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   }, [user]);
 
   if (!user) return null;
+
+  const handleEndImpersonation = () => {
+    clearImpersonatedUser();
+    window.location.href = '/dashboard';
+  };
 
   const visibleItems = NAV_ITEMS.filter(item => hasAccess(user.role, item.module));
   const sections = [...new Set(visibleItems.map(i => i.section))];
@@ -130,6 +135,36 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           </Link>
         ))}
       </nav>
+
+      {isImpersonating() && (
+        <button data-readonly-allow="true"
+          onClick={handleEndImpersonation}
+          style={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+            zIndex: 9999,
+            padding: '12px 20px',
+            borderRadius: 999,
+            border: 'none',
+            background: '#1e293b',
+            color: '#fff',
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: 'pointer',
+            boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#0f172a'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.transform = 'none'; }}
+        >
+          <i className="bi bi-house-door-fill" />
+          Return Home
+        </button>
+      )}
     </>
   );
 }

@@ -63,6 +63,8 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('hrms_token');
     localStorage.removeItem('hrms_refresh');
     localStorage.removeItem('hrms_user');
+    localStorage.removeItem('hrms_impersonated_user');
+    window.__impersonatedUser = null;
     setUser(null);
   };
 
@@ -73,8 +75,44 @@ export function AuthProvider({ children }) {
   );
 }
 
+// Impersonation state — persisted in localStorage to survive page reloads
+export function setImpersonatedUser(user) {
+  window.__impersonatedUser = user;
+  localStorage.setItem('hrms_impersonated_user', JSON.stringify(user));
+  window.dispatchEvent(new CustomEvent('impersonation'));
+}
+export function clearImpersonatedUser() {
+  window.__impersonatedUser = null;
+  localStorage.removeItem('hrms_impersonated_user');
+  window.dispatchEvent(new CustomEvent('impersonation'));
+}
+export function isImpersonating() {
+  return typeof window !== 'undefined' && !!window.__impersonatedUser;
+}
+
 export function useAuth() {
-  return useContext(AuthContext);
+  const auth = useContext(AuthContext);
+  const [, forceUpdate] = useState(0);
+
+  useEffect(() => {
+    // Restore impersonation from localStorage (survives full page reloads)
+    if (typeof window !== 'undefined' && !window.__impersonatedUser) {
+      const stored = localStorage.getItem('hrms_impersonated_user');
+      if (stored) {
+        try { window.__impersonatedUser = JSON.parse(stored); } catch {}
+      }
+    }
+    const handler = () => forceUpdate(n => n + 1);
+    window.addEventListener('impersonation', handler);
+    handler();
+    return () => window.removeEventListener('impersonation', handler);
+  }, []);
+
+  if (!auth) return null;
+  if (typeof window !== 'undefined' && window.__impersonatedUser) {
+    return { ...auth, user: window.__impersonatedUser, realUser: auth.user, isReadOnly: true };
+  }
+  return { ...auth, isReadOnly: false };
 }
 
 export function getToken() {

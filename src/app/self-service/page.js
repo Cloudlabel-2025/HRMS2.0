@@ -12,7 +12,7 @@ const EMPTY_FORM = {
   preferredName: '',
   personalPhone: '',
   secondaryPhone: '',
-  addressHistory: [{ addressType: 'current', line1: '', line2: '', city: '', state: '', country: 'India', postalCode: '', landmark: '', isCurrent: true }],
+  addressHistory: [{ addressType: 'current', line1: '', line2: '', line3: '', city: '', state: '', country: 'India', postalCode: '', landmark: '', isCurrent: true }],
   emergencyContacts: [{ name: '', relation: '', phone: '', email: '', isPrimary: true }],
   noticePeriodDays: 30,
   lastWorkingDate: '',
@@ -49,15 +49,26 @@ export default function SelfServicePage() {
   const validate = () => {
     const errs = {};
     if (!form.reason || form.reason.length < 10) errs.reason = 'Reason must be at least 10 characters';
+    else if (!/^[a-zA-Z0-9 ]+$/.test(form.reason)) errs.reason = 'Reason can only contain letters and numbers';
     if (form.requestType === 'profile_update') {
       if (!form.personalPhone) errs.personalPhone = 'Personal phone is required';
       else if (!/^\d{10}$/.test(form.personalPhone)) errs.personalPhone = 'Personal phone must be exactly 10 digits';
+      if (form.preferredName && !/^[A-Z][a-zA-Z]*$/.test(form.preferredName)) errs.preferredName = 'Preferred name must start with a capital letter and contain only alphabets';
+      else if (form.preferredName && form.preferredName.length > 25) errs.preferredName = 'Preferred name must be 25 characters or less';
+      if (form.secondaryPhone && !/^\d{10}$/.test(form.secondaryPhone)) errs.secondaryPhone = 'Secondary phone must be exactly 10 digits';
     }
     if (form.requestType === 'address_update') {
       form.addressHistory.forEach((addr, i) => {
         if (!addr.line1) errs[`address.${i}.line1`] = 'Address line 1 is required';
+        else if (addr.line1.length > 25) errs[`address.${i}.line1`] = 'Line 1 must be 25 characters or less';
+        if (addr.line2 && addr.line2.length > 25) errs[`address.${i}.line2`] = 'Line 2 must be 25 characters or less';
+        if (addr.line3 && addr.line3.length > 25) errs[`address.${i}.line3`] = 'Line 3 must be 25 characters or less';
         if (!addr.city) errs[`address.${i}.city`] = 'City is required';
+        else if (!/^[a-zA-Z ]+$/.test(addr.city)) errs[`address.${i}.city`] = 'City can only contain alphabets';
+        else if (addr.city.length > 25) errs[`address.${i}.city`] = 'City must be 25 characters or less';
         if (!addr.state) errs[`address.${i}.state`] = 'State is required';
+        else if (!/^[a-zA-Z ]+$/.test(addr.state)) errs[`address.${i}.state`] = 'State can only contain alphabets';
+        else if (addr.state.length > 25) errs[`address.${i}.state`] = 'State must be 25 characters or less';
         if (!addr.postalCode) errs[`address.${i}.postalCode`] = 'Postal code is required';
         else if (!/^\d{6}$/.test(addr.postalCode)) errs[`address.${i}.postalCode`] = 'Postal code must be exactly 6 digits';
       });
@@ -65,13 +76,23 @@ export default function SelfServicePage() {
     if (form.requestType === 'emergency_contact_update') {
       form.emergencyContacts.forEach((c, i) => {
         if (!c.name) errs[`contact.${i}.name`] = 'Contact name is required';
+        else if (!/^[A-Z][a-zA-Z ]*$/.test(c.name)) errs[`contact.${i}.name`] = 'Name must start with a capital letter and contain only alphabets';
+        else if (c.name.length > 25) errs[`contact.${i}.name`] = 'Name must be 25 characters or less';
         if (!c.relation) errs[`contact.${i}.relation`] = 'Relation is required';
+        else if (!/^[a-zA-Z ]+$/.test(c.relation)) errs[`contact.${i}.relation`] = 'Relation can only contain alphabets';
+        else if (c.relation.length > 25) errs[`contact.${i}.relation`] = 'Relation must be 25 characters or less';
         if (!c.phone) errs[`contact.${i}.phone`] = 'Phone is required';
         else if (!/^\d{10}$/.test(c.phone)) errs[`contact.${i}.phone`] = 'Phone must be exactly 10 digits';
       });
     }
     if (form.requestType === 'resignation') {
+      if (form.noticePeriodDays && !/^\d{1,3}$/.test(form.noticePeriodDays)) errs.noticePeriodDays = 'Notice period must be 0-999';
       if (!form.lastWorkingDate) errs.lastWorkingDate = 'Last working date is required';
+      else {
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const lastDate = new Date(form.lastWorkingDate);
+        if (lastDate < today) errs.lastWorkingDate = 'Last working date cannot be in the past';
+      }
     }
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
@@ -238,7 +259,7 @@ export default function SelfServicePage() {
             <div className="row g-3">
               <div className="col-md-4">
                 <label className="form-label">Request Type</label>
-                <select className="form-select" value={form.requestType} onChange={e => { setForm(prev => ({ ...prev, requestType: e.target.value })); setFormErrors({}); }}>
+                <select className="form-select" value={form.requestType} onChange={e => { setForm(prev => ({ ...prev, requestType: e.target.value, reason: '' })); setFormErrors({}); }}>
                   <option value="profile_update">Profile Update</option>
                   <option value="address_update">Address Update</option>
                   <option value="emergency_contact_update">Emergency Contact Update</option>
@@ -247,15 +268,15 @@ export default function SelfServicePage() {
               </div>
               <div className="col-md-8">
                 <label className="form-label">Reason <span style={{color:'#ef4444'}}>*</span></label>
-                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} onChange={e => { setForm(prev => ({ ...prev, reason: e.target.value })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
+                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z0-9 ]/g, ''); setForm(prev => ({ ...prev, reason: v })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
                 {formErrors.reason && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.reason}</div>}
               </div>
 
               {form.requestType === 'profile_update' && (
                 <>
-                  <div className="col-md-4"><label className="form-label">Preferred Name</label><input className="form-control" value={form.preferredName} onChange={e => setForm(prev => ({ ...prev, preferredName: e.target.value }))} /></div>
+                  <div className="col-md-4"><label className="form-label">Preferred Name</label><input className={`form-control${formErrors.preferredName ? ' is-invalid' : ''}`} value={form.preferredName} onChange={e => { let v = e.target.value.replace(/[^a-zA-Z]/g, '').slice(0, 25); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setForm(prev => ({ ...prev, preferredName: v })); clearError('preferredName'); }} />{formErrors.preferredName && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.preferredName}</div>}</div>
                   <div className="col-md-4"><label className="form-label">Personal Phone <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors.personalPhone ? ' is-invalid' : ''}`} value={form.personalPhone} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, personalPhone: v })); clearError('personalPhone'); }} />{formErrors.personalPhone && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.personalPhone}</div>}</div>
-                  <div className="col-md-4"><label className="form-label">Secondary Phone</label><input className="form-control" value={form.secondaryPhone} onChange={e => setForm(prev => ({ ...prev, secondaryPhone: e.target.value }))} /></div>
+                  <div className="col-md-4"><label className="form-label">Secondary Phone</label><input className={`form-control${formErrors.secondaryPhone ? ' is-invalid' : ''}`} value={form.secondaryPhone} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, secondaryPhone: v })); clearError('secondaryPhone'); }} />{formErrors.secondaryPhone && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.secondaryPhone}</div>}</div>
                 </>
               )}
 
@@ -265,10 +286,11 @@ export default function SelfServicePage() {
                     <div className="fw-semibold mb-2">Address</div>
                     {form.addressHistory.map((address, index) => (
                       <div key={index} className="row g-2 mb-2">
-                        <div className="col-md-6"><label className="form-label">Line 1 <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.line1`] ? ' is-invalid' : ''}`} value={address.line1} onChange={e => { updateAddressField(index, 'line1', e.target.value); clearError(`address.${index}.line1`); }} />{formErrors[`address.${index}.line1`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.line1`]}</div>}</div>
-                        <div className="col-md-6"><label className="form-label">Line 2</label><input className="form-control" value={address.line2} onChange={e => updateAddressField(index, 'line2', e.target.value)} /></div>
-                        <div className="col-md-4"><label className="form-label">City <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.city`] ? ' is-invalid' : ''}`} value={address.city} onChange={e => { updateAddressField(index, 'city', e.target.value); clearError(`address.${index}.city`); }} />{formErrors[`address.${index}.city`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.city`]}</div>}</div>
-                        <div className="col-md-4"><label className="form-label">State <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.state`] ? ' is-invalid' : ''}`} value={address.state} onChange={e => { updateAddressField(index, 'state', e.target.value); clearError(`address.${index}.state`); }} />{formErrors[`address.${index}.state`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.state`]}</div>}</div>
+                        <div className="col-md-6"><label className="form-label">Line 1 <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.line1`] ? ' is-invalid' : ''}`} value={address.line1} onChange={e => { updateAddressField(index, 'line1', e.target.value.slice(0, 25)); clearError(`address.${index}.line1`); }} />{formErrors[`address.${index}.line1`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.line1`]}</div>}</div>
+                        <div className="col-md-6"><label className="form-label">Line 2</label><input className={`form-control${formErrors[`address.${index}.line2`] ? ' is-invalid' : ''}`} value={address.line2} onChange={e => { updateAddressField(index, 'line2', e.target.value.slice(0, 25)); clearError(`address.${index}.line2`); }} />{formErrors[`address.${index}.line2`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.line2`]}</div>}</div>
+                        <div className="col-md-6"><label className="form-label">Line 3</label><input className={`form-control${formErrors[`address.${index}.line3`] ? ' is-invalid' : ''}`} value={address.line3 ?? ''} onChange={e => { updateAddressField(index, 'line3', e.target.value.slice(0, 25)); clearError(`address.${index}.line3`); }} />{formErrors[`address.${index}.line3`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.line3`]}</div>}</div>
+                        <div className="col-md-4"><label className="form-label">City <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.city`] ? ' is-invalid' : ''}`} value={address.city} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 25); updateAddressField(index, 'city', v); clearError(`address.${index}.city`); }} />{formErrors[`address.${index}.city`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.city`]}</div>}</div>
+                        <div className="col-md-4"><label className="form-label">State <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.state`] ? ' is-invalid' : ''}`} value={address.state} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 25); updateAddressField(index, 'state', v); clearError(`address.${index}.state`); }} />{formErrors[`address.${index}.state`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.state`]}</div>}</div>
                         <div className="col-md-4"><label className="form-label">Postal Code <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`address.${index}.postalCode`] ? ' is-invalid' : ''}`} value={address.postalCode} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 6); updateAddressField(index, 'postalCode', v); clearError(`address.${index}.postalCode`); }} />{formErrors[`address.${index}.postalCode`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`address.${index}.postalCode`]}</div>}</div>
                       </div>
                     ))}
@@ -282,8 +304,8 @@ export default function SelfServicePage() {
                     <div className="fw-semibold mb-2">Emergency Contact</div>
                     {form.emergencyContacts.map((contact, index) => (
                       <div key={index} className="row g-2 mb-2">
-                        <div className="col-md-4"><label className="form-label">Name <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`contact.${index}.name`] ? ' is-invalid' : ''}`} value={contact.name} onChange={e => { updateContactField(index, 'name', e.target.value); clearError(`contact.${index}.name`); }} />{formErrors[`contact.${index}.name`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`contact.${index}.name`]}</div>}</div>
-                        <div className="col-md-4"><label className="form-label">Relation <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`contact.${index}.relation`] ? ' is-invalid' : ''}`} value={contact.relation} onChange={e => { updateContactField(index, 'relation', e.target.value); clearError(`contact.${index}.relation`); }} />{formErrors[`contact.${index}.relation`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`contact.${index}.relation`]}</div>}</div>
+                        <div className="col-md-4"><label className="form-label">Name <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`contact.${index}.name`] ? ' is-invalid' : ''}`} value={contact.name} onChange={e => { let v = e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 25); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); updateContactField(index, 'name', v); clearError(`contact.${index}.name`); }} />{formErrors[`contact.${index}.name`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`contact.${index}.name`]}</div>}</div>
+                        <div className="col-md-4"><label className="form-label">Relation <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`contact.${index}.relation`] ? ' is-invalid' : ''}`} value={contact.relation} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z ]/g, '').slice(0, 25); updateContactField(index, 'relation', v); clearError(`contact.${index}.relation`); }} />{formErrors[`contact.${index}.relation`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`contact.${index}.relation`]}</div>}</div>
                         <div className="col-md-4"><label className="form-label">Phone <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors[`contact.${index}.phone`] ? ' is-invalid' : ''}`} value={contact.phone} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); updateContactField(index, 'phone', v); clearError(`contact.${index}.phone`); }} />{formErrors[`contact.${index}.phone`] && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors[`contact.${index}.phone`]}</div>}</div>
                       </div>
                     ))}
@@ -293,8 +315,8 @@ export default function SelfServicePage() {
 
               {form.requestType === 'resignation' && (
                 <>
-                  <div className="col-md-4"><label className="form-label">Notice Period Days</label><input className="form-control" type="number" min="0" value={form.noticePeriodDays} onChange={e => setForm(prev => ({ ...prev, noticePeriodDays: e.target.value }))} /></div>
-                  <div className="col-md-4"><label className="form-label">Last Working Date <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} type="date" value={form.lastWorkingDate} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
+                  <div className="col-md-4"><label className="form-label">Notice Period Days</label><input className={`form-control${formErrors.noticePeriodDays ? ' is-invalid' : ''}`} type="text" inputMode="numeric" value={form.noticePeriodDays} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 3); setForm(prev => ({ ...prev, noticePeriodDays: v })); clearError('noticePeriodDays'); }} />{formErrors.noticePeriodDays && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.noticePeriodDays}</div>}</div>
+                  <div className="col-md-4"><label className="form-label">Last Working Date <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} type="date" value={form.lastWorkingDate} min={new Date().toISOString().split('T')[0]} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
                   <div className="col-md-4"><label className="form-label">Settlement Status</label><select className="form-select" value={form.settlementStatus} onChange={e => setForm(prev => ({ ...prev, settlementStatus: e.target.value }))}><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="settled">Settled</option></select></div>
                   <div className="col-12"><div className="form-check"><input className="form-check-input" type="checkbox" checked={form.exitInterviewComplete} onChange={e => setForm(prev => ({ ...prev, exitInterviewComplete: e.target.checked }))} id="exitInterviewComplete" /><label className="form-check-label" htmlFor="exitInterviewComplete">Exit interview complete</label></div></div>
                 </>
