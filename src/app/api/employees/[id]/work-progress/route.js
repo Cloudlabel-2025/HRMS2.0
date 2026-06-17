@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import { Employee } from '@/lib/models/index';
 import User from '@/lib/models/User';
+import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleLabel } from '@/lib/payroll-cycle';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -16,25 +17,6 @@ async function getTeamUserIds(user) {
     return members.map(m => m._id);
   }
   return [user._id];
-}
-
-function getCycleMonth(dateStr) {
-  const d = new Date(dateStr);
-  const day = d.getDate();
-  const month = d.getMonth();
-  const year = d.getFullYear();
-  if (day >= 26) {
-    const nextMonth = new Date(year, month + 1, 1);
-    return { year: nextMonth.getFullYear(), month: nextMonth.getMonth() };
-  }
-  return { year, month };
-}
-
-function getCycleLabel(year, month) {
-  const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const prevMonth = month === 0 ? 11 : month - 1;
-  const prevYear = month === 0 ? year - 1 : year;
-  return `${names[prevMonth]} 26 – ${names[month]} 25, ${year}`;
 }
 
 export async function GET(req, { params }) {
@@ -55,6 +37,10 @@ export async function GET(req, { params }) {
       if (!hasAccess) return fail('Access denied', 403);
     }
 
+    const config = await getGlobalConfig();
+    const payrollStartDay = getPayrollDay(config.payrollStartDay, 26);
+    const payrollEndDay = getPayrollDay(config.payrollEndDay, 25);
+
     const { searchParams } = new URL(req.url);
     const fromDate = searchParams.get('fromDate');
     const toDate = searchParams.get('toDate');
@@ -66,12 +52,12 @@ export async function GET(req, { params }) {
     if (toDate) dateFilter.$lte = toDate;
     if (fromMonth) {
       const [y, m] = fromMonth.split('-');
-      const from = `${y}-${String(Number(m)).padStart(2, '0')}-26`;
+      const from = `${y}-${String(Number(m)).padStart(2, '0')}-${String(payrollStartDay).padStart(2, '0')}`;
       if (!dateFilter.$gte || from > dateFilter.$gte) dateFilter.$gte = from;
     }
     if (toMonth) {
       const [y, m] = toMonth.split('-');
-      const to = `${y}-${String(Number(m)).padStart(2, '0')}-25`;
+      const to = `${y}-${String(Number(m)).padStart(2, '0')}-${String(payrollEndDay).padStart(2, '0')}`;
       if (!dateFilter.$lte || to < dateFilter.$lte) dateFilter.$lte = to;
     }
 
@@ -85,14 +71,14 @@ export async function GET(req, { params }) {
 
     const cycles = {};
     for (const rec of records) {
-      const { year, month } = getCycleMonth(rec.date);
+      const { year, month } = getCycleMonth(rec.date, payrollStartDay);
       const key = `${year}-${String(month).padStart(2, '0')}`;
       if (!cycles[key]) {
         cycles[key] = {
           key,
           year,
           month,
-          label: getCycleLabel(year, month),
+          label: getCycleLabel(year, month, payrollStartDay, payrollEndDay),
           dates: [],
         };
       }

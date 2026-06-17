@@ -11,7 +11,7 @@ const SEV_BG    = { low: '#f0fdf4', medium: '#fffbeb', high: '#fef2f2' };
 
 export default function ProfilePage() {
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatDateTime } = useSettings();
   const router = useRouter();
 
   const [auditLogs, setAuditLogs] = useState([]);
@@ -140,7 +140,7 @@ export default function ProfilePage() {
                 <div style={{ fontSize: 13, color: '#475569', display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div><i className="bi bi-clock-history me-2" style={{ color: '#3b82f6' }} />{auditLogs.length} actions recorded</div>
                   {auditLogs[0] && (
-                    <div><i className="bi bi-calendar me-2" style={{ color: '#3b82f6' }} />Last: {new Date(auditLogs[0].createdAt).toLocaleString()}</div>
+                    <div><i className="bi bi-calendar me-2" style={{ color: '#3b82f6' }} />Last: {formatDateTime(auditLogs[0].createdAt)}</div>
                   )}
                 </div>
               </div>
@@ -169,7 +169,7 @@ export default function ProfilePage() {
                       <td><span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontSize: 11 }}>{log.module}</span></td>
                       <td style={{ fontSize: 12, color: '#64748b', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.details || '—'}</td>
                       <td><span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: SEV_BG[log.severity] || '#f8fafc', color: SEV_COLOR[log.severity] || '#64748b', textTransform: 'capitalize' }}>{log.severity}</span></td>
-                      <td style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>{new Date(log.createdAt).toLocaleString()}</td>
+                      <td style={{ fontSize: 11, color: '#94a3b8', whiteSpace: 'nowrap' }}>{formatDateTime(log.createdAt)}</td>
                     </tr>
                   ))}
                 </tbody>

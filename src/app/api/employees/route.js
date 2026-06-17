@@ -111,6 +111,8 @@ export async function POST(req) {
       role:     validated.role, // Already validated by schema
       department:  validated.department,
       designation: validated.designation,
+      shift:       validated.shift || 'Morning (9AM-6PM)',
+      joinDate:    validated.joinDate || null,
       isFirstLogin: true,
     });
 

@@ -1,8 +1,23 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
+import { Shift } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
+import { getAttendanceDate } from '@/lib/attendance-date';
+
+async function getShiftAwareToday(targetUserId) {
+  const now = new Date();
+  try {
+    const targetUser = await User.findById(targetUserId).select('shift');
+    if (!targetUser) return null;
+    const shiftDoc = await Shift.findOne({ name: targetUser.shift || 'Morning (9AM-6PM)' }).lean();
+    return getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+  } catch {
+    return null;
+  }
+}
 
 async function getTeamUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
@@ -70,11 +85,60 @@ export async function GET(req) {
       query.date = { $regex: '^' + month };
     }
 
-    const records = await Attendance.find(query)
-      .populate('userId', 'name avatar department role')
-      .sort({ date: -1 });
+    const raw = await Attendance.find(query)
+      .populate('userId', 'name avatar department role shift')
+      .sort({ date: -1 })
+      .lean();
 
-    return ok(records);
+    // Recompute lateFlag/status based on actual shift start time
+    // so that records created by previous buggy clock logic get corrected
+    const config = await getGlobalConfig();
+    const LATE_THRESHOLD_MINUTES = Number(config.lateThreshold) || 15;
+
+    const shiftNames = [...new Set(raw.filter(r => r.clockIn).map(r => r.userId?.shift || 'Morning (9AM-6PM)'))];
+    const shiftDocs = shiftNames.length ? await Shift.find({ name: { $in: shiftNames } }).lean() : [];
+    const shiftMap = {};
+    for (const s of shiftDocs) shiftMap[s.name] = s;
+
+    for (const rec of raw) {
+      if (!rec.clockIn) continue;
+      const shiftName = rec.userId?.shift || 'Morning (9AM-6PM)';
+      const shiftDoc = shiftMap[shiftName];
+      let shiftHour = 9, shiftMin = 0;
+      let shiftFound = false;
+      if (shiftDoc?.startTime) {
+        const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+        shiftHour = sh; shiftMin = sm;
+        shiftFound = true;
+      }
+      if (!shiftFound) {
+        const parsed = parseShiftStartTime(shiftName);
+        if (parsed) {
+          const [sh, sm] = parsed.split(':').map(Number);
+          shiftHour = sh; shiftMin = sm;
+          shiftFound = true;
+        }
+      }
+      const [h, m] = rec.clockIn.split(':').map(Number);
+      const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      const FIVE_HOURS  = 300;
+      const THREE_HOURS = 180;
+      if (shiftFound && minutesSinceShiftStart > FIVE_HOURS) {
+        rec.lateFlag = true;
+        rec.status = 'leave';
+      } else if (shiftFound && minutesSinceShiftStart > THREE_HOURS) {
+        rec.lateFlag = true;
+        rec.status = 'half_day';
+      } else if (shiftFound && minutesSinceShiftStart > LATE_THRESHOLD_MINUTES) {
+        rec.lateFlag = true;
+        rec.status = 'late';
+      } else {
+        rec.lateFlag = false;
+        rec.status = 'present';
+      }
+    }
+
+    return ok(raw);
   } catch (e) {
     return fail(e.message, 500);
   }
@@ -87,9 +151,11 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
-    const now = new Date();
-    const today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     const targetUserId = body.userId || user._id;
+    const today = await getShiftAwareToday(targetUserId) || (() => {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    })();
 
     const existing = await Attendance.findOne({ userId: targetUserId, date: today });
     if (existing) return fail('Attendance already marked for today', 409);
@@ -108,9 +174,11 @@ export async function PUT(req) {
     await connectDB();
 
     const body = await req.json();
-    const now = new Date();
-    const today = body.date || (now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0'));
     const targetUserId = body.userId || user._id;
+    const today = body.date || (await getShiftAwareToday(targetUserId)) || (() => {
+      const now = new Date();
+      return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    })();
 
     if (targetUserId.toString() !== user._id.toString() && !['super_admin', 'admin_full'].includes(user.role)) {
       return fail('Access denied', 403);

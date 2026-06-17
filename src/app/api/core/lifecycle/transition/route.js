@@ -150,10 +150,7 @@ export async function POST(req) {
         // probation → active: only allowed on or after probationEndDate
         const endDate = profile.probationEndDate ? new Date(profile.probationEndDate) : null;
         if (endDate && new Date() < endDate)
-          return fail(
-            `Probation period has not ended yet. End date: ${endDate.toISOString().slice(0, 10)}`,
-            400
-          );
+          return fail('Probation period has not ended yet', 400);
         profile.employmentStatus = 'active';
         profile.confirmationDate = effectiveDate;
         profile.probationEndDate = profile.probationEndDate || effectiveDate;

@@ -1,7 +1,8 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
 const MONTHS = Array.from({ length: 6 }, (_, i) => {
@@ -14,6 +15,7 @@ const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—'
 
 export default function PayrollPage() {
   const { user } = useAuth();
+  const { settings } = useSettings();
   const [tab, setTab] = useState('register');
   const [month, setMonth] = useState(MONTHS[0]);
   const [payrolls, setPayrolls] = useState([]);
@@ -64,7 +66,7 @@ export default function PayrollPage() {
     // Warn if any active employees have no salary structure
     const activeEmps = employees.filter(e => e.status === 'active');
     const structuredIds = new Set(structures.map(s => s.userId?._id || s.userId));
-    const missing = activeEmps.filter(e => !structuredIds.has(e._id));
+    const missing = activeEmps.filter(e => !structuredIds.has(e.userId));
     if (missing.length > 0) {
       if (!confirm(`${missing.length} active employee(s) have no salary structure and will be skipped:\n${missing.slice(0, 5).map(e => e.name).join(', ')}${missing.length > 5 ? '...' : ''}\n\nContinue?`)) return;
     }
@@ -94,7 +96,7 @@ export default function PayrollPage() {
       <div class='header'><div><h2>HRMS Pro</h2><div style='font-size:12px;color:#64748b'>Enterprise HR Platform</div></div><div style='text-align:right'><div style='font-weight:700;font-size:16px'>PAYSLIP</div><div style='font-size:12px;color:#64748b'>${slip.month}</div></div></div>
       <div class='box'>
         <div class='row'><span style='color:#64748b'>Employee</span><span style='font-weight:600'>${empName}</span></div>
-        <div class='row'><span style='color:#64748b'>Pay Period</span><span style='font-weight:600'>${slip.month}</span></div>
+        <div class='row'><span style='color:#64748b'>Pay Period</span><span style='font-weight:600'>${slip.cycleLabel || slip.month}</span></div>
         <div class='row'><span style='color:#64748b'>Days Present</span><span>${slip.presentDays ?? '—'}</span></div>
         <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.lopDays || 0}</span></div>
       </div>
@@ -142,6 +144,16 @@ export default function PayrollPage() {
     }
   };
 
+  const cycleReady = useMemo(() => {
+    const [y, m] = month.split('-').map(Number);
+    const endDayRaw = settings.payrollEndDay;
+    const endDay = endDayRaw
+      ? (Number(endDayRaw) || Number(String(endDayRaw).split('-')[2]) || 25)
+      : 25;
+    const cycEnd = `${y}-${String(m).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+    return new Date().toISOString().slice(0, 10) > cycEnd;
+  }, [month, settings.payrollEndDay]);
+
   const mySlip = !isAdmin && payrolls.length > 0 ? payrolls[0] : null;
   const totalNet = payrolls.reduce((s, p) => s + (p.netPay || 0), 0);
 
@@ -162,9 +174,10 @@ export default function PayrollPage() {
             <button className="btn btn-outline-success" onClick={() => approvePayroll('finalize')}>
               <i className="bi bi-lock me-2" />Finalize
             </button>
-            <button className="btn btn-primary" onClick={runPayroll} disabled={running}>
+            <button className="btn btn-primary" onClick={runPayroll} disabled={running || !cycleReady} title={!cycleReady ? 'Payroll cycle has not ended yet' : ''}>
               {running ? <><span className="spinner-border spinner-border-sm me-2" />Running...</> : <><i className="bi bi-play-circle me-2" />Run Payroll</>}
             </button>
+            {!cycleReady && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 12, padding: '6px 12px', borderRadius: 8, alignSelf: 'center' }}><i className="bi bi-exclamation-triangle me-1" />Cycle not ended</span>}
           </div>
         )}
       </div>
@@ -257,7 +270,7 @@ export default function PayrollPage() {
                         <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, marginBottom: 4 }}>Department</div><div style={{ fontWeight: 600 }}>{user?.department}</div>
                       </div>
                       <div className="col-6">
-                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Pay Period</div><div style={{ fontWeight: 700 }}>{mySlip.month}</div>
+                        <div style={{ fontSize: 12, color: '#64748b', marginBottom: 4 }}>Pay Period</div><div style={{ fontWeight: 700 }}>{mySlip.cycleLabel || mySlip.month}</div>
                         <div style={{ fontSize: 12, color: '#64748b', marginTop: 8, marginBottom: 4 }}>Days Present</div><div style={{ fontWeight: 600 }}>{mySlip.presentDays ?? '—'}</div>
                       </div>
                     </div>
@@ -337,7 +350,10 @@ export default function PayrollPage() {
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content p-4">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                <h5 style={{ margin: 0 }}>Payslip — {showSlip.userId?.name}</h5>
+                <div>
+                  <h5 style={{ margin: 0 }}>Payslip — {showSlip.userId?.name}</h5>
+                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{showSlip.cycleLabel || showSlip.month}</div>
+                </div>
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="btn btn-sm btn-outline-success" onClick={() => printPayslip(showSlip, showSlip.userId?.name)}><i className="bi bi-printer me-1" />PDF</button>
                   <button className="btn-close" onClick={() => setShowSlip(null)} />
@@ -366,10 +382,16 @@ export default function PayrollPage() {
                 <div className="row g-3">
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee</label>
-                    <select className="form-select" value={structureForm.userId} onChange={e => setStructureForm(p => ({ ...p, userId: e.target.value }))}>
-                      <option value="">Select employee</option>
-                      {employees.map(e => <option key={e._id} value={e._id}>{e.name}</option>)}
-                    </select>
+                    {structureForm.userId ? (
+                      <div style={{ padding: '8px 12px', background: '#f1f5f9', borderRadius: 6, fontSize: 14, fontWeight: 600 }}>
+                        {employees.find(e => (e.userId || e._id) === structureForm.userId)?.name || '—'}
+                      </div>
+                    ) : (
+                      <select className="form-select" value={structureForm.userId} onChange={e => setStructureForm(p => ({ ...p, userId: e.target.value }))}>
+                        <option value="">Select employee</option>
+                        {employees.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}</option>)}
+                      </select>
+                    )}
                   </div>
                   {[['Basic Salary', 'basic'], ['HRA', 'hra'], ['Allowances', 'allowances'], ['PF', 'pf'], ['ESI', 'esi'], ['TDS', 'tds']].map(([label, key]) => (
                     <div key={key} className="col-6">

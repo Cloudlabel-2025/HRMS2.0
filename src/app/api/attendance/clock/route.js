@@ -1,11 +1,11 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
-import { Leave } from '@/lib/models/index';
+import { Leave, Shift, Absence } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
-
-const LATE_THRESHOLD_MINUTES = 15; // minutes after 9:00 AM
+import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
+import { getAttendanceDate } from '@/lib/attendance-date';
 
 export async function POST(req) {
   try {
@@ -23,8 +23,16 @@ export async function POST(req) {
     
     const { action } = validation.data; // 'in' | 'out'
     const now   = new Date();
-    const today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
+
+    // Resolve shift-aware attendance date
+    let today;
+    try {
+      const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
+      today = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+    } catch {
+      today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    }
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
@@ -47,10 +55,65 @@ export async function POST(req) {
         return fail(`You are on approved ${onLeave.type} today (${onLeave.from} to ${onLeave.to}). Clock-in is not allowed.`, 400);
       }
 
+      const config = await getGlobalConfig();
+      const LATE_THRESHOLD_MINUTES = Number(config.lateThreshold) || 15;
+
+      // Determine shift start time from the user's assigned shift
+      let shiftHour = 9, shiftMin = 0;
+      let shiftFound = false;
+      try {
+        const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
+        if (shiftDoc?.startTime) {
+          const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+          shiftHour = sh; shiftMin = sm;
+          shiftFound = true;
+        }
+      } catch (e) { /* fall through to parser */ }
+      if (!shiftFound) {
+        const parsed = parseShiftStartTime(user.shift);
+        if (parsed) {
+          const [sh, sm] = parsed.split(':').map(Number);
+          shiftHour = sh; shiftMin = sm;
+          shiftFound = true;
+        }
+      }
+      // If we still don't know the shift time, default to present (benefit of doubt)
+
       const [h, m] = timeStr.split(':').map(Number);
-      const minutesSince9 = (h - 9) * 60 + m;
-      const lateFlag = minutesSince9 > LATE_THRESHOLD_MINUTES;
-      const status   = lateFlag ? 'late' : 'present';
+      const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      const FIVE_HOURS  = 300;
+      const THREE_HOURS = 180;
+      let lateFlag = false;
+      let status = 'present';
+
+      if (shiftFound) {
+        if (minutesSinceShiftStart > FIVE_HOURS) {
+          status = 'leave';
+          lateFlag = true;
+        } else if (minutesSinceShiftStart > THREE_HOURS) {
+          status = 'half_day';
+          lateFlag = true;
+        } else if (minutesSinceShiftStart > LATE_THRESHOLD_MINUTES) {
+          status = 'late';
+          lateFlag = true;
+        }
+      }
+
+      // Create absence record for half-day or full-day leave due to late clock-in
+      if (status === 'half_day' || status === 'leave') {
+        await Absence.findOneAndUpdate(
+          { userId: user._id, date: today },
+          {
+            $set: {
+              userId: user._id,
+              date: today,
+              reason: status === 'half_day' ? 'Half day - late clock-in' : 'Full day - very late clock-in',
+              flagged: status === 'leave',
+            },
+          },
+          { upsert: true }
+        );
+      }
 
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },

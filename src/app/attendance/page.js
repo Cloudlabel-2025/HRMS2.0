@@ -4,6 +4,8 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
+import { getAttendanceDate } from '@/lib/attendance-date';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present' },
@@ -63,6 +65,9 @@ export default function AttendancePage() {
   const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
   const [breakLoading, setBreakLoading] = useState(false);
 
+  // Shift definitions (for shift-aware attendance date)
+  const [shifts, setShifts] = useState([]);
+
   // Progress tab states
   const [progressSearch, setProgressSearch] = useState('');
   const [selectedProgressUserId, setSelectedProgressUserId] = useState('');
@@ -84,7 +89,16 @@ export default function AttendancePage() {
 
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
-  const today   = (() => { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); })();
+  const today   = (() => {
+    const d = new Date();
+    if (user?.shift && shifts.length > 0) {
+      const matched = shifts.find(s => s.name === user.shift);
+      if (matched?.startTime && matched?.endTime) {
+        return getAttendanceDate(d, matched.startTime, matched.endTime);
+      }
+    }
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  })();
   const month   = today.slice(0, 7);
 
   // Team tab filters
@@ -100,8 +114,22 @@ export default function AttendancePage() {
   };
 
   const loadTeamToday = async () => {
-    try { const r = await api.get('/api/attendance?scope=team&date=' + today); setTeamToday(Array.isArray(r) ? r : []); }
-    catch { setTeamToday([]); }
+    try {
+      const now = new Date();
+      const calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+      const yest = new Date(now); yest.setDate(yest.getDate() - 1);
+      const calYesterday = yest.getFullYear() + '-' + String(yest.getMonth()+1).padStart(2,'0') + '-' + String(yest.getDate()).padStart(2,'0');
+      const [r1, r2] = await Promise.all([
+        api.get('/api/attendance?scope=team&date=' + calToday),
+        api.get('/api/attendance?scope=team&date=' + calYesterday),
+      ]);
+      const merged = {};
+      for (const r of [...(Array.isArray(r1) ? r1 : []), ...(Array.isArray(r2) ? r2 : [])]) {
+        const uid = r.userId?._id?.toString() || r.userId?.toString();
+        if (uid) merged[uid] = r;
+      }
+      setTeamToday(Object.values(merged));
+    } catch { setTeamToday([]); }
   };
 
   const loadEmployees = async () => {
@@ -140,6 +168,7 @@ export default function AttendancePage() {
 
   useEffect(() => {
     if (!user) return;
+    api.get('/api/settings?type=shifts').then(d => setShifts(Array.isArray(d) ? d : [])).catch(() => {});
     Promise.all([
       loadTodayRecord(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
@@ -692,7 +721,7 @@ export default function AttendancePage() {
                   { label: 'Present', value: teamToday.filter(r => r.status === 'present').length, icon: 'bi-person-check', color: '#10b981' },
                   { label: 'Absent', value: teamToday.filter(r => r.status === 'absent').length, icon: 'bi-person-x', color: '#ef4444' },
                   { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
-                  { label: 'Working on Task', value: teamToday.filter(r => r.clockIn && !r.clockOut && r.workProgress?.length > 0).length, icon: 'bi-list-check', color: '#8b5cf6' },
+                  { label: 'Late', value: teamToday.filter(r => r.status === 'late').length, icon: 'bi-clock', color: '#f59e0b' },
                 ].map((s, i) => (
                   <div key={i} className="col-6 col-xl-3">
                     <div className="stat-card">
@@ -854,11 +883,11 @@ export default function AttendancePage() {
                 </div>
                 <div className="col-md-3">
                   <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>From Date</label>
-                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={teamFromDate} onChange={e => setTeamFromDate(e.target.value)} max={teamToDate || undefined} />
+                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamFromDate} onChange={e => setTeamFromDate(e.target.value)} max={teamToDate || undefined} />
                 </div>
                 <div className="col-md-3">
                   <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>To Date</label>
-                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} />
+                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} />
                 </div>
                 <div className="col-md-3">
                   <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); }}>
@@ -991,7 +1020,7 @@ export default function AttendancePage() {
                     <div className="row g-3">
                       <div className="col-12">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date *</label>
-                        <input type="date" className="form-control" value={regForm.date} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} />
+                        <DateInput className="form-control" value={regForm.date} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} />
                       </div>
                       <div className="col-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Clock In</label>

@@ -6,6 +6,7 @@ import AppShell from '@/components/AppShell';
 import { api } from '@/lib/api';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
+import DateInput from '@/components/DateInput';
 
 const ACTIONS = [
   { key: 'confirm_probation', label: 'Probation',  icon: 'bi-shield-check',    color: '#3b82f6', help: 'Onboarding → Probation, or confirm Probation → Active.' },
@@ -183,7 +184,7 @@ export default function CoreHrProfilePage() {
     if (action === 'promotion' && !form.designation) return showToast('New designation is required', 'error');
     if (action === 'rehire' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
     if (action === 'separation' && !form.lastWorkingDate) return showToast('Last working date is required', 'error');
-    if (action === 'confirm_probation' && probationTabLocked) return showToast(`Probation active until ${probationEndDate.toLocaleDateString()}`, 'error');
+    if (action === 'confirm_probation' && probationTabLocked) return showToast(`Probation active until ${formatDate(probationEndDate)}`, 'error');
     if (action === 'confirm_probation' && !['onboarding','probation'].includes(profile.employmentStatus)) return showToast(`Employee is already ${fmt(profile.employmentStatus)}`, 'error');
     if (action === 'confirm_probation' && profile.employmentStatus === 'onboarding' && !form.probationEndDate) return showToast('Probation end date is required', 'error');
 
@@ -200,7 +201,12 @@ export default function CoreHrProfilePage() {
         : 'Lifecycle transition applied successfully');
       await load();
       await loadHistory();
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) {
+      const msg = e.message === 'Probation period has not ended yet' && probationEndDate
+        ? `Probation period has not ended yet. End date: ${formatDate(probationEndDate)}`
+        : e.message;
+      showToast(msg, 'error');
+    }
     finally { setSaving(false); }
   };
 
@@ -321,7 +327,7 @@ export default function CoreHrProfilePage() {
                 return (
                   <button key={item.key} type="button"
                     onClick={() => { if (!isLocked) switchAction(item.key); }}
-                    title={isLocked ? `Probation active until ${probationEndDate?.toLocaleDateString()}` : undefined}
+                    title={isLocked ? `Probation active until ${formatDate(probationEndDate)}` : undefined}
                     style={{
                       flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 6,
                       padding: '8px 14px', borderRadius: '8px 8px 0 0', border: 'none',
@@ -355,7 +361,7 @@ export default function CoreHrProfilePage() {
 
               <div className="row g-3">
                 <Field label="Effective Date *">
-                  <input className="form-control" type="date" style={{ fontSize: 13 }} value={form.effectiveDate} onChange={e => setForm(p => ({ ...p, effectiveDate: e.target.value }))} />
+                  <DateInput className="form-control" style={{ fontSize: 13 }} value={form.effectiveDate} onChange={e => setForm(p => ({ ...p, effectiveDate: e.target.value }))} />
                 </Field>
                 <Field label={action === 'confirm_probation' ? 'Reason (optional)' : 'Reason *'}>
                   <input className="form-control" style={{ fontSize: 13 }} placeholder="Policy or business reason" value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
@@ -369,7 +375,7 @@ export default function CoreHrProfilePage() {
                           <i className="bi bi-lock" style={{ color: '#d97706', fontSize: 16, flexShrink: 0 }} />
                           <div>
                             <div style={{ fontWeight: 700, color: '#92400e' }}>Probation period is active</div>
-                            <div style={{ color: '#78350f', fontSize: 12, marginTop: 2 }}>Until <strong>{probationEndDate?.toLocaleDateString()}</strong>. Confirmation possible only on or after that date.</div>
+                            <div style={{ color: '#78350f', fontSize: 12, marginTop: 2 }}>Until <strong>{formatDate(probationEndDate)}</strong>. Confirmation possible only on or after that date.</div>
                           </div>
                         </div>
                       )}
@@ -388,7 +394,7 @@ export default function CoreHrProfilePage() {
                     </div>
                     {profile.employmentStatus === 'onboarding' && (
                       <Field label="Probation End Date *">
-                        <input className="form-control" type="date" style={{ fontSize: 13 }} min={form.effectiveDate || undefined} value={form.probationEndDate} onChange={e => setForm(p => ({ ...p, probationEndDate: e.target.value }))} />
+                        <DateInput className="form-control" style={{ fontSize: 13 }} min={form.effectiveDate || undefined} value={form.probationEndDate} onChange={e => setForm(p => ({ ...p, probationEndDate: e.target.value }))} />
                         <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>Earliest date HR can confirm this employee as Active.</div>
                       </Field>
                     )}
@@ -463,7 +469,7 @@ export default function CoreHrProfilePage() {
 
                 {action === 'suspend' && (
                   <Field label="Suspension Until">
-                    <input className="form-control" type="date" style={{ fontSize: 13 }} value={form.suspensionUntil} onChange={e => setForm(p => ({ ...p, suspensionUntil: e.target.value }))} />
+                    <DateInput className="form-control" style={{ fontSize: 13 }} value={form.suspensionUntil} onChange={e => setForm(p => ({ ...p, suspensionUntil: e.target.value }))} />
                   </Field>
                 )}
 
@@ -475,7 +481,7 @@ export default function CoreHrProfilePage() {
                       </select>
                     </Field>
                     <Field label="Last Working Date *">
-                      <input className="form-control" type="date" style={{ fontSize: 13 }} value={form.lastWorkingDate} onChange={e => setForm(p => ({ ...p, lastWorkingDate: e.target.value }))} />
+                      <DateInput className="form-control" style={{ fontSize: 13 }} value={form.lastWorkingDate} onChange={e => setForm(p => ({ ...p, lastWorkingDate: e.target.value }))} />
                     </Field>
                     <Field label="Notice Period (days)" col="col-12">
                       <input className="form-control" type="number" min="0" max="365" style={{ fontSize: 13, maxWidth: 160 }} value={form.noticePeriodDays} onChange={e => setForm(p => ({ ...p, noticePeriodDays: Number(e.target.value) }))} />

@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const CATEGORY_COLORS = { Policy: '#3b82f6', Employee: '#10b981', Contract: '#8b5cf6', HR: '#f59e0b', Other: '#64748b' };
 const TYPE_ICONS = { pdf: 'bi-file-earmark-pdf', zip: 'bi-file-earmark-zip', doc: 'bi-file-earmark-word', docx: 'bi-file-earmark-word' };
@@ -156,7 +157,7 @@ export default function DocumentsPage() {
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Category</label><select className="form-select" value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))}>{['Policy', 'Employee', 'Contract', 'HR', 'Other'].map(c => <option key={c}>{c}</option>)}</select></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>File Type</label><select className="form-select" value={form.fileType} onChange={e => setForm(p => ({ ...p, fileType: e.target.value }))}>{['pdf', 'doc', 'docx', 'zip', 'other'].map(t => <option key={t}>{t}</option>)}</select></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Access Level</label><select className="form-select" value={form.access} onChange={e => setForm(p => ({ ...p, access: e.target.value }))}><option value="all">All Employees</option><option value="admin">Admin Only</option><option value="employee">Specific Employee</option></select></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Expiry Date</label><input type="date" className="form-control" value={form.expiry} onChange={e => setForm(p => ({ ...p, expiry: e.target.value }))} /></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Expiry Date</label><DateInput className="form-control" value={form.expiry} onChange={e => setForm(p => ({ ...p, expiry: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>File Size</label><input className="form-control" placeholder="e.g. 2.4 MB" value={form.fileSize} onChange={e => setForm(p => ({ ...p, fileSize: e.target.value }))} /></div>
                 </div>
               </div>

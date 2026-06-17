@@ -15,11 +15,15 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const scope  = searchParams.get('scope');
     const status = searchParams.get('status');
+    const userIdParam = searchParams.get('userId');
     const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
 
     let query = {};
 
-    if (scope === 'approvals') {
+    if (scope === 'all') {
+      if (!isAdmin) return fail('Access denied', 403);
+      // No userId filter — returns all leaves in the organization
+    } else if (scope === 'approvals') {
       if (isAdmin) {
         query = { $or: [
           { adminApproval: { $in: ['pending', null] } },
@@ -36,7 +40,11 @@ export async function GET(req) {
         query = { adminApproval: 'approved', teamAdminApproval: { $in: ['pending', null] } };
       } else if (user.role === 'team_lead') {
         query = { adminApproval: 'approved', tlApproval: { $in: ['pending', null] } };
+      } else {
+        return fail('Access denied', 403);
       }
+    } else if (scope === 'my' && userIdParam && isAdmin) {
+      query.userId = userIdParam;
     } else {
       // 'my' or any other scope — always own leaves
       query.userId = user._id;

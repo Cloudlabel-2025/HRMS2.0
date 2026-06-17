@@ -1,7 +1,8 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
+import { AuditLog, Shift } from '@/lib/models/index';
+import { parseShiftStartTime } from '@/lib/payroll-cycle';
 import { LoginSchema, validateRequest } from '@/lib/validation';
 
 const rateLimit = new Map();
@@ -93,6 +94,56 @@ export async function POST(req) {
 
     if (user.status !== 'active') {
       return handleFailure('Account is inactive', 403, 'medium', user._id);
+    }
+
+    // ── Join-date / hire-date early-access gate ────────────────────────────
+    if (user.joinDate) {
+      const now = new Date();
+      const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+      const joinDate = new Date(user.joinDate);
+      const joinStr  = joinDate.getFullYear() + '-' + String(joinDate.getMonth() + 1).padStart(2, '0') + '-' + String(joinDate.getDate()).padStart(2, '0');
+
+      // Before hire date: block entirely
+      if (todayStr < joinStr) {
+        return handleFailure(
+          `Your account is not yet active. Your hire date is ${joinStr}. Please try logging in on or after that date.`,
+          403, 'medium', user._id
+        );
+      }
+
+      // On hire date: block until 1.5 hours before shift start
+      if (todayStr === joinStr) {
+        const shiftName = user.shift || 'Morning (9AM-6PM)';
+        const shiftDoc  = await Shift.findOne({ name: shiftName }).lean();
+        let shiftHour = 9, shiftMin = 0, resolved = false;
+
+        if (shiftDoc?.startTime) {
+          const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+          shiftHour = sh; shiftMin = sm; resolved = true;
+        }
+
+        if (!resolved) {
+          const parsed = parseShiftStartTime(shiftName);
+          if (parsed) {
+            const [sh, sm] = parsed.split(':').map(Number);
+            shiftHour = sh; shiftMin = sm; resolved = true;
+          }
+        }
+
+        if (resolved) {
+          const nowMinutes = now.getHours() * 60 + now.getMinutes();
+          const shiftStartMinutes = shiftHour * 60 + shiftMin;
+          const earliestAccessMinutes = shiftStartMinutes - 90;
+          const accessFrom = `${Math.floor(earliestAccessMinutes / 60).toString().padStart(2, '0')}:${(earliestAccessMinutes % 60).toString().padStart(2, '0')}`;
+
+          if (nowMinutes < earliestAccessMinutes) {
+            return handleFailure(
+              `Access restricted. Your shift starts at ${shiftHour.toString().padStart(2, '0')}:${shiftMin.toString().padStart(2, '0')}. You can log in from ${accessFrom}.`,
+              403, 'medium', user._id
+            );
+          }
+        }
+      }
     }
 
     // Successful login — reset attempts

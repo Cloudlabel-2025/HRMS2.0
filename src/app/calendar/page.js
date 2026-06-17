@@ -251,6 +251,7 @@ export default function CalendarPage() {
                             borderBottom: '1px solid #f1f5f9',
                             transition: 'all 0.15s',
                             position: 'relative',
+                            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                           }}
                           onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = isToday(day) ? '#dbeafe' : '#f1f5f9'; }}
                           onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isToday(day) ? '#eff6ff' : (count > 0 ? bgTint : 'transparent'); }}>
@@ -258,7 +259,7 @@ export default function CalendarPage() {
                             fontSize: 12, fontWeight: isToday(day) ? 800 : 600,
                             color: isSelected ? '#fff' : isToday(day) ? '#fff' : (isSun ? '#ef4444' : '#1e293b'),
                             width: 24, height: 24, lineHeight: '24px', borderRadius: '50%',
-                            margin: '0 auto',
+                            textAlign: 'center',
                             background: isToday(day) ? (isSelected ? 'transparent' : '#3b82f6') : 'transparent',
                           }}>{day}</div>
                           {count > 0 && (

@@ -23,6 +23,7 @@ const PayrollSchema = new mongoose.Schema({
   totalDeductions: { type: Number },
   netPay:     { type: Number },
   presentDays:{ type: Number },
+  cycleLabel:{ type: String },
   lopDays:    { type: Number, default: 0 },
   status:     { type: String, enum: ['pending','draft','approved','finalized'], default: 'pending' },
   processedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

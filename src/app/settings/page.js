@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const NOTIFICATION_RULES = [
   ['Late Login Alert',       'Send alert when employee logs in after threshold', true],
@@ -45,7 +46,17 @@ const toDateInputValue = (value) => {
 
 const getDefaultPayrollStartDate = () => {
   const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-26`;
+};
+
+const getDefaultPayrollEndDate = () => {
+  const now = new Date();
+  const next = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const nextMonth = next.getMonth();
+  const nextYear = next.getFullYear();
+  const lastDay = new Date(nextYear, nextMonth + 1, 0).getDate();
+  const day = Math.min(25, lastDay);
+  return `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 };
 
 export default function SettingsPage() {
@@ -59,7 +70,7 @@ export default function SettingsPage() {
   const [holidays, setHolidays]     = useState([]);
   const [config, setConfig]         = useState({
     timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
-    language: 'English', payrollStartDay: getDefaultPayrollStartDate(), attendanceStartDay: '1',
+    language: 'English', payrollStartDay: getDefaultPayrollStartDate(), payrollEndDay: getDefaultPayrollEndDate(), attendanceStartDay: '1',
     saturdayWorking: 'alternate', lateThreshold: '15',
   });
   const [archiveYears, setArchiveYears] = useState(3);
@@ -67,6 +78,7 @@ export default function SettingsPage() {
   const [archiving, setArchiving] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [showModal, setShowModal]   = useState(null);
   const [modalForm, setModalForm]   = useState({});
   const [toast, setToast]           = useState(null);
@@ -77,6 +89,21 @@ export default function SettingsPage() {
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3000);
+  };
+
+  const generateSaturdays = async () => {
+    if (!confirm('Generate 1st & 3rd Saturday holidays for the current year? This will not overwrite existing holidays on those dates.')) return;
+    setGenerating(true);
+    try {
+      const res = await api.post('/api/settings/generate-saturdays', { year: new Date().getFullYear() });
+      showToast(`${res.generated} Saturday holidays generated`);
+      const h = await api.get('/api/settings?type=holidays');
+      setHolidays(Array.isArray(h) ? h : []);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -99,7 +126,12 @@ export default function SettingsPage() {
       setHolidays(Array.isArray(h)     ? h  : []);
       if (Array.isArray(c)) {
         const gc = c.find(i => i.key === 'global_config');
-        if (gc?.value) setConfig(p => ({ ...p, ...gc.value, payrollStartDay: toDateInputValue(gc.value.payrollStartDay) || p.payrollStartDay }));
+        if (gc?.value) setConfig(p => ({
+          ...p,
+          ...gc.value,
+          payrollStartDay: toDateInputValue(gc.value.payrollStartDay) || p.payrollStartDay,
+          payrollEndDay: toDateInputValue(gc.value.payrollEndDay) || p.payrollEndDay,
+        }));
         const nc = c.find(i => i.key === 'notification_rules');
         if (nc?.value) setNotifications(nc.value);
       }
@@ -319,12 +351,12 @@ export default function SettingsPage() {
                   </div>
                 ))}
                 <div className="col-md-6">
-                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle Start Day</label>
-                  <input type="date" className="form-control" value={toDateInputValue(config.payrollStartDay)} onChange={e => setConfig(p => ({ ...p, payrollStartDay: e.target.value }))} />
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle Start Date</label>
+                  <DateInput className="form-control" value={toDateInputValue(config.payrollStartDay)} onChange={e => setConfig(p => ({ ...p, payrollStartDay: e.target.value }))} />
                 </div>
                 <div className="col-md-6">
-                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle End Day</label>
-                  <input type="date" className="form-control" value={toDateInputValue(config.payrollEndDay)} onChange={e => setConfig(p => ({ ...p, payrollEndDay: e.target.value }))} />
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Cycle End Date</label>
+                  <DateInput className="form-control" value={toDateInputValue(config.payrollEndDay)} onChange={e => setConfig(p => ({ ...p, payrollEndDay: e.target.value }))} />
                 </div>
                 <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Late Login Threshold (minutes)</label>
@@ -372,7 +404,7 @@ export default function SettingsPage() {
                         ) : (
                           <>
                             <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e', marginBottom: 10 }}>
-                              <i className="bi bi-exclamation-triangle me-2" />{archivePreview.count} profiles eligible for archival (separated before {new Date(archivePreview.cutoff).toLocaleDateString()})
+                              <i className="bi bi-exclamation-triangle me-2" />{archivePreview.count} profiles eligible for archival (separated before {formatDate(archivePreview.cutoff)})
                             </div>
                             <div style={{ maxHeight: 160, overflowY: 'auto' }}>
                               {archivePreview.candidates.slice(0, 10).map(c => (
@@ -460,9 +492,14 @@ export default function SettingsPage() {
             <div className="card p-3 p-md-4">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
                 <div className="section-title" style={{ margin: 0 }}>Holiday Calendar</div>
-                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', date: '', type: 'National' }); setShowModal('holiday'); }}>
-                  <i className="bi bi-plus-lg me-1" />Add Holiday
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', date: '', type: 'National' }); setShowModal('holiday'); }}>
+                    <i className="bi bi-plus-lg me-1" />Add Holiday
+                  </button>
+                  <button className="btn btn-outline-secondary btn-sm" onClick={generateSaturdays} disabled={generating}>
+                    <i className={`bi ${generating ? 'bi-arrow-repeat' : 'bi-calendar-check'} me-1`} />{generating ? 'Generating...' : 'Generate 1st & 3rd Saturdays'}
+                  </button>
+                </div>
               </div>
               {loading ? (
                 <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
@@ -693,7 +730,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date</label>
-                    <input type="date" className="form-control" value={modalForm.date || ''} onChange={e => setModalForm(p => ({ ...p, date: e.target.value }))} />
+                    <DateInput className="form-control" value={modalForm.date || ''} onChange={e => setModalForm(p => ({ ...p, date: e.target.value }))} />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Type</label>

@@ -5,6 +5,7 @@ import AppShell from '@/components/AppShell';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
+import DateInput from '@/components/DateInput';
 
 const EMPTY_FORM = {
   requestType: 'profile_update',
@@ -316,7 +317,7 @@ export default function SelfServicePage() {
               {form.requestType === 'resignation' && (
                 <>
                   <div className="col-md-4"><label className="form-label">Notice Period Days</label><input className={`form-control${formErrors.noticePeriodDays ? ' is-invalid' : ''}`} type="text" inputMode="numeric" value={form.noticePeriodDays} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 3); setForm(prev => ({ ...prev, noticePeriodDays: v })); clearError('noticePeriodDays'); }} />{formErrors.noticePeriodDays && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.noticePeriodDays}</div>}</div>
-                  <div className="col-md-4"><label className="form-label">Last Working Date <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} type="date" value={form.lastWorkingDate} min={new Date().toISOString().split('T')[0]} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
+                  <div className="col-md-4"><label className="form-label">Last Working Date <span style={{color:'#ef4444'}}>*</span></label><DateInput className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} value={form.lastWorkingDate} min={new Date().toISOString().split('T')[0]} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
                   <div className="col-md-4"><label className="form-label">Settlement Status</label><select className="form-select" value={form.settlementStatus} onChange={e => setForm(prev => ({ ...prev, settlementStatus: e.target.value }))}><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="settled">Settled</option></select></div>
                   <div className="col-12"><div className="form-check"><input className="form-check-input" type="checkbox" checked={form.exitInterviewComplete} onChange={e => setForm(prev => ({ ...prev, exitInterviewComplete: e.target.checked }))} id="exitInterviewComplete" /><label className="form-check-label" htmlFor="exitInterviewComplete">Exit interview complete</label></div></div>
                 </>

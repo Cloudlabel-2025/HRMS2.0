@@ -19,6 +19,7 @@ function syncAuthUserFromProfile(identity, profile) {
     designation: profile.designation,
     shift: profile.shift,
     status: mappedStatus,
+    ...(profile.hireDate ? { joinDate: profile.hireDate } : {}),
   });
 }
 

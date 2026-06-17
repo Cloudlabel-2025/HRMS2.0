@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
+import { getGlobalConfig, getPayrollDay, getCycleRange, countWorkingDays, getCycleLabel } from '@/lib/payroll-cycle';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -15,6 +16,23 @@ export async function POST(req) {
     const { month } = await req.json();
     if (!month) return fail('Month is required (YYYY-MM)');
 
+    const [y, m] = month.split('-').map(Number);
+    const year = y;
+    const monthIndex = m - 1;
+
+    const config = await getGlobalConfig();
+    const startDay = getPayrollDay(config.payrollStartDay, 26);
+    const endDay = getPayrollDay(config.payrollEndDay, 25);
+    const { fromDate, toDate } = getCycleRange(startDay, endDay, year, monthIndex);
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (todayStr <= toDate) {
+      return fail(`Payroll can only be processed after the cycle end date (${toDate})`, 400);
+    }
+
+    const workingDays = await countWorkingDays(fromDate, toDate, config);
+    const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
+
     const employees = await User.find({ status: 'active' });
     const results = [];
 
@@ -25,21 +43,24 @@ export async function POST(req) {
       const structure = await SalaryStructure.findOne({ userId: emp._id });
       if (!structure) continue;
 
-      const records = await Attendance.find({ userId: emp._id, date: { $regex: `^${month}` } });
-      const presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
-      
-      const { default: Leave } = await import('@/lib/models/Leave');
-      const approvedLeaves = await Leave.find({ 
-        userId: emp._id, 
-        status: 'approved',
-        from: { $regex: `^${month}` }
+      const records = await Attendance.find({
+        userId: emp._id,
+        date: { $gte: fromDate, $lte: toDate },
       });
-      
+      const presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
+
+      const { default: Leave } = await import('@/lib/models/Leave');
+      const approvedLeaves = await Leave.find({
+        userId: emp._id,
+        status: 'approved',
+        from: { $lte: toDate },
+        to: { $gte: fromDate },
+      });
+
       const paidLeaveDays = approvedLeaves
         .filter(l => l.type !== 'Loss of Pay')
         .reduce((sum, l) => sum + l.days, 0);
 
-      const workingDays = 26;
       const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
       const lopDeduction = lopDays > 0 ? Math.round((structure.basic / workingDays) * lopDays) : 0;
       const grossPay = structure.basic + structure.hra + structure.allowances - lopDeduction;
@@ -51,7 +72,7 @@ export async function POST(req) {
         {
           basic: structure.basic, hra: structure.hra, allowances: structure.allowances,
           grossPay, pf: structure.pf, esi: structure.esi, tds: structure.tds,
-          totalDeductions, netPay, presentDays, lopDays,
+          totalDeductions, netPay, presentDays, lopDays, cycleLabel,
           status: 'draft', processedBy: user._id, processedAt: new Date(),
         },
         { upsert: true, new: true }
@@ -61,10 +82,10 @@ export async function POST(req) {
 
     const ip = req.headers.get('x-forwarded-for') || '';
     await Promise.all(results.map(r =>
-      auditLog('Payroll Run', 'Payroll', user._id, `Payroll draft generated for ${month}`, 'high', ip, null, r.userId)
+      auditLog('Payroll Run', 'Payroll', user._id, `Payroll draft generated for ${month} (${workingDays} working days)`, 'high', ip, null, r.userId)
     ));
 
-    return ok({ processed: results.length, month });
+    return ok({ processed: results.length, month, workingDays });
   } catch (e) {
     return fail(e.message, 500);
   }

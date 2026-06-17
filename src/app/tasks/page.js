@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const STATUSES  = ['To Do', 'In Progress', 'Completed', 'Blocked'];
 const PRIORITIES = ['low', 'medium', 'high'];
@@ -323,7 +324,7 @@ export default function TasksPage() {
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To *</label>
                       <select className="form-select" value={form.assignedTo} onChange={e => setForm(p => ({ ...p, assignedTo: e.target.value }))}>
                         <option value="">Select employee</option>
-                        {employees.map(e => <option key={e._id} value={e._id}>{e.name}</option>)}
+                        {employees.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}</option>)}
                       </select>
                     </div>
                   )}
@@ -341,7 +342,7 @@ export default function TasksPage() {
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
-                    <input type="date" className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} />
+                    <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Est. Hours</label>
@@ -381,7 +382,7 @@ export default function TasksPage() {
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Deadline</label>
-                    <input type="date" className="form-control" value={projectForm.deadline} onChange={e => setProjectForm(p => ({ ...p, deadline: e.target.value }))} />
+                    <DateInput className="form-control" value={projectForm.deadline} onChange={e => setProjectForm(p => ({ ...p, deadline: e.target.value }))} />
                   </div>
                 </div>
               </div>

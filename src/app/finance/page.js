@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
@@ -322,7 +323,7 @@ export default function FinancePage() {
                 <div className="row g-3">
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Category</label><select className="form-select" value={expForm.category} onChange={e => setExpForm(p => ({ ...p, category: e.target.value }))}>{EXP_CATS.map(c => <option key={c}>{c}</option>)}</select></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Amount *</label><input type="number" className="form-control" value={expForm.amount} onChange={e => setExpForm(p => ({ ...p, amount: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date *</label><input type="date" className="form-control" value={expForm.date} onChange={e => setExpForm(p => ({ ...p, date: e.target.value }))} /></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date *</label><DateInput className="form-control" value={expForm.date} onChange={e => setExpForm(p => ({ ...p, date: e.target.value }))} /></div>
                   <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description</label><input className="form-control" value={expForm.description} onChange={e => setExpForm(p => ({ ...p, description: e.target.value }))} /></div>
                 </div>
               </div>

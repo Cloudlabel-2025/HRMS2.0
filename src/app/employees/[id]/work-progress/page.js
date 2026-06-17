@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a' },
@@ -340,11 +341,11 @@ export default function WorkProgressPage() {
           </div>
           <div className="col-md-2">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
-            <input type="date" className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
+            <DateInput className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
           </div>
           <div className="col-md-2">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
-            <input type="date" className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
+            <DateInput className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
           </div>
           <div className="col-md-2">
             <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={resetFilters}>

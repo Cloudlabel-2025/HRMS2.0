@@ -22,7 +22,7 @@ const AttendanceSchema = new mongoose.Schema({
     remarks: { type: String, default: '' },
     feedback: { type: String, default: '' },
   }],
-  status:     { type: String, enum: ['present','absent','late','leave','holiday'], default: 'absent' },
+  status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
   note:       { type: String, default: '' },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },

@@ -81,7 +81,8 @@ export async function PUT(req, { params }) {
   if ('designation' in validated) syncFields.designation = validated.designation;
   if ('role' in validated) syncFields.role = validated.role;
   if ('status' in validated) syncFields.status = validated.status;
-  
+  if ('shift' in validated) syncFields.shift = validated.shift;
+  if ('joinDate' in validated) syncFields.joinDate = validated.joinDate;
   if (Object.keys(syncFields).length > 0) {
     await User.findByIdAndUpdate(emp.userId, syncFields);
   }

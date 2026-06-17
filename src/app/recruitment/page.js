@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const STAGES = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
 const STAGE_COLORS = { Applied: '#64748b', Screening: '#3b82f6', Interview: '#f59e0b', Offer: '#8b5cf6', Hired: '#10b981', Rejected: '#ef4444' };
@@ -1049,7 +1050,7 @@ export default function RecruitmentPage() {
                     </div>
                     <div className="col-md-4">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Application Deadline *</label>
-                      <input type="date" className={`form-control ${je.applicationDeadline ? 'is-invalid' : ''}`} value={jf.applicationDeadline} min={new Date(Date.now() + 86400000).toISOString().split('T')[0]} onChange={e => setJf('applicationDeadline', e.target.value)} />
+                      <DateInput className={`form-control ${je.applicationDeadline ? 'is-invalid' : ''}`} value={jf.applicationDeadline} min={new Date(Date.now() + 86400000).toISOString().split('T')[0]} onChange={e => setJf('applicationDeadline', e.target.value)} />
                       <Err f="applicationDeadline" />
                     </div>
                   </div>

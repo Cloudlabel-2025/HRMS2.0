@@ -5,6 +5,7 @@ import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -83,7 +84,7 @@ export default function EmployeeProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatDateTime } = useSettings();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -979,7 +980,7 @@ export default function EmployeeProfilePage() {
                         </span>
                       </td>
                       <td style={{ padding: '12px 16px', fontSize: 11.5, color: '#94a3b8', whiteSpace: 'nowrap', borderBottom: '1px solid #f1f5f9' }}>
-                        {new Date(log.createdAt).toLocaleString()}
+                        {formatDateTime(log.createdAt)}
                       </td>
                     </tr>
                   ))}
@@ -1033,11 +1034,11 @@ export default function EmployeeProfilePage() {
                 </div>
                 <div className="col-md-2">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
-                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
+                  <DateInput className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
                 </div>
                 <div className="col-md-2">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
-                  <input type="date" className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
+                  <DateInput className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
                 </div>
                 <div className="col-md-2">
                   <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={resetWpFilters}>
@@ -1255,7 +1256,7 @@ export default function EmployeeProfilePage() {
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Join Date</label>
-                    <input type="date" className="form-control" value={editForm.joinDate || ''}
+                    <DateInput className="form-control" value={editForm.joinDate || ''}
                       onChange={e => setEditForm(p => ({ ...p, joinDate: e.target.value }))} />
                   </div>
                   <div className="col-md-6">
