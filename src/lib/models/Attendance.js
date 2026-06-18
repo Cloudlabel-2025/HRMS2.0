@@ -25,6 +25,9 @@ const AttendanceSchema = new mongoose.Schema({
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
   note:       { type: String, default: '' },
+  autoLoggedOut: { type: Boolean, default: false },
+  lateLogoutReason: { type: String, default: '' },
+  lateLogoutReasonProvidedAt: { type: Date, default: null },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });
 

@@ -10,6 +10,7 @@ const STATUS_STYLE = {
   absent:  { bg: '#fee2e2', color: '#dc2626', label: 'Absent',  icon: 'bi-x-circle' },
   late:    { bg: '#fef3c7', color: '#d97706', label: 'Late',    icon: 'bi-clock' },
   leave:   { bg: '#dbeafe', color: '#2563eb', label: 'On Leave',icon: 'bi-calendar-check' },
+  logged_out: { bg: '#f1f5f9', color: '#64748b', label: 'Logged Out', icon: 'bi-box-arrow-right' },
 };
 
 function formatDuration(start, end) {
@@ -120,6 +121,7 @@ export default function MonitoringPage() {
         let lateFlag = false;
         let onBreak = false;
         let onLunch = false;
+        let autoLoggedOut = false;
 
         if (isOnLeave) {
           status = 'leave';
@@ -128,11 +130,14 @@ export default function MonitoringPage() {
           clockIn = attRecord.clockIn || '—';
           clockOut = attRecord.clockOut || '—';
           lateFlag = attRecord.lateFlag === true;
+          autoLoggedOut = attRecord.autoLoggedOut === true;
           breaks = Array.isArray(attRecord.breaks) ? attRecord.breaks : [];
           workProgress = Array.isArray(attRecord.workProgress) ? attRecord.workProgress : [];
           onBreak = breaks.some(b => b.type === 'break' && b.start && !b.end);
           onLunch = breaks.some(b => b.type === 'lunch' && b.start && !b.end);
         }
+
+        const hasClockOut = clockOut !== '—' && clockOut !== null;
 
         empMap[uid] = {
           _id: uid,
@@ -150,6 +155,8 @@ export default function MonitoringPage() {
           lateFlag,
           onBreak,
           onLunch,
+          autoLoggedOut,
+          isLoggedOut: hasClockOut,
         };
       }
 
@@ -158,6 +165,7 @@ export default function MonitoringPage() {
       const alertList = [];
       for (const emp of teamArr) {
         if (emp.lateFlag) alertList.push({ type: 'late', icon: 'bi-clock', color: '#f59e0b', text: `${emp.name} logged in late (${emp.clockIn})`, time: emp.clockIn });
+        if (emp.autoLoggedOut) alertList.push({ type: 'auto_logout', icon: 'bi-clock-history', color: '#f59e0b', text: `${emp.name} was auto-logged out at ${emp.clockOut}`, time: emp.clockOut });
       }
 
       setTeam(teamArr);
@@ -244,6 +252,7 @@ export default function MonitoringPage() {
               <div className="row g-2">
                 {filtered.map(emp => {
                   const style = STATUS_STYLE[emp.status] || STATUS_STYLE.absent;
+                  const dotColor = emp.isLoggedOut ? '#64748b' : emp.onBreak ? '#d97706' : emp.onLunch ? '#2563eb' : style.color;
                   const breakTotal = totalBreakDuration(emp.breaks, 'break');
                   const lunchTotal = totalBreakDuration(emp.breaks, 'lunch');
                   return (
@@ -251,7 +260,7 @@ export default function MonitoringPage() {
                       <div
                         style={{
                           background: '#f8fafc',
-                          border: '1px solid #e2e8f0',
+                          border: emp.autoLoggedOut ? '1px solid #f59e0b' : '1px solid #e2e8f0',
                           borderRadius: 12,
                           padding: 14,
                           cursor: isSuperAdmin ? 'pointer' : 'default',
@@ -269,7 +278,7 @@ export default function MonitoringPage() {
                                   {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
                                 </div>
                               )}
-                              <div style={{ position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: '50%', background: style.color, border: '2px solid #fff' }} />
+                              <div style={{ position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: '50%', background: dotColor, border: '2px solid #fff' }} />
                             </div>
                             <div>
                               <div style={{ fontSize: 13, fontWeight: 600 }}>{emp.name}</div>
@@ -279,7 +288,18 @@ export default function MonitoringPage() {
                             </div>
                           </div>
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                            <span className="badge" style={{ background: style.bg, color: style.color, fontSize: 10 }}>{style.label}</span>
+                            {emp.isLoggedOut ? (
+                              <span className="badge" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 10 }}>
+                                <i className="bi bi-box-arrow-right me-1" />Logged Out
+                              </span>
+                            ) : (
+                              <span className="badge" style={{ background: style.bg, color: style.color, fontSize: 10 }}>{style.label}</span>
+                            )}
+                            {emp.autoLoggedOut && (
+                              <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}>
+                                <i className="bi bi-clock-history me-1" />Auto Logged Out
+                              </span>
+                            )}
                             {emp.onBreak && (
                               <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}>On Break</span>
                             )}

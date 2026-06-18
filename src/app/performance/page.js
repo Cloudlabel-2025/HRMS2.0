@@ -22,7 +22,59 @@ function StarRating({ value }) {
   );
 }
 
-const EMPTY_GOAL = { title: '', kpi: '', target: '', progress: 0, cycle: '', userId: '' };
+function getCurrentCycle(payrollStartDay) {
+  const d = new Date();
+  const day = d.getDate();
+  const month = d.getMonth();
+  const year = d.getFullYear();
+  let cycleMonth, cycleYear;
+  if (day >= payrollStartDay) {
+    const next = new Date(year, month + 1, 1);
+    cycleMonth = next.getMonth();
+    cycleYear = next.getFullYear();
+  } else {
+    cycleMonth = month;
+    cycleYear = year;
+  }
+  const quarter = Math.floor(cycleMonth / 3) + 1;
+  return `C${quarter}${cycleYear}`;
+}
+
+function getCycleDateRange(payrollStartDay, payrollEndDay) {
+  const d = new Date();
+  const day = d.getDate();
+  const month = d.getMonth();
+  const year = d.getFullYear();
+  let cycleMonth, cycleYear;
+  if (day >= payrollStartDay) {
+    const next = new Date(year, month + 1, 1);
+    cycleMonth = next.getMonth();
+    cycleYear = next.getFullYear();
+  } else {
+    cycleMonth = month;
+    cycleYear = year;
+  }
+  const quarterIndex = Math.floor(cycleMonth / 3);
+  const quarterStartMonth = quarterIndex * 3;
+  const quarterEndMonth = quarterStartMonth + 2;
+  let startY, startM;
+  if (quarterStartMonth === 0) {
+    startY = cycleYear - 1;
+    startM = 11;
+  } else {
+    startY = cycleYear;
+    startM = quarterStartMonth - 1;
+  }
+  const endY = cycleYear;
+  const endM = quarterEndMonth;
+  const pad = n => String(n).padStart(2, '0');
+  return {
+    min: `${startY}-${pad(startM + 1)}-${pad(payrollStartDay)}`,
+    max: `${endY}-${pad(endM + 1)}-${pad(payrollEndDay)}`,
+  };
+}
+
+const EMPTY_GOAL = { title: '', target: '', progress: 0, cycle: '', userId: '' };
 const EMPTY_REVIEW = { userId: '', cycle: '', selfScore: '', selfComment: '', peerScore: '', peerComment: '', managerScore: '', managerComment: '', status: 'pending' };
 
 export default function PerformancePage() {
@@ -35,10 +87,17 @@ export default function PerformancePage() {
   const [showGoalModal, setShowGoalModal] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [showFeedback, setShowFeedback] = useState(null);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [employeeGoals, setEmployeeGoals] = useState([]);
+  const [loadingEmployeeGoals, setLoadingEmployeeGoals] = useState(false);
+  const [editGoal, setEditGoal] = useState(null);
+  const [editGoalForm, setEditGoalForm] = useState({ status: 'in_progress', progress: 0 });
   const [goalForm, setGoalForm] = useState(EMPTY_GOAL);
   const [reviewForm, setReviewForm] = useState(EMPTY_REVIEW);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [payrollStartDay, setPayrollStartDay] = useState(26);
+  const [payrollEndDay, setPayrollEndDay] = useState(25);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
@@ -46,14 +105,26 @@ export default function PerformancePage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [g, r, e] = await Promise.all([
+      const [g, r, e, c] = await Promise.all([
         api.get('/api/performance/goals'),
         api.get('/api/performance/reviews'),
         isAdmin ? api.get('/api/employees') : Promise.resolve([]),
+        api.get('/api/settings?type=config').catch(() => []),
       ]);
       setGoals(Array.isArray(g?.goals) ? g.goals : []);
       setReviews(Array.isArray(r?.reviews) ? r.reviews : []);
       setEmployees(Array.isArray(e) ? e : []);
+      if (Array.isArray(c)) {
+        const gc = c.find(i => i.key === 'global_config');
+        if (gc?.value?.payrollStartDay) {
+          const dayNum = Number(gc.value.payrollStartDay.split('-')[2]);
+          if (dayNum >= 1 && dayNum <= 31) setPayrollStartDay(dayNum);
+        }
+        if (gc?.value?.payrollEndDay) {
+          const dayNum = Number(gc.value.payrollEndDay.split('-')[2]);
+          if (dayNum >= 1 && dayNum <= 31) setPayrollEndDay(dayNum);
+        }
+      }
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -63,8 +134,26 @@ export default function PerformancePage() {
 
   useEffect(() => { if (user) load(); }, [user]);
 
+  useEffect(() => {
+    if (tab === 'employee-goals' && employees.length === 0) {
+      (async () => {
+        try {
+          const e = await api.get('/api/employees');
+          setEmployees(Array.isArray(e) ? e : []);
+        } catch {}
+      })();
+    }
+  }, [tab]);
+
   const saveGoal = async () => {
     if (!goalForm.title) return showToast('Goal title required', 'error');
+    if (goalForm.title.length > 30) return showToast('Goal title must be at most 30 characters', 'error');
+    if (!/^[a-zA-Z0-9]+$/.test(goalForm.title)) return showToast('Goal title must contain only letters and numbers', 'error');
+    if (!goalForm.target) return showToast('Target date is required', 'error');
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (new Date(goalForm.target) <= today) return showToast('Target date must be a future date', 'error');
+    if (goalForm.target < targetDateMin || goalForm.target > targetDateMax) return showToast('Target date must be within the current cycle range', 'error');
     if (goalForm.progress < 0 || goalForm.progress > 100) return showToast('Progress must be between 0 and 100', 'error');
     setSaving(true);
     try {
@@ -72,6 +161,27 @@ export default function PerformancePage() {
       showToast('Goal created');
       setShowGoalModal(false);
       setGoalForm(EMPTY_GOAL);
+      load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openEdit = (goal) => {
+    setEditGoal(goal);
+    setEditGoalForm({ status: goal.status, progress: goal.progress });
+  };
+
+  const saveEdit = async () => {
+    if (editGoalForm.progress < 0 || editGoalForm.progress > 100) return showToast('Progress must be between 0 and 100', 'error');
+    if (!['in_progress', 'achieved', 'missed'].includes(editGoalForm.status)) return showToast('Invalid status', 'error');
+    setSaving(true);
+    try {
+      await api.put(`/api/performance/goals/${editGoal._id}`, editGoalForm);
+      showToast('Goal updated');
+      setEditGoal(null);
       load();
     } catch (e) {
       showToast(e.message, 'error');
@@ -101,6 +211,19 @@ export default function PerformancePage() {
     }
   };
 
+  const selectEmployee = async (emp) => {
+    setSelectedEmployee(emp);
+    setLoadingEmployeeGoals(true);
+    try {
+      const g = await api.get(`/api/performance/goals?userId=${emp.userId || emp._id}`);
+      setEmployeeGoals(Array.isArray(g?.goals) ? g.goals : []);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setLoadingEmployeeGoals(false);
+    }
+  };
+
   const myGoals = goals.filter(g => g.userId?._id === user?.id || g.userId === user?.id);
 
   const assignableEmployees = (() => {
@@ -112,6 +235,12 @@ export default function PerformancePage() {
   })();
 
   const showAssigneeSelector = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
+  const cycleRange = getCycleDateRange(payrollStartDay, payrollEndDay);
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const minTargetDate = tomorrow.toISOString().split('T')[0];
+  const targetDateMin = minTargetDate < cycleRange.min ? cycleRange.min : minTargetDate;
+  const targetDateMax = cycleRange.max;
 
   return (
     <AppShell title="Performance">
@@ -120,7 +249,7 @@ export default function PerformancePage() {
       <div className="page-header">
         <div><h4>Performance Management</h4><p>Goals, KPIs, reviews, and appraisals</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline-primary" onClick={() => setShowGoalModal(true)}><i className="bi bi-plus-lg me-2" />Set Goal</button>
+          <button className="btn btn-outline-primary" onClick={() => { setGoalForm(p => ({ ...p, cycle: getCurrentCycle(payrollStartDay) })); setShowGoalModal(true); }}><i className="bi bi-plus-lg me-2" />Set Goal</button>
           {isAdmin && <button className="btn btn-primary" onClick={() => setShowReviewModal(true)}><i className="bi bi-plus-lg me-2" />Add Review</button>}
         </div>
       </div>
@@ -128,6 +257,7 @@ export default function PerformancePage() {
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
         {[
           { key: 'overview', label: 'My Goals' },
+          { key: 'employee-goals', label: 'Employee Goals' },
           ...(isAdmin ? [{ key: 'reviews', label: 'Team Reviews' }, { key: 'analytics', label: 'Analytics' }] : [{ key: 'reviews', label: 'My Reviews' }]),
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
@@ -154,6 +284,7 @@ export default function PerformancePage() {
                       <span className="badge" style={{ background: goal.status === 'achieved' ? '#dcfce7' : '#dbeafe', color: goal.status === 'achieved' ? '#16a34a' : '#2563eb' }}>
                         {goal.status === 'achieved' ? 'Achieved' : goal.status === 'missed' ? 'Missed' : 'In Progress'}
                       </span>
+                      <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 11, padding: '2px 8px', marginLeft: 8 }} onClick={() => openEdit(goal)}><i className="bi bi-pencil me-1" />Edit</button>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748b', marginBottom: 6 }}>
                       <span>Progress</span><span style={{ fontWeight: 700, color: '#1e293b' }}>{goal.progress}%</span>
@@ -162,6 +293,67 @@ export default function PerformancePage() {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+
+          {tab === 'employee-goals' && (
+            <div>
+              {!selectedEmployee ? (
+                <div className="row g-3">
+                  {employees.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></div>}
+                  {employees.map(emp => (
+                    <div key={emp._id} className="col-md-6">
+                      <div className="card p-3" style={{ cursor: 'pointer' }} onClick={() => selectEmployee(emp)}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700 }}>
+                            {emp.name?.charAt(0)}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{emp.name}</div>
+                            <div style={{ fontSize: 11, color: '#94a3b8' }}>{emp.department}{emp.designation ? ` — ${emp.designation}` : ''}</div>
+                          </div>
+                          <i className="bi bi-chevron-right ms-auto" style={{ color: '#94a3b8' }} />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => { setSelectedEmployee(null); setEmployeeGoals([]); }}>
+                      <i className="bi bi-arrow-left me-1" />Back
+                    </button>
+                    <span style={{ fontWeight: 600, fontSize: 14 }}>Goals — {selectedEmployee.name}</span>
+                  </div>
+                  {loadingEmployeeGoals ? (
+                    <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
+                  ) : employeeGoals.length === 0 ? (
+                    <div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No goals set</h6><p>This employee has no goals yet.</p></div>
+                  ) : (
+                    <div className="row g-3">
+                      {employeeGoals.map(goal => (
+                        <div key={goal._id} className="col-md-6">
+                          <div className="card p-3">
+                            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{goal.title}</div>
+                            {goal.kpi && <div style={{ fontSize: 12, color: '#64748b' }}>KPI: {goal.kpi}</div>}
+                            {goal.target && <div style={{ fontSize: 12, color: '#94a3b8' }}>Target: {goal.target}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#64748b', marginTop: 8, marginBottom: 6 }}>
+                              <span>Progress</span><span style={{ fontWeight: 700, color: '#1e293b' }}>{goal.progress}%</span>
+                            </div>
+                            <div className="progress"><div className="progress-bar" style={{ width: `${goal.progress}%`, background: goal.progress === 100 ? '#10b981' : '#3b82f6' }} /></div>
+                            <div style={{ marginTop: 6 }}>
+                              <span className="badge" style={{ background: goal.status === 'achieved' ? '#dcfce7' : '#dbeafe', color: goal.status === 'achieved' ? '#16a34a' : '#2563eb' }}>
+                                {goal.status === 'achieved' ? 'Achieved' : goal.status === 'missed' ? 'Missed' : 'In Progress'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
@@ -272,23 +464,55 @@ export default function PerformancePage() {
         </div>
       )}
 
+      {editGoal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header"><h5 className="modal-title">Edit Goal — {editGoal.title}</h5><button className="btn-close" onClick={() => setEditGoal(null)} /></div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status</label>
+                    <select className="form-select" value={editGoalForm.status} onChange={e => setEditGoalForm(p => ({ ...p, status: e.target.value }))}>
+                      <option value="in_progress">In Progress</option>
+                      <option value="achieved">Achieved</option>
+                      <option value="missed">Missed</option>
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Progress %</label>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                      <input type="range" min="0" max="100" className="form-range" style={{ flex: 1 }} value={editGoalForm.progress} onChange={e => setEditGoalForm(p => ({ ...p, progress: +e.target.value }))} />
+                      <span style={{ fontWeight: 700, fontSize: 14, minWidth: 36 }}>{editGoalForm.progress}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setEditGoal(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveEdit} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Update Goal'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showGoalModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content">
-              <div className="modal-header"><h5 className="modal-title">Set Goal</h5><button className="btn-close" onClick={() => setShowGoalModal(false)} /></div>
+              <div className="modal-header"><h5 className="modal-title">Set Goal</h5><button className="btn-close" onClick={() => { setShowGoalModal(false); setGoalForm(EMPTY_GOAL); }} /></div>
               <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value }))} /></div>
+                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" maxLength={30} value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value.replace(/[^a-zA-Z0-9]/g, '') }))} /></div>
                   {showAssigneeSelector && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To</label><select className="form-select" value={goalForm.userId} onChange={e => setGoalForm(p => ({ ...p, userId: e.target.value }))}><option value="">Myself</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>}
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>KPI</label><input className="form-control" value={goalForm.kpi} onChange={e => setGoalForm(p => ({ ...p, kpi: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date</label><input className="form-control" value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" placeholder="e.g. Q3 2025" value={goalForm.cycle} onChange={e => setGoalForm(p => ({ ...p, cycle: e.target.value }))} /></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date *</label><input type="date" className="form-control" min={targetDateMin} max={targetDateMax} value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" value={goalForm.cycle} disabled style={{ background: '#f1f5f9', cursor: 'not-allowed' }} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Progress %</label><input type="number" min="0" max="100" className="form-control" value={goalForm.progress} onChange={e => setGoalForm(p => ({ ...p, progress: +e.target.value }))} /></div>
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowGoalModal(false)}>Cancel</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowGoalModal(false); setGoalForm(EMPTY_GOAL); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={saveGoal} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save Goal'}</button>
               </div>
             </div>

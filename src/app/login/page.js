@@ -12,6 +12,47 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  // Late logout reason modal
+  const [showLateLogoutModal, setShowLateLogoutModal] = useState(false);
+  const [lateLogoutDate, setLateLogoutDate] = useState(null);
+  const [lateLogoutReason, setLateLogoutReason] = useState('');
+  const [submittingReason, setSubmittingReason] = useState(false);
+  const [reasonError, setReasonError] = useState('');
+
+  const submitLateLogoutReason = async (e) => {
+    e.preventDefault();
+    if (!lateLogoutReason || lateLogoutReason.trim().length < 5) {
+      setReasonError('Please provide a valid reason (at least 5 characters).');
+      return;
+    }
+    setSubmittingReason(true);
+    setReasonError('');
+    try {
+      const token = localStorage.getItem('hrms_token');
+      const res = await fetch('/api/attendance/late-logout-reason', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ date: lateLogoutDate, reason: lateLogoutReason.trim() }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setReasonError(json.error || 'Failed to submit reason.');
+        setSubmittingReason(false);
+        return;
+      }
+    } catch {
+      setReasonError('Network error. Please try again.');
+      setSubmittingReason(false);
+      return;
+    }
+    setSubmittingReason(false);
+    setShowLateLogoutModal(false);
+    router.push('/dashboard');
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -19,7 +60,10 @@ export default function LoginPage() {
     const result = await login(form.email, form.password);
     setLoading(false);
     if (result.success) {
-      if (result.isFirstLogin) {
+      if (result.needsLateLogoutReason && result.lateLogoutDate) {
+        setLateLogoutDate(result.lateLogoutDate);
+        setShowLateLogoutModal(true);
+      } else if (result.isFirstLogin) {
         router.push('/login/setup-password');
       } else {
         router.push('/dashboard');
@@ -100,6 +144,75 @@ export default function LoginPage() {
           </form>
         </div>
       </div>
+
+      {/* Late Logout Reason Modal */}
+      {showLateLogoutModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 9999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 16,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 16, padding: 32,
+            maxWidth: 480, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+          }}>
+            <div style={{ textAlign: 'center', marginBottom: 20 }}>
+              <div style={{
+                width: 48, height: 48, borderRadius: 12,
+                background: 'linear-gradient(135deg, #f59e0b, #ef4444)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 12px',
+              }}>
+                <i className="bi bi-clock-history" style={{ color: '#fff', fontSize: 22 }} />
+              </div>
+              <h5 style={{ fontWeight: 700, margin: 0 }}>Late Logout Detected</h5>
+              <p style={{ color: '#64748b', fontSize: 13, marginTop: 4, marginBottom: 0 }}>
+                You were auto-logged out on <strong>{lateLogoutDate}</strong> because you forgot to log out after your shift ended.
+                Please provide a reason below.
+              </p>
+            </div>
+
+            <form onSubmit={submitLateLogoutReason}>
+              <div className="mb-3">
+                <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>
+                  Reason for late logout
+                </label>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  placeholder="e.g., I was working on an urgent task and forgot to log out..."
+                  value={lateLogoutReason}
+                  onChange={e => { setLateLogoutReason(e.target.value); setReasonError(''); }}
+                  style={{ fontSize: 14, borderRadius: 8 }}
+                  required
+                  suppressHydrationWarning
+                />
+                {reasonError && (
+                  <div style={{ color: '#ef4444', fontSize: 12, marginTop: 4 }}>
+                    <i className="bi bi-exclamation-circle me-1" />
+                    {reasonError}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="submit"
+                  className="btn btn-primary w-100"
+                  disabled={submittingReason}
+                  style={{ padding: '10px', fontWeight: 600, borderRadius: 8 }}
+                  suppressHydrationWarning
+                >
+                  {submittingReason ? (
+                    <><span className="spinner-border spinner-border-sm me-2" />Submitting...</>
+                  ) : 'Submit & Continue'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

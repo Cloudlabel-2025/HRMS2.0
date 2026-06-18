@@ -74,6 +74,11 @@ export default function AttendancePage() {
   const [progressRecord, setProgressRecord] = useState(null);
   const [progressLoading, setProgressLoading] = useState(false);
 
+  // Available tasks (from Projects & Task Management)
+  const [availableTasks, setAvailableTasks] = useState([]);
+  const [showTaskPicker, setShowTaskPicker] = useState(false);
+  const taskPickerRef = useRef(null);
+
   // Work progress save
   const [saveWorkLoading, setSaveWorkLoading] = useState(false);
   const handleSaveWork = async () => {
@@ -158,6 +163,16 @@ export default function AttendancePage() {
     }
   }, [selectedProgressUserId, tab]);
 
+  useEffect(() => {
+    const handleClick = (e) => {
+      if (taskPickerRef.current && !taskPickerRef.current.contains(e.target)) {
+        setShowTaskPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
   // Fire page-view audit exactly once per mount — useRef prevents double-fire in React Strict Mode
   const pageViewFired = useRef(false);
   useEffect(() => {
@@ -174,6 +189,9 @@ export default function AttendancePage() {
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
       loadRegRequests(isAdmin ? 'approvals' : 'my'),
+      api.get('/api/attendance/available-tasks').then(tasks => {
+        setAvailableTasks(Array.isArray(tasks) ? tasks : []);
+      }).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [user]);
 
@@ -246,6 +264,24 @@ export default function AttendancePage() {
     const rows = (todayRecord?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row);
     try { await persistTodayRecord({ workProgress: rows }); }
     catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const selectTask = (task) => {
+    const projectLabel = task.projectId?.name ? `[${task.projectId.name}] ` : '';
+    const taskTitle = projectLabel + task.title;
+    const rows = todayRecord?.workProgress || [];
+    const activeIdx = rows.findIndex(r => r.startTime && !r.endTime);
+
+    if (activeIdx !== -1 && rows[activeIdx].type === 'task') {
+      const updatedRows = rows.map((row, i) => i === activeIdx ? { ...row, taskDetails: taskTitle } : row);
+      setTodayRecord(prev => ({
+        ...prev,
+        workProgress: updatedRows,
+      }));
+      saveWorkProgress(updatedRows);
+    }
+    setShowTaskPicker(false);
+    showToast(`Task selected: ${task.title}`);
   };
 
   const endCurrentTask = async () => {
@@ -597,15 +633,71 @@ export default function AttendancePage() {
                             <i className={`bi ${row.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{row.taskDetails || (row.type === 'lunch' ? 'Lunch break' : 'Break')}
                           </span>
                         ) : (
-                          <textarea
-                            className="form-control"
-                            rows={2}
-                            placeholder={active ? 'Enter current task details' : 'Task details'}
-                            value={row.taskDetails || ''}
-                            onChange={e => updateWorkRow(row.dbIdx, { taskDetails: e.target.value })}
-                            onBlur={() => saveWorkProgress()}
-                            style={{ fontSize: 12, minWidth: 210 }}
-                          />
+                          <div style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
+                            <textarea
+                              className="form-control"
+                              rows={2}
+                              placeholder={active ? 'Enter current task details' : 'Task details'}
+                              value={row.taskDetails || ''}
+                              onChange={e => updateWorkRow(row.dbIdx, { taskDetails: e.target.value })}
+                              onBlur={() => saveWorkProgress()}
+                              style={{ fontSize: 12, minWidth: 210 }}
+                            />
+                            {active && clockedIn && availableTasks.length > 0 && (
+                              <span ref={taskPickerRef} style={{ position: 'relative', flexShrink: 0 }}>
+                                <button
+                                  className="btn btn-outline-primary"
+                                  style={{ padding: '0 4px', fontSize: 11, lineHeight: '18px', borderRadius: 3, minWidth: 22, height: 22 }}
+                                  onClick={(e) => { e.stopPropagation(); setShowTaskPicker(p => !p); }}
+                                  title="Select from assigned tasks"
+                                >
+                                  <i className="bi bi-plus" style={{ fontSize: 12 }} />
+                                </button>
+                                {showTaskPicker && (
+                                  <div style={{
+                                    position: 'absolute', top: '100%', left: 0, zIndex: 1050,
+                                    background: '#fff', border: '1px solid #e2e8f0', borderRadius: 8,
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)', minWidth: 280,
+                                    maxHeight: 260, overflowY: 'auto', marginTop: 4,
+                                  }}>
+                                    <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, color: '#64748b', borderBottom: '1px solid #f1f5f9' }}>
+                                      Select a task
+                                    </div>
+                                    {availableTasks.map(task => (
+                                      <div
+                                        key={task._id}
+                                        onClick={() => selectTask(task)}
+                                        style={{
+                                          padding: '10px 12px', cursor: 'pointer', fontSize: 12,
+                                          borderBottom: '1px solid #f8fafc', transition: 'background 0.1s',
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                      >
+                                        <div style={{ fontWeight: 600, color: '#1e293b' }}>
+                                          {task.projectId?.name && <span style={{ color: '#3b82f6' }}>[{task.projectId.name}] </span>}
+                                          {task.title}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+                                          <span className="badge" style={{
+                                            background: task.priority === 'high' ? '#fee2e2' : task.priority === 'medium' ? '#fef3c7' : '#f1f5f9',
+                                            color: task.priority === 'high' ? '#dc2626' : task.priority === 'medium' ? '#d97706' : '#64748b',
+                                            fontSize: 9,
+                                          }}>{task.priority}</span>
+                                          <span className="badge" style={{
+                                            background: task.status === 'In Progress' ? '#dbeafe' : '#f1f5f9',
+                                            color: task.status === 'In Progress' ? '#2563eb' : '#64748b',
+                                            fontSize: 9,
+                                          }}>{task.status}</span>
+                                          {task.due && <span style={{ fontSize: 10, color: '#94a3b8' }}>Due: {task.due}</span>}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td style={{ fontSize: 13, fontWeight: 600 }}>{row.startTime || '--:--'}</td>
@@ -750,6 +842,7 @@ export default function AttendancePage() {
                     <tbody>
                       {teamToday.map(row => {
                         const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+                        const hasClockOut = !!row.clockOut;
                         return (
                           <tr key={row._id}>
                             <td>
@@ -761,11 +854,24 @@ export default function AttendancePage() {
                               </div>
                             </td>
                             <td style={{ fontSize: 13, color: '#64748b' }}>{row.userId?.department || '—'}</td>
-                            <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
+                            <td>
+                              {hasClockOut ? (
+                                <span className="badge" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 11 }}>
+                                  <i className="bi bi-box-arrow-right me-1" />Logged Out
+                                </span>
+                              ) : (
+                                <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
+                              )}
+                            </td>
                             <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
                             <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
                             <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
-                            <td>{row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}</td>
+                            <td>
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
+                                {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
+                              </div>
+                            </td>
                           </tr>
                         );
                       })}

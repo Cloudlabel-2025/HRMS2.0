@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Task } from '@/lib/models/Task';
+import { Task, Project } from '@/lib/models/Task';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -42,7 +42,7 @@ export async function GET(req) {
     const tasks = await Task.find(query)
       .populate('assignedTo', 'name avatar')
       .populate('assignedBy', 'name')
-      .populate('projectId', 'name')
+      .populate('projectId', 'name departments')
       .sort({ createdAt: -1 });
 
     return ok(tasks);
@@ -66,9 +66,44 @@ export async function POST(req) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: title is required', 'low', ip, null, user._id);
       return fail('Task title is required', 400);
     }
+    if (body.title.length > 30 || !/^[a-zA-Z0-9]+$/.test(body.title)) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: invalid title', 'low', ip, null, user._id);
+      return fail('Task title must be at most 30 characters and contain only letters and numbers', 400);
+    }
+    if (!body.description) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: description is required', 'low', ip, null, user._id);
+      return fail('Task description is required', 400);
+    }
+    if (!body.projectId) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: project is required', 'low', ip, null, user._id);
+      return fail('Project is required', 400);
+    }
     if (!body.assignedTo) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: assignedTo is required', 'low', ip, null, user._id);
       return fail('Assigned user is required', 400);
+    }
+    if (!body.priority) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: priority is required', 'low', ip, null, user._id);
+      return fail('Priority is required', 400);
+    }
+    if (!body.status) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: status is required', 'low', ip, null, user._id);
+      return fail('Status is required', 400);
+    }
+    if (!body.due) {
+      auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: due date is required', 'low', ip, null, user._id);
+      return fail('Due date is required', 400);
+    }
+
+    // Validate due date is within project's date range
+    const taskProject = await Project.findById(body.projectId).select('startDate endDate').lean();
+    if (taskProject) {
+      if (body.due < taskProject.startDate) {
+        return fail(`Due date cannot be before project start date (${taskProject.startDate})`, 400);
+      }
+      if (body.due > taskProject.endDate) {
+        return fail(`Due date cannot be after project end date (${taskProject.endDate})`, 400);
+      }
     }
 
     if (user.role === 'team_lead') {

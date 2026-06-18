@@ -1,5 +1,6 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
+import Attendance from '@/lib/models/Attendance';
 import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
 import { AuditLog, Shift } from '@/lib/models/index';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
@@ -156,6 +157,24 @@ export async function POST(req) {
       await User.findByIdAndUpdate(user._id, { firstLoginAt: new Date() });
     }
 
+    // Check for pending late logout reason
+    let needsLateLogoutReason = false;
+    let lateLogoutDate = null;
+    try {
+      const lateLogoutRecord = await Attendance.findOne({
+        userId: user._id,
+        autoLoggedOut: true,
+        lateLogoutReason: { $in: ['', null] },
+      }).sort({ date: -1 }).lean();
+
+      if (lateLogoutRecord) {
+        needsLateLogoutReason = true;
+        lateLogoutDate = lateLogoutRecord.date;
+      }
+    } catch (e) {
+      // Non-fatal — proceed with login
+    }
+
     const token        = signToken({ id: user._id, role: user.role });
     const refreshToken = signRefreshToken({ id: user._id, role: user.role });
 
@@ -174,6 +193,8 @@ export async function POST(req) {
       token,
       refreshToken,
       isFirstLogin: user.isFirstLogin,
+      needsLateLogoutReason,
+      lateLogoutDate,
       user: {
         id:          user._id,
         name:        user.name,

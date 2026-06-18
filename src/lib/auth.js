@@ -56,7 +56,13 @@ export function AuthProvider({ children }) {
     localStorage.setItem('hrms_refresh', json.data.refreshToken);
     localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
     setUser(json.data.user);
-    return { success: true, user: json.data.user, isFirstLogin: json.data.isFirstLogin };
+    return {
+      success: true,
+      user: json.data.user,
+      isFirstLogin: json.data.isFirstLogin,
+      needsLateLogoutReason: json.data.needsLateLogoutReason,
+      lateLogoutDate: json.data.lateLogoutDate,
+    };
   };
 
   const logout = () => {

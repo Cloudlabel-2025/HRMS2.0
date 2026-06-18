@@ -318,7 +318,8 @@ const TokenBlacklistSchema = new mongoose.Schema({
 });
 
 // ── Exports ───────────────────────────────────────────────────────────────────
-export const Goal        = mongoose.models.Goal        || mongoose.model('Goal', GoalSchema);
+if (mongoose.models.Goal) delete mongoose.models.Goal;
+export const Goal = mongoose.model('Goal', GoalSchema);
 export const Review      = mongoose.models.Review      || mongoose.model('Review', ReviewSchema);
 export const Document    = mongoose.models.Document    || mongoose.model('Document', DocumentSchema);
 export const Announcement= mongoose.models.Announcement|| mongoose.model('Announcement', AnnouncementSchema);

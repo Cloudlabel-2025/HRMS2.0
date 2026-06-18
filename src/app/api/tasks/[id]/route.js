@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Task } from '@/lib/models/Task';
+import { Task, Project } from '@/lib/models/Task';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -24,6 +24,24 @@ export async function PUT(req, { params }) {
     }
 
     // Managers can update everything
+    if (!body.title || !body.description || !body.projectId || !body.assignedTo || !body.priority || !body.due) {
+      return fail('All fields are required', 400);
+    }
+    if (body.title.length > 30 || !/^[a-zA-Z0-9]+$/.test(body.title)) {
+      return fail('Task title must be at most 30 characters and contain only letters and numbers', 400);
+    }
+
+    // Validate due date is within project's date range
+    const taskProject = await Project.findById(body.projectId).select('startDate endDate').lean();
+    if (taskProject) {
+      if (body.due < taskProject.startDate) {
+        return fail(`Due date cannot be before project start date (${taskProject.startDate})`, 400);
+      }
+      if (body.due > taskProject.endDate) {
+        return fail(`Due date cannot be after project end date (${taskProject.endDate})`, 400);
+      }
+    }
+
     const updated = await Task.findByIdAndUpdate(id, body, { new: true })
       .populate('assignedTo', 'name avatar').populate('projectId', 'name');
     auditLog('Task Updated', 'Tasks', user._id, `Updated task "${task.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, task.assignedTo);
