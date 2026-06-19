@@ -1,5 +1,6 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
@@ -9,70 +10,156 @@ const MONTHS     = ['January','February','March','April','May','June','July','Au
 const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
 const TYPE_COLORS = {
-  holiday: { bg: '#fee2e2', color: '#dc2626', label: 'Holiday', icon: 'bi-balloon' },
-  leave:   { bg: '#dcfce7', color: '#16a34a', label: 'Leave',   icon: 'bi-calendar-check' },
-  task:    { bg: '#fef3c7', color: '#d97706', label: 'Task',    icon: 'bi-check2-square' },
-  payroll: { bg: '#ede9fe', color: '#7c3aed', label: 'Payroll', icon: 'bi-cash-stack' },
+  holiday:      { bg: '#fee2e2', color: '#dc2626', label: 'Holiday', icon: 'bi-balloon' },
+  leave:        { bg: '#dcfce7', color: '#16a34a', label: 'Leave',   icon: 'bi-calendar-check' },
+  task:         { bg: '#fef3c7', color: '#d97706', label: 'Task',    icon: 'bi-check2-square' },
+  announcement: { bg: '#ede9fe', color: '#7c3aed', label: 'Announcement', icon: 'bi-megaphone' },
+  pay_start:    { bg: '#fff7ed', color: '#ea580c', label: 'Payroll Start', icon: 'bi-cash-stack' },
+  pay_end:      { bg: '#f0fdf4', color: '#16a34a', label: 'Payroll End',   icon: 'bi-cash' },
 };
+
+function isHolidaySaturday(year, month, day, payrollStartDay) {
+  const d = new Date(year, month, day);
+  if (d.getDay() !== 6) return false;
+  let cy, cm;
+  if (day >= payrollStartDay) {
+    cy = year; cm = month;
+  } else {
+    const prev = new Date(year, month - 1, 1);
+    cy = prev.getFullYear(); cm = prev.getMonth();
+  }
+  const cycleStart = new Date(cy, cm, payrollStartDay);
+  let satCount = 0;
+  for (let dt = new Date(cycleStart); dt <= d; dt.setDate(dt.getDate() + 1)) {
+    if (dt.getDay() === 6) satCount++;
+  }
+  return satCount === 1 || satCount === 3;
+}
 
 export default function CalendarPage() {
   const { user } = useAuth();
   const { formatDate } = useSettings();
+  const router = useRouter();
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [selectedDay, setSelectedDay] = useState(null);
   const [filterType, setFilterType] = useState('');
   const [viewMode, setViewMode] = useState('month');
+  const [payrollStartDay, setPayrollStartDay] = useState(26);
+  const [payrollEndDay, setPayrollEndDay] = useState(25);
+  const [holidayModal, setHolidayModal] = useState(null);
+  const [leaveModal, setLeaveModal] = useState(null);
+  const [savingHoliday, setSavingHoliday] = useState(false);
+  const [savingLeave, setSavingLeave] = useState(false);
   const gridRef = useRef(null);
+
+  const reloadEvents = useCallback(async () => {
+    const [leaves, tasks, holidays, announcements, config] = await Promise.all([
+      api.get('/api/leave?status=approved'),
+      api.get('/api/tasks'),
+      api.get('/api/settings?type=holidays'),
+      api.get('/api/announcements'),
+      api.get('/api/settings?type=config').catch(() => []),
+    ]);
+
+    let psDay = payrollStartDay, peDay = payrollEndDay;
+    if (Array.isArray(config)) {
+      const gc = config.find(i => i.key === 'global_config');
+      if (gc?.value?.payrollStartDay) {
+        const dn = Number(gc.value.payrollStartDay.split('-')[2]);
+        if (dn >= 1 && dn <= 31) psDay = dn;
+      }
+      if (gc?.value?.payrollEndDay) {
+        const dn = Number(gc.value.payrollEndDay.split('-')[2]);
+        if (dn >= 1 && dn <= 31) peDay = dn;
+      }
+      setPayrollStartDay(psDay);
+      setPayrollEndDay(peDay);
+    }
+
+    const all = [];
+
+    for (const l of (Array.isArray(leaves) ? leaves : [])) {
+      const start = new Date(l.from), end = new Date(l.to);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        all.push({
+          id: `leave-${l._id}-${d.toISOString().slice(0,10)}`,
+          title: `${l.userId?.name || 'Employee'} — ${l.type}`,
+          subtitle: l.reason,
+          date: d.toISOString().slice(0, 10),
+          type: 'leave',
+        });
+      }
+    }
+
+    for (const t of (Array.isArray(tasks) ? tasks : [])) {
+      if (!t.due) continue;
+      all.push({
+        id: `task-${t._id}`,
+        title: t.title,
+        subtitle: t.projectId?.name,
+        date: t.due,
+        type: 'task',
+      });
+    }
+
+    for (const h of (Array.isArray(holidays) ? holidays : [])) {
+      all.push({
+        id: `holiday-${h._id}`,
+        title: h.name,
+        subtitle: h.type,
+        date: h.date,
+        type: 'holiday',
+      });
+    }
+
+    const announcementData = Array.isArray(announcements?.announcements) ? announcements.announcements : [];
+    for (const a of announcementData) {
+      const d = new Date(a.createdAt);
+      all.push({
+        id: `announcement-${a._id}`,
+        title: a.title,
+        subtitle: a.author?.name || 'Announcement',
+        date: d.toISOString().slice(0, 10),
+        type: 'announcement',
+      });
+    }
+
+    const thisYear = currentDate.getFullYear();
+    for (let y = thisYear - 1; y <= thisYear + 1; y++) {
+      for (let m = 0; m < 12; m++) {
+        const daysInM = new Date(y, m + 1, 0).getDate();
+        if (psDay <= daysInM) {
+          all.push({
+            id: `pay-start-${y}-${m + 1}`,
+            title: 'Payroll Start',
+            subtitle: `Day ${psDay}`,
+            date: `${y}-${String(m + 1).padStart(2, '0')}-${String(psDay).padStart(2, '0')}`,
+            type: 'pay_start',
+          });
+        }
+        if (peDay <= daysInM) {
+          all.push({
+            id: `pay-end-${y}-${m + 1}`,
+            title: 'Payroll End',
+            subtitle: `Day ${peDay}`,
+            date: `${y}-${String(m + 1).padStart(2, '0')}-${String(peDay).padStart(2, '0')}`,
+            type: 'pay_end',
+          });
+        }
+      }
+    }
+
+    setEvents(all);
+    return all;
+  }, [currentDate, payrollStartDay, payrollEndDay]);
 
   useEffect(() => {
     if (!user) return;
     const load = async () => {
       try {
-        const [leaves, tasks, holidays] = await Promise.all([
-          api.get('/api/leave?status=approved'),
-          api.get('/api/tasks'),
-          api.get('/api/settings?type=holidays'),
-        ]);
-
-        const all = [];
-
-        for (const l of (Array.isArray(leaves) ? leaves : [])) {
-          const start = new Date(l.from), end = new Date(l.to);
-          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-            all.push({
-              id: `leave-${l._id}-${d.toISOString().slice(0,10)}`,
-              title: `${l.userId?.name || 'Employee'} — ${l.type}`,
-              subtitle: l.reason,
-              date: d.toISOString().slice(0, 10),
-              type: 'leave',
-            });
-          }
-        }
-
-        for (const t of (Array.isArray(tasks) ? tasks : [])) {
-          if (!t.due) continue;
-          all.push({
-            id: `task-${t._id}`,
-            title: t.title,
-            subtitle: t.projectId?.name,
-            date: t.due,
-            type: 'task',
-          });
-        }
-
-        for (const h of (Array.isArray(holidays) ? holidays : [])) {
-          all.push({
-            id: `holiday-${h._id}`,
-            title: h.name,
-            subtitle: h.type,
-            date: h.date,
-            type: 'holiday',
-          });
-        }
-
-        setEvents(all);
+        await reloadEvents();
       } catch (e) {
         console.error(e);
       } finally {
@@ -80,7 +167,7 @@ export default function CalendarPage() {
       }
     };
     load();
-  }, [user]);
+  }, [user, reloadEvents]);
 
   const year     = currentDate.getFullYear();
   const month    = currentDate.getMonth();
@@ -226,7 +313,7 @@ export default function CalendarPage() {
                     {DAYS_SHORT.map(d => (
                       <div key={d} style={{
                         textAlign: 'center', fontSize: 11, fontWeight: 700,
-                        color: d === 'Sun' ? '#ef4444' : '#94a3b8',
+                        color: d === 'Sun' || d === 'Sat' ? '#ef4444' : '#94a3b8',
                         padding: '6px 0', letterSpacing: 0.3, textTransform: 'uppercase',
                       }}>{d}</div>
                     ))}
@@ -238,12 +325,20 @@ export default function CalendarPage() {
                       if (!day) return <div key={i} />;
                       const dayEvents = getEventsForDay(day);
                       const isSelected = selectedDay === day;
-                      const isSun = (i % 7 === 0);
+                      const isHolidaySat = isHolidaySaturday(year, month, day, payrollStartDay);
+                      const isWeekend = (i % 7 === 0) || (isHolidaySat);
                       const count = eventCounts[`${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`] || 0;
                       const typeColors = [...new Set(dayEvents.map(e => e.type))].map(t => TYPE_COLORS[t]?.color).filter(Boolean);
                       const bgTint = typeColors.length > 0 ? typeColors[0] + '12' : 'transparent';
                       return (
-                        <div key={i} onClick={() => setSelectedDay(day === selectedDay ? null : day)}
+                        <div key={i} onClick={() => {
+                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                          if (dateStr <= today.toISOString().slice(0, 10)) {
+                            router.push(`/calendar/day/${dateStr}`);
+                          } else {
+                            setSelectedDay(day === selectedDay ? null : day);
+                          }
+                        }}
                           style={{
                             minHeight: 80, padding: '8px 6px', cursor: 'pointer',
                             background: isSelected ? '#1e293b' : isToday(day) ? '#eff6ff' : bgTint,
@@ -257,7 +352,7 @@ export default function CalendarPage() {
                           onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = isToday(day) ? '#eff6ff' : (count > 0 ? bgTint : 'transparent'); }}>
                           <div style={{
                             fontSize: 12, fontWeight: isToday(day) ? 800 : 600,
-                            color: isSelected ? '#fff' : isToday(day) ? '#fff' : (isSun ? '#ef4444' : '#1e293b'),
+                            color: isSelected ? '#fff' : isToday(day) ? '#fff' : (isWeekend ? '#ef4444' : '#1e293b'),
                             width: 24, height: 24, lineHeight: '24px', borderRadius: '50%',
                             textAlign: 'center',
                             background: isToday(day) ? (isSelected ? 'transparent' : '#3b82f6') : 'transparent',
@@ -340,10 +435,36 @@ export default function CalendarPage() {
                     {MONTHS[month]} {selectedDay}, {year}
                     {selectedEvents.length === 0 && <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 400, marginLeft: 8 }}>— No events</span>}
                   </div>
-                  <button className="btn btn-sm btn-outline-secondary" style={{ borderRadius: 8, padding: '4px 10px', fontSize: 12 }}
-                    onClick={() => setSelectedDay(null)}>
-                    <i className="bi bi-x" />
-                  </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {['super_admin', 'admin_full'].includes(user?.role) && (
+                      <button className="btn btn-sm" style={{
+                        borderRadius: 8, padding: '4px 10px', fontSize: 12,
+                        border: '1px solid #fee2e2', color: '#dc2626', background: '#fff',
+                      }}
+                        onClick={() => {
+                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
+                          const d = new Date(year, month, selectedDay);
+                          const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+                          setHolidayModal({ date: dateStr, name: dayName === 'Saturday' ? 'Saturday Holiday' : 'Holiday', type: 'Company' });
+                        }}>
+                        <i className="bi bi-balloon me-1" />Holiday
+                      </button>
+                    )}
+                    <button className="btn btn-sm" style={{
+                      borderRadius: 8, padding: '4px 10px', fontSize: 12,
+                      border: '1px solid #bbf7d0', color: '#16a34a', background: '#fff',
+                    }}
+                      onClick={() => {
+                        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
+                        setLeaveModal({ from: dateStr, to: dateStr, type: 'Casual Leave', reason: '' });
+                      }}>
+                      <i className="bi bi-calendar-check me-1" />Leave
+                    </button>
+                    <button className="btn btn-sm btn-outline-secondary" style={{ borderRadius: 8, padding: '4px 10px', fontSize: 12 }}
+                      onClick={() => setSelectedDay(null)}>
+                      <i className="bi bi-x" />
+                    </button>
+                  </div>
                 </div>
                 <div style={{ padding: '4px 8px' }}>
                   {selectedEvents.length === 0 && (
@@ -437,6 +558,127 @@ export default function CalendarPage() {
                     );
                   })
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mark Leave Modal */}
+      {leaveModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}>
+              <div className="modal-header" style={{ borderBottom: '1px solid #f1f5f9', padding: '16px 20px' }}>
+                <h5 className="modal-title" style={{ fontSize: 15, fontWeight: 700 }}>
+                  <i className="bi bi-calendar-check me-2" style={{ color: '#16a34a' }} />
+                  Apply Leave
+                </h5>
+                <button className="btn-close" onClick={() => setLeaveModal(null)} />
+              </div>
+              <div className="modal-body" style={{ padding: '20px' }}>
+                <div className="mb-3">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type *</label>
+                  <select className="form-select" value={leaveModal.type}
+                    onChange={e => setLeaveModal(p => ({ ...p, type: e.target.value }))}>
+                    {['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'Compensatory Off', 'Loss of Pay'].map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="row g-3 mb-3">
+                  <div className="col-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>From *</label>
+                    <input className="form-control" type="date" value={leaveModal.from}
+                      onChange={e => setLeaveModal(p => ({ ...p, from: e.target.value }))} />
+                  </div>
+                  <div className="col-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>To *</label>
+                    <input className="form-control" type="date" value={leaveModal.to}
+                      onChange={e => setLeaveModal(p => ({ ...p, to: e.target.value }))} />
+                  </div>
+                </div>
+                <div className="mb-3">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason *</label>
+                  <textarea className="form-control" rows={3} value={leaveModal.reason}
+                    onChange={e => setLeaveModal(p => ({ ...p, reason: e.target.value }))}
+                    placeholder="Enter reason for leave" />
+                </div>
+              </div>
+              <div className="modal-footer" style={{ borderTop: '1px solid #f1f5f9', padding: '14px 20px' }}>
+                <button className="btn btn-outline-secondary" style={{ borderRadius: 8, fontSize: 13 }}
+                  onClick={() => setLeaveModal(null)}>Cancel</button>
+                <button className="btn btn-primary" style={{ borderRadius: 8, fontSize: 13, background: '#16a34a', border: 'none' }}
+                  disabled={savingLeave || !leaveModal.type || !leaveModal.from || !leaveModal.to || !leaveModal.reason.trim()}
+                  onClick={async () => {
+                    setSavingLeave(true);
+                    try {
+                      await api.post('/api/leave', { type: leaveModal.type, from: leaveModal.from, to: leaveModal.to, reason: leaveModal.reason.trim() });
+                      setLeaveModal(null);
+                      await reloadEvents();
+                    } catch (e) {
+                      console.error(e);
+                    } finally {
+                      setSavingLeave(false);
+                    }
+                  }}>
+                  {savingLeave ? <><span className="spinner-border spinner-border-sm me-2" />Applying...</> : 'Apply'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mark Holiday Modal */}
+      {holidayModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}>
+              <div className="modal-header" style={{ borderBottom: '1px solid #f1f5f9', padding: '16px 20px' }}>
+                <h5 className="modal-title" style={{ fontSize: 15, fontWeight: 700 }}>
+                  <i className="bi bi-balloon me-2" style={{ color: '#dc2626' }} />
+                  Mark Holiday
+                </h5>
+                <button className="btn-close" onClick={() => setHolidayModal(null)} />
+              </div>
+              <div className="modal-body" style={{ padding: '20px' }}>
+                <div className="mb-3">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Holiday Name *</label>
+                  <input className="form-control" value={holidayModal.name}
+                    onChange={e => setHolidayModal(p => ({ ...p, name: e.target.value }))}
+                    placeholder="Enter holiday name" />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date</label>
+                  <input className="form-control" type="date" value={holidayModal.date}
+                    onChange={e => setHolidayModal(p => ({ ...p, date: e.target.value }))} />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Type</label>
+                  <select className="form-select" value={holidayModal.type}
+                    onChange={e => setHolidayModal(p => ({ ...p, type: e.target.value }))}>
+                    {['National', 'Optional', 'Company'].map(t => <option key={t}>{t}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ borderTop: '1px solid #f1f5f9', padding: '14px 20px' }}>
+                <button className="btn btn-outline-secondary" style={{ borderRadius: 8, fontSize: 13 }}
+                  onClick={() => setHolidayModal(null)}>Cancel</button>
+                <button className="btn btn-primary" style={{ borderRadius: 8, fontSize: 13, background: '#dc2626', border: 'none' }}
+                  disabled={savingHoliday || !holidayModal.name.trim()}
+                  onClick={async () => {
+                    setSavingHoliday(true);
+                    try {
+                      await api.post('/api/settings', { type: 'holidays', name: holidayModal.name.trim(), date: holidayModal.date });
+                      setHolidayModal(null);
+                      await reloadEvents();
+                    } catch (e) {
+                      console.error(e);
+                    } finally {
+                      setSavingHoliday(false);
+                    }
+                  }}>
+                  {savingHoliday ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
+                </button>
               </div>
             </div>
           </div>

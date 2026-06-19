@@ -14,6 +14,8 @@ const GoalSchema = new mongoose.Schema({
 const ReviewSchema = new mongoose.Schema({
   userId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   cycle:        { type: String, required: true },
+  projectId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Project' },
+  taskId:       { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
   selfScore:    { type: Number },
   selfComment:  { type: String },
   peerScore:    { type: Number },
@@ -320,7 +322,8 @@ const TokenBlacklistSchema = new mongoose.Schema({
 // ── Exports ───────────────────────────────────────────────────────────────────
 if (mongoose.models.Goal) delete mongoose.models.Goal;
 export const Goal = mongoose.model('Goal', GoalSchema);
-export const Review      = mongoose.models.Review      || mongoose.model('Review', ReviewSchema);
+if (mongoose.models.Review) delete mongoose.models.Review;
+export const Review = mongoose.model('Review', ReviewSchema);
 export const Document    = mongoose.models.Document    || mongoose.model('Document', DocumentSchema);
 export const Announcement= mongoose.models.Announcement|| mongoose.model('Announcement', AnnouncementSchema);
 export const Absence     = mongoose.models.Absence     || mongoose.model('Absence', AbsenceSchema);

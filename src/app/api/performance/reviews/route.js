@@ -36,6 +36,8 @@ export async function GET(req) {
     const reviews = await Review.find(query)
       .populate('userId', 'name avatar department')
       .populate('managerBy', 'name')
+      .populate('projectId', 'name')
+      .populate('taskId', 'title')
       .sort({ createdAt: -1 });
     return ok({ reviews });
   } catch (e) {

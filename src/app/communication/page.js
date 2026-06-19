@@ -25,6 +25,10 @@ export default function CommunicationPage() {
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
+  const isTeamLeadOnly = user?.role === 'team_lead';
+  const audienceOptions = isTeamLeadOnly
+    ? ['My Team']
+    : ['Company-wide', 'Engineering', 'HR', 'Finance', 'Design', 'Marketing'];
 
   const load = async () => {
     setLoading(true);
@@ -42,6 +46,8 @@ export default function CommunicationPage() {
 
   const handlePost = async () => {
     if (!form.title || !form.body) return showToast('Title and body are required', 'error');
+    if (form.title.length > 40) return showToast('Title must be 40 characters or less', 'error');
+    if (!/[a-zA-Z]/.test(form.title)) return showToast('Title must contain at least one letter', 'error');
     setSaving(true);
     try {
       const tag = TAGS.find(t => t.label === form.tag);
@@ -71,7 +77,7 @@ export default function CommunicationPage() {
       <div className="page-header">
         <div><h4>Announcements & Notifications</h4><p>Company-wide and department-specific communications</p></div>
         {isAdmin && (
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+          <button className="btn btn-primary" onClick={() => { setForm(p => ({ ...p, audience: isTeamLeadOnly ? 'My Team' : 'Company-wide' })); setShowModal(true); }}>
             <i className="bi bi-megaphone me-2" />Post Announcement
           </button>
         )}
@@ -113,13 +119,13 @@ export default function CommunicationPage() {
             <div className="modal-content">
               <div className="modal-header"><h5 className="modal-title">Post Announcement</h5><button className="btn-close" onClick={() => setShowModal(false)} /></div>
               <div className="modal-body">
-                <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Title</label><input className="form-control" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} /></div>
+                <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Title</label><input className="form-control" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value.slice(0, 40) }))} maxLength={40} /><div style={{ fontSize: 11, color: form.title.length >= 35 ? '#dc2626' : '#94a3b8', textAlign: 'right', marginTop: 2 }}>{form.title.length}/40</div></div>
                 <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Message</label><textarea className="form-control" rows={4} value={form.body} onChange={e => setForm(p => ({ ...p, body: e.target.value }))} /></div>
                 <div className="row g-3">
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Audience</label>
-                    <select className="form-select" value={form.audience} onChange={e => setForm(p => ({ ...p, audience: e.target.value }))}>
-                      {['Company-wide', 'Engineering', 'HR', 'Finance', 'Design', 'Marketing'].map(a => <option key={a}>{a}</option>)}
+                    <select className="form-select" value={form.audience} onChange={e => setForm(p => ({ ...p, audience: e.target.value }))} disabled={isTeamLeadOnly}>
+                      {audienceOptions.map(a => <option key={a}>{a}</option>)}
                     </select>
                   </div>
                   <div className="col-6">

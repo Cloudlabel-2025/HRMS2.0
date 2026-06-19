@@ -75,7 +75,7 @@ function getCycleDateRange(payrollStartDay, payrollEndDay) {
 }
 
 const EMPTY_GOAL = { title: '', target: '', progress: 0, cycle: '', userId: '' };
-const EMPTY_REVIEW = { userId: '', cycle: '', selfScore: '', selfComment: '', peerScore: '', peerComment: '', managerScore: '', managerComment: '', status: 'pending' };
+const EMPTY_REVIEW = { userId: '', cycle: '', projectId: '', taskId: '', selfScore: '', selfComment: '', peerScore: '', peerComment: '', managerScore: '', managerComment: '', status: 'pending' };
 
 export default function PerformancePage() {
   const { user } = useAuth();
@@ -94,10 +94,14 @@ export default function PerformancePage() {
   const [editGoalForm, setEditGoalForm] = useState({ status: 'in_progress', progress: 0 });
   const [goalForm, setGoalForm] = useState(EMPTY_GOAL);
   const [reviewForm, setReviewForm] = useState(EMPTY_REVIEW);
+  const [reviewProjects, setReviewProjects] = useState([]);
+  const [reviewTasks, setReviewTasks] = useState([]);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [payrollStartDay, setPayrollStartDay] = useState(26);
   const [payrollEndDay, setPayrollEndDay] = useState(25);
+  const [departmentFilter, setDepartmentFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
@@ -192,23 +196,52 @@ export default function PerformancePage() {
 
   const saveReview = async () => {
     if (!reviewForm.userId || !reviewForm.cycle) return showToast('Employee and cycle required', 'error');
+    if (!reviewForm.projectId) return showToast('Project is required', 'error');
+    if (!reviewForm.selfScore || !reviewForm.peerScore || !reviewForm.managerScore) return showToast('All scores (Self, Peer, Manager) are required', 'error');
     setSaving(true);
     try {
       await api.post('/api/performance/reviews', {
         ...reviewForm,
-        selfScore: +reviewForm.selfScore || undefined,
-        peerScore: +reviewForm.peerScore || undefined,
-        managerScore: +reviewForm.managerScore || undefined,
+        selfScore: +reviewForm.selfScore,
+        peerScore: +reviewForm.peerScore,
+        managerScore: +reviewForm.managerScore,
       });
       showToast('Review submitted');
       setShowReviewModal(false);
       setReviewForm(EMPTY_REVIEW);
+      setReviewProjects([]);
+      setReviewTasks([]);
       load();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleReviewEmployeeChange = async (userId) => {
+    setReviewForm(p => ({ ...p, userId, projectId: '', taskId: '' }));
+    setReviewTasks([]);
+    if (!userId) { setReviewProjects([]); return; }
+    try {
+      const projects = await api.get('/api/projects');
+      const filtered = Array.isArray(projects)
+        ? projects.filter(p => p.team?.some(m => (m._id || m)?.toString() === userId))
+        : [];
+      setReviewProjects(filtered);
+    } catch { setReviewProjects([]); }
+  };
+
+  const handleReviewProjectChange = async (projectId) => {
+    setReviewForm(p => ({ ...p, projectId, taskId: '' }));
+    if (!projectId || !reviewForm.userId) { setReviewTasks([]); return; }
+    try {
+      const data = await api.get(`/api/tasks?projectId=${projectId}`);
+      const tasks = Array.isArray(data)
+        ? data.filter(t => (t.assignedTo?._id || t.assignedTo)?.toString() === reviewForm.userId)
+        : [];
+      setReviewTasks(tasks);
+    } catch { setReviewTasks([]); }
   };
 
   const selectEmployee = async (emp) => {
@@ -242,6 +275,18 @@ export default function PerformancePage() {
   const targetDateMin = minTargetDate < cycleRange.min ? cycleRange.min : minTargetDate;
   const targetDateMax = cycleRange.max;
 
+  const departments = [...new Set(employees.map(e => e.department).filter(Boolean))];
+  const filteredEmployees = employees.filter(e => {
+    const matchDept = !departmentFilter || e.department === departmentFilter;
+    const matchSearch = !searchQuery || e.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchDept && matchSearch;
+  });
+  const filteredReviews = reviews.filter(r => {
+    const matchSearch = !searchQuery || r.userId?.name?.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchDept = !departmentFilter || r.userId?.department === departmentFilter;
+    return matchSearch && matchDept;
+  });
+
   return (
     <AppShell title="Performance">
       {toast && <div className="toast-container-custom"><div className={`toast-custom ${toast.type}`}><i className={`bi ${toast.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'} me-2`} />{toast.msg}</div></div>}
@@ -250,7 +295,7 @@ export default function PerformancePage() {
         <div><h4>Performance Management</h4><p>Goals, KPIs, reviews, and appraisals</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-outline-primary" onClick={() => { setGoalForm(p => ({ ...p, cycle: getCurrentCycle(payrollStartDay) })); setShowGoalModal(true); }}><i className="bi bi-plus-lg me-2" />Set Goal</button>
-          {isAdmin && <button className="btn btn-primary" onClick={() => setShowReviewModal(true)}><i className="bi bi-plus-lg me-2" />Add Review</button>}
+          {isAdmin && <button className="btn btn-primary" onClick={() => { setReviewForm({ ...EMPTY_REVIEW, cycle: getCurrentCycle(payrollStartDay) }); setReviewProjects([]); setReviewTasks([]); setShowReviewModal(true); }}><i className="bi bi-plus-lg me-2" />Add Review</button>}
         </div>
       </div>
 
@@ -266,6 +311,19 @@ export default function PerformancePage() {
           </button>
         ))}
       </div>
+
+      {['employee-goals', 'reviews', 'analytics'].includes(tab) && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center' }}>
+          <select className="form-select" style={{ width: 200 }} value={departmentFilter} onChange={e => setDepartmentFilter(e.target.value)}>
+            <option value="">All Departments</option>
+            {departments.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <div style={{ position: 'relative', flex: 1, maxWidth: 300 }}>
+            <i className="bi bi-search" style={{ position: 'absolute', left: 10, top: 8, color: '#94a3b8', fontSize: 13 }} />
+            <input className="form-control" style={{ paddingLeft: 30 }} placeholder="Search employees..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
+          </div>
+        </div>
+      )}
 
       {loading ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
         <>
@@ -300,8 +358,8 @@ export default function PerformancePage() {
             <div>
               {!selectedEmployee ? (
                 <div className="row g-3">
-                  {employees.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></div>}
-                  {employees.map(emp => (
+                  {filteredEmployees.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></div>}
+                  {filteredEmployees.map(emp => (
                     <div key={emp._id} className="col-md-6">
                       <div className="card p-3" style={{ cursor: 'pointer' }} onClick={() => selectEmployee(emp)}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -361,11 +419,11 @@ export default function PerformancePage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Employee</th><th>Cycle</th><th>Self</th><th>Peer</th><th>Manager</th><th>Overall</th><th>Status</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Employee</th><th>Cycle</th><th>Project</th><th>Task</th><th>Self</th><th>Peer</th><th>Manager</th><th>Overall</th><th>Status</th><th>Action</th></tr></thead>
                   <tbody>
-                    {reviews.length === 0 ? (
-                      <tr><td colSpan={8}><div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No reviews yet</h6></div></td></tr>
-                    ) : reviews.map(r => (
+                    {filteredReviews.length === 0 ? (
+                      <tr><td colSpan={10}><div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No reviews yet</h6></div></td></tr>
+                    ) : filteredReviews.map(r => (
                       <tr key={r._id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -374,6 +432,8 @@ export default function PerformancePage() {
                           </div>
                         </td>
                         <td style={{ fontSize: 13 }}>{r.cycle}</td>
+                        <td style={{ fontSize: 12 }}>{r.projectId?.name || '—'}</td>
+                        <td style={{ fontSize: 12 }}>{r.taskId?.title || '—'}</td>
                         <td>{r.selfScore ? <StarRating value={r.selfScore} /> : '—'}</td>
                         <td>{r.peerScore ? <StarRating value={r.peerScore} /> : '—'}</td>
                         <td>{r.managerScore ? <StarRating value={r.managerScore} /> : '—'}</td>
@@ -391,10 +451,10 @@ export default function PerformancePage() {
           {tab === 'analytics' && isAdmin && (
             <div className="row g-3">
               {[
-                { label: 'Excellent (4.5+)', count: reviews.filter(r => r.overall >= 4.5).length, color: '#10b981' },
-                { label: 'Good (3.5–4.4)', count: reviews.filter(r => r.overall >= 3.5 && r.overall < 4.5).length, color: '#3b82f6' },
-                { label: 'Average (2.5–3.4)', count: reviews.filter(r => r.overall >= 2.5 && r.overall < 3.5).length, color: '#f59e0b' },
-                { label: 'Needs Improvement', count: reviews.filter(r => r.overall < 2.5).length, color: '#ef4444' },
+                { label: 'Excellent (4.5+)', count: filteredReviews.filter(r => r.overall >= 4.5).length, color: '#10b981' },
+                { label: 'Good (3.5–4.4)', count: filteredReviews.filter(r => r.overall >= 3.5 && r.overall < 4.5).length, color: '#3b82f6' },
+                { label: 'Average (2.5–3.4)', count: filteredReviews.filter(r => r.overall >= 2.5 && r.overall < 3.5).length, color: '#f59e0b' },
+                { label: 'Needs Improvement', count: filteredReviews.filter(r => r.overall < 2.5).length, color: '#ef4444' },
               ].map((s, i) => (
                 <div key={i} className="col-6 col-xl-3">
                   <div className="stat-card" style={{ textAlign: 'center' }}>
@@ -408,11 +468,13 @@ export default function PerformancePage() {
                   <div className="section-title mb-3">Team Performance Overview</div>
                   <div className="table-responsive">
                     <table className="table mb-0">
-                      <thead><tr><th>Employee</th><th>Overall Rating</th><th>Rating</th><th>Status</th></tr></thead>
+                      <thead><tr><th>Employee</th><th>Project</th><th>Task</th><th>Overall Rating</th><th>Rating</th><th>Status</th></tr></thead>
                       <tbody>
-                        {reviews.filter(r => r.overall).sort((a, b) => b.overall - a.overall).map(r => (
+                        {filteredReviews.filter(r => r.overall).sort((a, b) => b.overall - a.overall).map(r => (
                           <tr key={r._id}>
                             <td style={{ fontSize: 13, fontWeight: 600 }}>{r.userId?.name}</td>
+                            <td style={{ fontSize: 12 }}>{r.projectId?.name || '—'}</td>
+                            <td style={{ fontSize: 12 }}>{r.taskId?.title || '—'}</td>
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <div className="progress" style={{ flex: 1, height: 8 }}><div className="progress-bar" style={{ width: `${(r.overall / 5) * 100}%`, background: RATING_COLOR(r.overall) }} /></div>
@@ -440,6 +502,11 @@ export default function PerformancePage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
                 <h5 style={{ margin: 0 }}>360° Review — {showFeedback.userId?.name}</h5>
                 <button className="btn-close" onClick={() => setShowFeedback(null)} />
+              </div>
+              <div style={{ fontSize: 12, color: '#64748b', marginBottom: 16, display: 'flex', gap: 16 }}>
+                <span>Cycle: <strong>{showFeedback.cycle}</strong></span>
+                {showFeedback.projectId?.name && <span>Project: <strong>{showFeedback.projectId.name}</strong></span>}
+                {showFeedback.taskId?.title && <span>Task: <strong>{showFeedback.taskId.title}</strong></span>}
               </div>
               {[['Self Review', showFeedback.selfScore, showFeedback.selfComment],
                 ['Peer Review', showFeedback.peerScore, showFeedback.peerComment],
@@ -524,20 +591,24 @@ export default function PerformancePage() {
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content">
-              <div className="modal-header"><h5 className="modal-title">Add Review</h5><button className="btn-close" onClick={() => setShowReviewModal(false)} /></div>
+              <div className="modal-header"><h5 className="modal-title">Add Review</h5><button className="btn-close" onClick={() => { setShowReviewModal(false); setReviewForm(EMPTY_REVIEW); setReviewProjects([]); setReviewTasks([]); }} /></div>
               <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee *</label><select className="form-select" value={reviewForm.userId} onChange={e => setReviewForm(p => ({ ...p, userId: e.target.value }))}><option value="">Select</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle *</label><input className="form-control" placeholder="e.g. Q2 2025" value={reviewForm.cycle} onChange={e => setReviewForm(p => ({ ...p, cycle: e.target.value }))} /></div>
-                  {[['Self Score (1-5)', 'selfScore'], ['Peer Score (1-5)', 'peerScore'], ['Manager Score (1-5)', 'managerScore']].map(([label, key]) => (
-                    <div key={key} className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label><input type="number" min="1" max="5" step="0.1" className="form-control" value={reviewForm[key]} onChange={e => setReviewForm(p => ({ ...p, [key]: e.target.value }))} /></div>
+                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee *</label><select className="form-select" value={reviewForm.userId} onChange={e => handleReviewEmployeeChange(e.target.value)}><option value="">Select</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" value={reviewForm.cycle} disabled style={{ background: '#f1f5f9', cursor: 'not-allowed' }} /></div>
+                  {reviewForm.userId && reviewProjects.length > 0 && <>
+                    <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project *</label><select className="form-select" value={reviewForm.projectId} onChange={e => handleReviewProjectChange(e.target.value)}><option value="">Select</option>{reviewProjects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}</select></div>
+                    {reviewForm.projectId && <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task</label><select className="form-select" value={reviewForm.taskId} onChange={e => setReviewForm(p => ({ ...p, taskId: e.target.value }))}><option value="">Select</option>{reviewTasks.map(t => <option key={t._id} value={t._id}>{t.title}</option>)}</select></div>}
+                  </>}
+                  {[['Self Score *', 'selfScore'], ['Peer Score *', 'peerScore'], ['Manager Score *', 'managerScore']].map(([label, key]) => (
+                    <div key={key} className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label><select className="form-select" value={reviewForm[key]} onChange={e => setReviewForm(p => ({ ...p, [key]: e.target.value }))}><option value="">Select</option>{[0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5].map(v => <option key={v} value={v}>{v}</option>)}</select></div>
                   ))}
                   <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Manager Comment</label><textarea className="form-control" rows={2} value={reviewForm.managerComment} onChange={e => setReviewForm(p => ({ ...p, managerComment: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status</label><select className="form-select" value={reviewForm.status} onChange={e => setReviewForm(p => ({ ...p, status: e.target.value }))}>{['pending', 'in_review', 'completed', 'improvement_plan'].map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select></div>
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowReviewModal(false)}>Cancel</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowReviewModal(false); setReviewForm(EMPTY_REVIEW); setReviewProjects([]); setReviewTasks([]); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={saveReview} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Submit Review'}</button>
               </div>
             </div>
