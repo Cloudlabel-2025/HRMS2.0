@@ -55,7 +55,17 @@ export async function GET(req) {
         : { assignedTo: user._id, status: { $in: ['To Do', 'In Progress'] } }
     ),
     AuditLog.find().sort({ createdAt: -1 }).limit(5).populate('userId', 'name'),
-    Announcement.find().sort({ createdAt: -1 }).limit(3),
+    Announcement.find(
+      isAdminRole
+        ? {}
+        : {
+            $or: [
+              { audience: 'Company-wide' },
+              ...(user.department ? [{ audience: user.department }] : []),
+              ...(teamIds ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
+            ],
+          }
+    ).sort({ createdAt: -1 }).limit(3),
   ]);
 
   const myLeaveBalance = isSelfRole

@@ -21,6 +21,7 @@ export default function CommunicationPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [departments, setDepartments] = useState([]);
   const [toast, setToast] = useState(null);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
@@ -28,7 +29,7 @@ export default function CommunicationPage() {
   const isTeamLeadOnly = user?.role === 'team_lead';
   const audienceOptions = isTeamLeadOnly
     ? ['My Team']
-    : ['Company-wide', 'Engineering', 'HR', 'Finance', 'Design', 'Marketing'];
+    : ['Company-wide', ...departments];
 
   const load = async () => {
     setLoading(true);
@@ -42,7 +43,16 @@ export default function CommunicationPage() {
     }
   };
 
-  useEffect(() => { if (user) load(); }, [user]);
+  const loadDepartments = async () => {
+    try {
+      const data = await api.get('/api/settings?type=departments');
+      setDepartments(Array.isArray(data) ? data.map(d => d.name) : []);
+    } catch (e) {
+      console.warn('Failed to load departments:', e);
+    }
+  };
+
+  useEffect(() => { if (user) { load(); if (isAdmin) loadDepartments(); } }, [user]);
 
   const handlePost = async () => {
     if (!form.title || !form.body) return showToast('Title and body are required', 'error');

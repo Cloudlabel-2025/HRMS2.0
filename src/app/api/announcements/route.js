@@ -11,7 +11,7 @@ export async function GET(req) {
     await connectDB();
 
     let query = {};
-    if (!['super_admin', 'admin_full'].includes(user.role)) {
+    if (user.role !== 'super_admin') {
       const teamIds = [];
       if (user.role === 'team_lead' || user.role === 'team_admin') {
         const filter = user.role === 'team_lead' ? { teamLeadId: user._id } : { teamAdminId: user._id };
