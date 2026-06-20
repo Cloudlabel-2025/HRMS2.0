@@ -1,25 +1,35 @@
 import mongoose from 'mongoose';
 
 const SalaryStructureSchema = new mongoose.Schema({
-  userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  basic:      { type: Number, required: true },
-  hra:        { type: Number, default: 0 },
-  allowances: { type: Number, default: 0 },
-  pf:         { type: Number, default: 0 },
-  esi:        { type: Number, default: 0 },
-  tds:        { type: Number, default: 0 },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  // Earnings
+  da:      { type: Number, required: true },  // Dearness Allowance
+  hra:     { type: Number, required: true },  // House Rent Allowance
+  ca:      { type: Number, required: true },  // Conveyance Allowances
+  medical: { type: Number, required: true },  // Medical Allowances
+  bonus:   { type: Number, default: 0 },      // Bonus (optional)
+  // Deductions
+  epfo:            { type: Number, required: true },  // EPFO
+  esi:             { type: Number, required: true },  // ESI
+  professionalTax: { type: Number, default: 0 },  // Professional Tax
+  lop:             { type: Number, default: 0 },  // Loss of Pay
+  loan:            { type: Number, default: 0 },  // Loan
 }, { timestamps: true });
 
 const PayrollSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   month:      { type: String, required: true },   // 'YYYY-MM'
-  basic:      { type: Number },
+  da:         { type: Number },
   hra:        { type: Number },
-  allowances: { type: Number },
+  ca:         { type: Number },
+  medical:    { type: Number },
+  bonus:      { type: Number },
   grossPay:   { type: Number },
-  pf:         { type: Number },
-  esi:        { type: Number },
-  tds:        { type: Number },
+  epfo:            { type: Number },
+  esi:             { type: Number },
+  professionalTax: { type: Number },
+  lop:             { type: Number },
+  loan:            { type: Number },
   totalDeductions: { type: Number },
   netPay:     { type: Number },
   presentDays:{ type: Number },

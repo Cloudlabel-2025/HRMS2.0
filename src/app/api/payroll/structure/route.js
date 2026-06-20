@@ -36,9 +36,22 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
+    const data = {
+      userId: body.userId,
+      da:      +body.da || 0,
+      hra:     +body.hra || 0,
+      ca:      +body.ca || 0,
+      medical: +body.medical || 0,
+      bonus:   +body.bonus || 0,
+      epfo:            +body.epfo || 0,
+      esi:             +body.esi || 0,
+      professionalTax: +body.professionalTax || 0,
+      lop:             +body.lop || 0,
+      loan:            +body.loan || 0,
+    };
     const structure = await SalaryStructure.findOneAndUpdate(
       { userId: body.userId },
-      body,
+      data,
       { upsert: true, new: true, runValidators: true }
     );
     return ok(structure, 201);

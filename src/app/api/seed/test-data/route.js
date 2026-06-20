@@ -262,19 +262,24 @@ export async function POST(req) {
       });
 
       // ── 2f. Salary Structure ────────────────────────────────────────────
-      const basic = empDef.name === 'Karun' ? 35000 : 55000;
-      const hra = Math.round(basic * 0.4);
-      const allowances = Math.round(basic * 0.3);
-      const pf = Math.round(basic * 0.12);
-      const esi = basic <= 21000 ? Math.round(basic * 0.0075) : 0;
-      const tds = basic > 50000 ? Math.round(basic * 0.1) : 0;
+      const base = empDef.name === 'Karun' ? 35000 : 55000;
+      const da = Math.round(base * 0.15);
+      const hra = Math.round(base * 0.4);
+      const ca = Math.round(base * 0.1);
+      const medical = Math.round(base * 0.08);
+      const bonus = Math.round(base * 0.1);
+      const epfo = Math.round(base * 0.12);
+      const esi = base <= 21000 ? Math.round(base * 0.0075) : 0;
+      const professionalTax = base > 50000 ? 200 : 150;
+      const lop = 0;
+      const loan = 0;
 
       await SalaryStructure.create({
         userId: user._id,
-        basic, hra, allowances, pf, esi, tds,
+        da, hra, ca, medical, bonus, epfo, esi, professionalTax, lop, loan,
       });
 
-      createdUsers.push({ user, identity, profile, def: empDef, basic, hra, allowances, pf, esi, tds });
+      createdUsers.push({ user, identity, profile, def: empDef, da, hra, ca, medical, bonus, epfo, esi, professionalTax });
     }
 
     // ── 3. Projects ─────────────────────────────────────────────────────
@@ -478,19 +483,23 @@ export async function POST(req) {
 
     for (const u of createdUsers) {
       for (const monthStr of payMonths) {
-        const gross = u.basic + u.hra + u.allowances;
-        const totalDeductions = u.pf + u.esi + u.tds;
-        const net = gross - totalDeductions;
+        const totalEarnings = u.da + u.hra + u.ca + u.medical + u.bonus;
+        const totalDeductions = u.epfo + u.esi + u.professionalTax;
+        const net = totalEarnings - totalDeductions;
         await Payroll.create({
           userId: u.user._id,
           month: monthStr,
-          basic: u.basic,
+          da: u.da,
           hra: u.hra,
-          allowances: u.allowances,
-          grossPay: gross,
-          pf: u.pf,
+          ca: u.ca,
+          medical: u.medical,
+          bonus: u.bonus,
+          grossPay: totalEarnings,
+          epfo: u.epfo,
           esi: u.esi,
-          tds: u.tds,
+          professionalTax: u.professionalTax,
+          lop: 0,
+          loan: 0,
           totalDeductions,
           netPay: net,
           presentDays: randomInt(20, 24),

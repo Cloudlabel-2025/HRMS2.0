@@ -21,6 +21,7 @@ const TABS = [
   { key: 'departments',  label: 'Departments',  icon: 'bi-diagram-3' },
   { key: 'roles',        label: 'Roles',        icon: 'bi-person-badge' },
   { key: 'designations', label: 'Designations', icon: 'bi-briefcase' },
+  { key: 'categories',   label: 'Asset Categories', icon: 'bi-tag' },
   { key: 'shifts',       label: 'Shifts',       icon: 'bi-clock' },
   { key: 'holidays',     label: 'Holidays',     icon: 'bi-calendar3' },
   { key: 'notifications',label: 'Notifications',icon: 'bi-bell' },
@@ -66,6 +67,7 @@ export default function SettingsPage() {
   const [departments, setDepartments] = useState([]);
   const [roles, setRoles]           = useState([]);
   const [designations, setDesignations] = useState([]);
+  const [categories, setCategories]   = useState([]);
   const [shifts, setShifts]         = useState([]);
   const [holidays, setHolidays]     = useState([]);
   const [config, setConfig]         = useState({
@@ -111,19 +113,21 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [d, r, dg, s, h, c] = await Promise.all([
+      const [d, r, dg, cat, s, h, c] = await Promise.all([
         api.get('/api/settings?type=departments'),
         api.get('/api/settings?type=roles'),
         api.get('/api/settings?type=designations'),
+        api.get('/api/settings?type=categories'),
         api.get('/api/settings?type=shifts'),
         api.get('/api/settings?type=holidays'),
         api.get('/api/settings?type=config'),
       ]);
-      setDepartments(Array.isArray(d)  ? d  : []);
-      setRoles(Array.isArray(r)        ? r  : []);
-      setDesignations(Array.isArray(dg)? dg : []);
-      setShifts(Array.isArray(s)       ? s  : []);
-      setHolidays(Array.isArray(h)     ? h  : []);
+      setDepartments(Array.isArray(d)   ? d   : []);
+      setRoles(Array.isArray(r)         ? r   : []);
+      setDesignations(Array.isArray(dg) ? dg  : []);
+      setCategories(Array.isArray(cat)  ? cat : []);
+      setShifts(Array.isArray(s)        ? s   : []);
+      setHolidays(Array.isArray(h)      ? h   : []);
       if (Array.isArray(c)) {
         const gc = c.find(i => i.key === 'global_config');
         if (gc?.value) setConfig(p => ({
@@ -451,6 +455,15 @@ export default function SettingsPage() {
             id => deleteItem('designations', id)
           )}
 
+          {/* ASSET CATEGORIES */}
+          {tab === 'categories' && renderSimpleTable(
+            'categories', categories,
+            [{ key: 'name', label: 'Category Name', bold: true }, { key: 'description', label: 'Description' }],
+            () => { setModalForm({ name: '', description: '' }); setShowModal('category'); },
+            item => { setModalForm({ ...item }); setShowModal('category'); },
+            id => deleteItem('categories', id)
+          )}
+
           {/* SHIFTS */}
           {tab === 'shifts' && (
             <div className="card p-3 p-md-4">
@@ -669,6 +682,38 @@ export default function SettingsPage() {
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
                 <button className="btn btn-primary" onClick={() => saveItem('designations', modalForm)} disabled={saving}>
+                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CATEGORY MODAL */}
+      {showModal === 'category' && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">{modalForm._id ? 'Edit' : 'Add'} Asset Category</h5>
+                <button className="btn-close" onClick={() => setShowModal(null)} />
+              </div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Category Name *</label>
+                    <input className="form-control" placeholder="e.g. Laptop" value={modalForm.name || ''} onChange={e => setModalForm(p => ({ ...p, name: e.target.value }))} />
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description</label>
+                    <textarea className="form-control" rows={2} placeholder="Brief description" value={modalForm.description || ''} onChange={e => setModalForm(p => ({ ...p, description: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => saveItem('categories', modalForm)} disabled={saving}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
                 </button>
               </div>

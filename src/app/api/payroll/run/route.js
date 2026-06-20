@@ -61,17 +61,19 @@ export async function POST(req) {
         .filter(l => l.type !== 'Loss of Pay')
         .reduce((sum, l) => sum + l.days, 0);
 
-      const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
-      const lopDeduction = lopDays > 0 ? Math.round((structure.basic / workingDays) * lopDays) : 0;
-      const grossPay = structure.basic + structure.hra + structure.allowances - lopDeduction;
-      const totalDeductions = structure.pf + structure.esi + structure.tds;
+      const totalEarnings = structure.da + structure.hra + structure.ca + structure.medical + structure.bonus;
+      const lopDeduction = lopDays > 0 ? Math.round((totalEarnings / workingDays) * lopDays) : 0;
+      const grossPay = totalEarnings - lopDeduction;
+      const totalDeductions = structure.epfo + structure.esi + structure.professionalTax + structure.lop + structure.loan;
       const netPay = grossPay - totalDeductions;
 
       const payroll = await Payroll.findOneAndUpdate(
         { userId: emp._id, month },
         {
-          basic: structure.basic, hra: structure.hra, allowances: structure.allowances,
-          grossPay, pf: structure.pf, esi: structure.esi, tds: structure.tds,
+          da: structure.da, hra: structure.hra, ca: structure.ca, medical: structure.medical, bonus: structure.bonus,
+          grossPay,
+          epfo: structure.epfo, esi: structure.esi, professionalTax: structure.professionalTax,
+          lop: structure.lop, loan: structure.loan,
           totalDeductions, netPay, presentDays, lopDays, cycleLabel,
           status: 'draft', processedBy: user._id, processedAt: new Date(),
         },

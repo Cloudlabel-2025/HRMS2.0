@@ -264,6 +264,12 @@ const DesignationSchema = new mongoose.Schema({
   description: { type: String, default: '' },
 }, { timestamps: true });
 
+// ── Asset Category ────────────────────────────────────────────────────────────
+const AssetCategorySchema = new mongoose.Schema({
+  name:        { type: String, required: true, unique: true, trim: true },
+  description: { type: String, default: '' },
+}, { timestamps: true });
+
 // ── Notification ─────────────────────────────────────────────────────────────
 const NotificationSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -346,8 +352,9 @@ export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('System
 export const Settings    = mongoose.models.Settings    || mongoose.model('Settings', SettingsSchema);
 export const AttendanceRegularization = mongoose.models.AttendanceRegularization || mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
 export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('TokenBlacklist', TokenBlacklistSchema);
-export const Role        = mongoose.models.Role        || mongoose.model('Role', RoleSchema);
-export const Designation = mongoose.models.Designation || mongoose.model('Designation', DesignationSchema);
+export const Role          = mongoose.models.Role          || mongoose.model('Role', RoleSchema);
+export const Designation   = mongoose.models.Designation   || mongoose.model('Designation', DesignationSchema);
+export const AssetCategory = mongoose.models.AssetCategory || mongoose.model('AssetCategory', AssetCategorySchema);
 export const Notification= mongoose.models.Notification|| mongoose.model('Notification', NotificationSchema);
 
 // Re-import Leave model here to ensure the updated schema is always used
