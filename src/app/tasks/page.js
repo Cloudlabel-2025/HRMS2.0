@@ -320,22 +320,10 @@ export default function TasksPage() {
                           <span style={{ fontSize: 11, color: '#94a3b8' }}>Due {task.due || '—'}</span>
                         </div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                          {status === 'To Do' && (
-                            <button onClick={e => { e.stopPropagation(); moveTask(task._id, 'In Progress'); }}
-                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #3b82f640', background: '#3b82f610', color: '#3b82f6', cursor: 'pointer', fontWeight: 600 }}>
-                              Take
-                            </button>
-                          )}
-                          {status === 'In Progress' && (
-                            <button onClick={e => { e.stopPropagation(); moveTask(task._id, 'Completed'); }}
-                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: '1px solid #10b98140', background: '#10b98110', color: '#10b981', cursor: 'pointer', fontWeight: 600 }}>
-                              Complete
-                            </button>
-                          )}
-                          {isAdmin && STATUSES.filter(s => s !== status).map(s => (
+                          {STATUSES.filter(s => s !== status).filter(s => s !== 'Blocked' || isAdmin).map(s => (
                             <button key={s} onClick={e => { e.stopPropagation(); moveTask(task._id, s); }}
-                              style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, border: `1px solid ${STATUS_COLORS[s]}40`, background: STATUS_COLORS[s] + '10', color: STATUS_COLORS[s], cursor: 'pointer' }}>
-                              → {s}
+                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${STATUS_COLORS[s]}40`, background: STATUS_COLORS[s] + '10', color: STATUS_COLORS[s], cursor: 'pointer', fontWeight: 600 }}>
+                              {s}
                             </button>
                           ))}
                         </div>

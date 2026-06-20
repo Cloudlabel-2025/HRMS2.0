@@ -51,6 +51,7 @@ const AnnouncementSchema = new mongoose.Schema({
   tagColor: { type: String, default: '#3b82f6' },
   pinned:   { type: Boolean, default: false },
   likes:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  departments: [{ type: String }],
 }, { timestamps: true });
 
 // ── Absence ───────────────────────────────────────────────────────────────────
@@ -325,7 +326,8 @@ export const Goal = mongoose.model('Goal', GoalSchema);
 if (mongoose.models.Review) delete mongoose.models.Review;
 export const Review = mongoose.model('Review', ReviewSchema);
 export const Document    = mongoose.models.Document    || mongoose.model('Document', DocumentSchema);
-export const Announcement= mongoose.models.Announcement|| mongoose.model('Announcement', AnnouncementSchema);
+if (mongoose.models.Announcement) delete mongoose.models.Announcement;
+export const Announcement = mongoose.model('Announcement', AnnouncementSchema);
 export const Absence     = mongoose.models.Absence     || mongoose.model('Absence', AbsenceSchema);
 export const Asset       = mongoose.models.Asset       || mongoose.model('Asset', AssetSchema);
 export const Stock       = mongoose.models.Stock       || mongoose.model('Stock', StockSchema);

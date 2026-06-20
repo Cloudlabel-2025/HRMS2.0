@@ -61,6 +61,7 @@ export async function GET(req) {
         : {
             $or: [
               { audience: 'Company-wide' },
+              ...(user.department ? [{ departments: user.department }] : []),
               ...(user.department ? [{ audience: user.department }] : []),
               ...(teamIds ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
             ],

@@ -49,9 +49,8 @@ export default function CalendarPage() {
   const [payrollStartDay, setPayrollStartDay] = useState(26);
   const [payrollEndDay, setPayrollEndDay] = useState(25);
   const [holidayModal, setHolidayModal] = useState(null);
-  const [leaveModal, setLeaveModal] = useState(null);
   const [savingHoliday, setSavingHoliday] = useState(false);
-  const [savingLeave, setSavingLeave] = useState(false);
+  const [deletingEvent, setDeletingEvent] = useState(null);
   const gridRef = useRef(null);
 
   const reloadEvents = useCallback(async () => {
@@ -85,6 +84,7 @@ export default function CalendarPage() {
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
         all.push({
           id: `leave-${l._id}-${d.toISOString().slice(0,10)}`,
+          refId: l._id,
           title: `${l.userId?.name || 'Employee'} — ${l.type}`,
           subtitle: l.reason,
           date: d.toISOString().slice(0, 10),
@@ -107,6 +107,7 @@ export default function CalendarPage() {
     for (const h of (Array.isArray(holidays) ? holidays : [])) {
       all.push({
         id: `holiday-${h._id}`,
+        refId: h._id,
         title: h.name,
         subtitle: h.type,
         date: h.date,
@@ -154,6 +155,23 @@ export default function CalendarPage() {
     setEvents(all);
     return all;
   }, [currentDate, payrollStartDay, payrollEndDay]);
+
+  const handleDeleteEvent = async (ev) => {
+    if (!window.confirm(`Remove "${ev.title}" from ${ev.date}?`)) return;
+    setDeletingEvent(ev.id);
+    try {
+      if (ev.type === 'holiday') {
+        await api.delete('/api/settings', { type: 'holidays', id: ev.refId });
+      } else if (ev.type === 'leave') {
+        await api.delete(`/api/leave/${ev.refId}`);
+      }
+      await reloadEvents();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDeletingEvent(null);
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -436,30 +454,26 @@ export default function CalendarPage() {
                     {selectedEvents.length === 0 && <span style={{ fontSize: 12, color: '#94a3b8', fontWeight: 400, marginLeft: 8 }}>— No events</span>}
                   </div>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {['super_admin', 'admin_full'].includes(user?.role) && (
-                      <button className="btn btn-sm" style={{
-                        borderRadius: 8, padding: '4px 10px', fontSize: 12,
-                        border: '1px solid #fee2e2', color: '#dc2626', background: '#fff',
-                      }}
-                        onClick={() => {
-                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
-                          const d = new Date(year, month, selectedDay);
-                          const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
-                          setHolidayModal({ date: dateStr, name: dayName === 'Saturday' ? 'Saturday Holiday' : 'Holiday', type: 'Company' });
-                        }}>
-                        <i className="bi bi-balloon me-1" />Holiday
-                      </button>
-                    )}
-                    <button className="btn btn-sm" style={{
-                      borderRadius: 8, padding: '4px 10px', fontSize: 12,
-                      border: '1px solid #bbf7d0', color: '#16a34a', background: '#fff',
-                    }}
-                      onClick={() => {
-                        const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
-                        setLeaveModal({ from: dateStr, to: dateStr, type: 'Casual Leave', reason: '' });
-                      }}>
-                      <i className="bi bi-calendar-check me-1" />Leave
-                    </button>
+                    {(() => {
+                      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
+                      const d = new Date(year, month, selectedDay);
+                      const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
+                      const hasHoliday = events.some(e => e.date === dateStr && e.type === 'holiday');
+                      const isSunday = d.getDay() === 0;
+                      const isAltSaturday = isHolidaySaturday(year, month, selectedDay, payrollStartDay);
+                      const hideHolidayBtn = hasHoliday || isSunday || isAltSaturday;
+                      return ['super_admin', 'admin_full'].includes(user?.role) && !hideHolidayBtn && (
+                        <button className="btn btn-sm" style={{
+                          borderRadius: 8, padding: '4px 10px', fontSize: 12,
+                          border: '1px solid #fee2e2', color: '#dc2626', background: '#fff',
+                        }}
+                          onClick={() => {
+                            setHolidayModal({ date: dateStr, name: dayName === 'Saturday' ? 'Saturday Holiday' : 'Holiday', type: 'Company' });
+                          }}>
+                          <i className="bi bi-balloon me-1" />Holiday
+                        </button>
+                      );
+                    })()}
                     <button className="btn btn-sm btn-outline-secondary" style={{ borderRadius: 8, padding: '4px 10px', fontSize: 12 }}
                       onClick={() => setSelectedDay(null)}>
                       <i className="bi bi-x" />
@@ -497,6 +511,25 @@ export default function CalendarPage() {
                         background: TYPE_COLORS[ev.type]?.bg, color: TYPE_COLORS[ev.type]?.color,
                         fontSize: 10, fontWeight: 600, padding: '4px 10px', borderRadius: 20, flexShrink: 0,
                       }}>{TYPE_COLORS[ev.type]?.label}</span>
+                      {['super_admin', 'admin_full'].includes(user?.role) && (ev.type === 'holiday' || ev.type === 'leave') && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteEvent(ev); }}
+                          disabled={deletingEvent === ev.id}
+                          title={`Remove ${TYPE_COLORS[ev.type]?.label}`}
+                          style={{
+                            width: 28, height: 28, borderRadius: 8, border: 'none',
+                            background: deletingEvent === ev.id ? '#f1f5f9' : '#fee2e2',
+                            color: '#dc2626', cursor: 'pointer', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                            transition: 'all 0.15s',
+                          }}
+                          onMouseEnter={e => { if (deletingEvent !== ev.id) e.currentTarget.style.background = '#fecaca'; }}
+                          onMouseLeave={e => { if (deletingEvent !== ev.id) e.currentTarget.style.background = '#fee2e2'; }}>
+                          {deletingEvent === ev.id
+                            ? <span className="spinner-border spinner-border-sm" style={{ width: 12, height: 12 }} />
+                            : <i className="bi bi-x" style={{ fontSize: 14 }} />}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -564,70 +597,6 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* Mark Leave Modal */}
-      {leaveModal && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }}>
-            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}>
-              <div className="modal-header" style={{ borderBottom: '1px solid #f1f5f9', padding: '16px 20px' }}>
-                <h5 className="modal-title" style={{ fontSize: 15, fontWeight: 700 }}>
-                  <i className="bi bi-calendar-check me-2" style={{ color: '#16a34a' }} />
-                  Apply Leave
-                </h5>
-                <button className="btn-close" onClick={() => setLeaveModal(null)} />
-              </div>
-              <div className="modal-body" style={{ padding: '20px' }}>
-                <div className="mb-3">
-                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type *</label>
-                  <select className="form-select" value={leaveModal.type}
-                    onChange={e => setLeaveModal(p => ({ ...p, type: e.target.value }))}>
-                    {['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'Compensatory Off', 'Loss of Pay'].map(t => <option key={t}>{t}</option>)}
-                  </select>
-                </div>
-                <div className="row g-3 mb-3">
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>From *</label>
-                    <input className="form-control" type="date" value={leaveModal.from}
-                      onChange={e => setLeaveModal(p => ({ ...p, from: e.target.value }))} />
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>To *</label>
-                    <input className="form-control" type="date" value={leaveModal.to}
-                      onChange={e => setLeaveModal(p => ({ ...p, to: e.target.value }))} />
-                  </div>
-                </div>
-                <div className="mb-3">
-                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason *</label>
-                  <textarea className="form-control" rows={3} value={leaveModal.reason}
-                    onChange={e => setLeaveModal(p => ({ ...p, reason: e.target.value }))}
-                    placeholder="Enter reason for leave" />
-                </div>
-              </div>
-              <div className="modal-footer" style={{ borderTop: '1px solid #f1f5f9', padding: '14px 20px' }}>
-                <button className="btn btn-outline-secondary" style={{ borderRadius: 8, fontSize: 13 }}
-                  onClick={() => setLeaveModal(null)}>Cancel</button>
-                <button className="btn btn-primary" style={{ borderRadius: 8, fontSize: 13, background: '#16a34a', border: 'none' }}
-                  disabled={savingLeave || !leaveModal.type || !leaveModal.from || !leaveModal.to || !leaveModal.reason.trim()}
-                  onClick={async () => {
-                    setSavingLeave(true);
-                    try {
-                      await api.post('/api/leave', { type: leaveModal.type, from: leaveModal.from, to: leaveModal.to, reason: leaveModal.reason.trim() });
-                      setLeaveModal(null);
-                      await reloadEvents();
-                    } catch (e) {
-                      console.error(e);
-                    } finally {
-                      setSavingLeave(false);
-                    }
-                  }}>
-                  {savingLeave ? <><span className="spinner-border spinner-border-sm me-2" />Applying...</> : 'Apply'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Mark Holiday Modal */}
       {holidayModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
@@ -641,6 +610,12 @@ export default function CalendarPage() {
                 <button className="btn-close" onClick={() => setHolidayModal(null)} />
               </div>
               <div className="modal-body" style={{ padding: '20px' }}>
+                {(events.filter(e => e.date === holidayModal.date && e.type === 'leave').length > 0) && (
+                  <div className="alert alert-warning" style={{ fontSize: 12, padding: '8px 12px', borderRadius: 8 }}>
+                    <i className="bi bi-exclamation-triangle me-1" />
+                    This date has approved leave(s). Marking it as a holiday may be blocked by the system.
+                  </div>
+                )}
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Holiday Name *</label>
                   <input className="form-control" value={holidayModal.name}

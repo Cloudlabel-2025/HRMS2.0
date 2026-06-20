@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
 import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
-import { AuditLog, Shift } from '@/lib/models/index';
+import { AuditLog, Shift, Leave } from '@/lib/models/index';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
 import { LoginSchema, validateRequest } from '@/lib/validation';
 
@@ -95,6 +95,22 @@ export async function POST(req) {
 
     if (user.status !== 'active') {
       return handleFailure('Account is inactive', 403, 'medium', user._id);
+    }
+
+    // ── Leave-day gate — block login if employee is on approved leave today ─
+    const today = new Date();
+    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    const onLeave = await Leave.findOne({
+      userId: user._id,
+      status: 'approved',
+      from: { $lte: todayStr },
+      to:   { $gte: todayStr },
+    });
+    if (onLeave) {
+      return handleFailure(
+        `You are on approved leave today (${onLeave.type}). Please return on ${onLeave.to} to log in.`,
+        403, 'medium', user._id
+      );
     }
 
     // ── Join-date / hire-date early-access gate ────────────────────────────

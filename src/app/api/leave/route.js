@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Leave } from '@/lib/models/index';
+import { Leave, Holiday } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -102,6 +102,14 @@ export async function POST(req) {
     if (overlap) {
       auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
       return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+    }
+
+    const holidayOverlap = await Holiday.findOne({
+      date: { $gte: from, $lte: to },
+    });
+    if (holidayOverlap) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
+      return fail(`Cannot apply leave from ${from} to ${to} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${holidayOverlap.date}.`, 400);
     }
 
     const leave = await Leave.create({ userId: user._id, type, from, to, days, reason, status: 'pending' });

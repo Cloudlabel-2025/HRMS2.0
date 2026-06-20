@@ -14,16 +14,26 @@ export async function PUT(req, { params }) {
     const task = await Task.findById(id);
     if (!task) return fail('Task not found', 404);
 
-    // Employees/interns can only update status on their own tasks
-    if (['employee', 'intern'].includes(user.role)) {
-      if (task.assignedTo.toString() !== user._id.toString()) return fail('Access denied', 403);
+    const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_admin', 'team_lead'];
+
+    // Status-only update — any role can do this
+    if (Object.keys(body).length === 1 && body.status) {
+      // Employees/interns can only update their own tasks
+      if (['employee', 'intern'].includes(user.role)) {
+        if (task.assignedTo.toString() !== user._id.toString()) return fail('Access denied', 403);
+      }
+      // Only managers can block a task
+      if (body.status === 'Blocked' && !MANAGER_ROLES.includes(user.role)) {
+        return fail('Only team leads and admins can block a task', 403);
+      }
       const updated = await Task.findByIdAndUpdate(id, { status: body.status }, { new: true })
         .populate('assignedTo', 'name avatar').populate('projectId', 'name');
       auditLog('Task Status Updated', 'Tasks', user._id, `Updated task "${task.title}" status to ${body.status}`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
       return ok(updated);
     }
 
-    // Managers can update everything
+    // Full update — managers/admins only
+    if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
     if (!body.title || !body.description || !body.projectId || !body.assignedTo || !body.priority || !body.due) {
       return fail('All fields are required', 400);
     }

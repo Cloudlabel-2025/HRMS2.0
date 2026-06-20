@@ -10,7 +10,7 @@ const TAGS = [
   { label: 'HR', color: '#8b5cf6' }, { label: 'Policy', color: '#06b6d4' },
   { label: 'Team', color: '#10b981' }, { label: 'Payroll', color: '#f59e0b' },
 ];
-const EMPTY_FORM = { title: '', body: '', audience: 'Company-wide', tag: 'General', tagColor: '#3b82f6' };
+const EMPTY_FORM = { title: '', body: '', audience: 'Company-wide', selectedDepts: [], tag: 'General', tagColor: '#3b82f6' };
 
 export default function CommunicationPage() {
   const { user } = useAuth();
@@ -27,9 +27,6 @@ export default function CommunicationPage() {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
   const isTeamLeadOnly = user?.role === 'team_lead';
-  const audienceOptions = isTeamLeadOnly
-    ? ['My Team']
-    : ['Company-wide', ...departments];
 
   const load = async () => {
     setLoading(true);
@@ -61,7 +58,15 @@ export default function CommunicationPage() {
     setSaving(true);
     try {
       const tag = TAGS.find(t => t.label === form.tag);
-      await api.post('/api/announcements', { ...form, tagColor: tag?.color || '#3b82f6' });
+      const payload = {
+        title: form.title,
+        body: form.body,
+        audience: form.audience,
+        departments: form.selectedDepts,
+        tag: form.tag,
+        tagColor: tag?.color || '#3b82f6',
+      };
+      await api.post('/api/announcements', payload);
       showToast('Announcement posted');
       setShowModal(false);
       setForm(EMPTY_FORM);
@@ -87,7 +92,7 @@ export default function CommunicationPage() {
       <div className="page-header">
         <div><h4>Announcements & Notifications</h4><p>Company-wide and department-specific communications</p></div>
         {isAdmin && (
-          <button className="btn btn-primary" onClick={() => { setForm(p => ({ ...p, audience: isTeamLeadOnly ? 'My Team' : 'Company-wide' })); setShowModal(true); }}>
+          <button className="btn btn-primary" onClick={() => { setForm({ ...EMPTY_FORM, audience: isTeamLeadOnly ? 'My Team' : 'Company-wide' }); setShowModal(true); }}>
             <i className="bi bi-megaphone me-2" />Post Announcement
           </button>
         )}
@@ -106,7 +111,28 @@ export default function CommunicationPage() {
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 12, fontWeight: 700 }}>{a.author?.avatar || a.author?.name?.slice(0, 2).toUpperCase()}</div>
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 700 }}>{a.author?.name}</div>
-                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDate(a.createdAt)} · {a.audience}</div>
+                    <div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDate(a.createdAt)}</div>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                      {a.audience === 'Company-wide' ? (
+                        <span style={{ background: '#eff6ff', color: '#3b82f6', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: '1px solid #dbeafe' }}>
+                          <i className="bi bi-globe2 me-1" style={{ fontSize: 9 }} />Company-wide
+                        </span>
+                      ) : Array.isArray(a.departments) && a.departments.length > 0 ? (
+                        a.departments.map(d => (
+                          <span key={d} style={{ background: '#f0fdf4', color: '#16a34a', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4, border: '1px solid #bbf7d0' }}>
+                            {d}
+                          </span>
+                        ))
+                      ) : a.audience === 'My Team' ? (
+                        <span style={{ background: '#fef3c7', color: '#d97706', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 4, border: '1px solid #fde68a' }}>
+                          <i className="bi bi-people me-1" style={{ fontSize: 9 }} />My Team
+                        </span>
+                      ) : (
+                        <span style={{ background: '#f1f5f9', color: '#475569', fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 4 }}>
+                          {a.audience}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 <span className="badge" style={{ background: (a.tagColor || '#3b82f6') + '20', color: a.tagColor || '#3b82f6' }}>{a.tag}</span>
@@ -134,9 +160,52 @@ export default function CommunicationPage() {
                 <div className="row g-3">
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Audience</label>
-                    <select className="form-select" value={form.audience} onChange={e => setForm(p => ({ ...p, audience: e.target.value }))} disabled={isTeamLeadOnly}>
-                      {audienceOptions.map(a => <option key={a}>{a}</option>)}
-                    </select>
+                    {isTeamLeadOnly ? (
+                      <input className="form-control" value="My Team" disabled />
+                    ) : (
+                        <div>
+                        <button type="button" onClick={() => setForm(p => ({ ...p, audience: 'Company-wide', selectedDepts: [] }))}
+                          style={{
+                            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            border: form.audience === 'Company-wide' ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                            background: form.audience === 'Company-wide' ? '#eff6ff' : '#fff',
+                            color: form.audience === 'Company-wide' ? '#3b82f6' : '#64748b', marginBottom: 4,
+                          }}>
+                          <i className="bi bi-globe2 me-1" /> Company Wide
+                        </button>
+                        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 4 }}>
+                          {form.audience === 'Company-wide' ? 'Audience: Everyone' : `Audience: Specific departments`}
+                        </div>
+                        {form.selectedDepts.length > 0 && (
+                          <div style={{ fontSize: 11, color: '#3b82f6', fontWeight: 600, marginBottom: 4 }}>
+                            Selected: {form.selectedDepts.join(', ')}
+                          </div>
+                        )}
+                        {departments.length > 0 && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {departments.map(dept => {
+                              const selected = form.selectedDepts.includes(dept);
+                              return (
+                                <button key={dept} type="button" onClick={() => {
+                                  setForm(p => {
+                                    const next = selected ? p.selectedDepts.filter(d => d !== dept) : [...p.selectedDepts, dept];
+                                    return { ...p, selectedDepts: next, audience: next.length > 0 ? 'Departments' : 'Company-wide' };
+                                  });
+                                }}
+                                  style={{
+                                    padding: '4px 12px', borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                                    border: selected ? '2px solid #3b82f6' : '1px solid #e2e8f0',
+                                    background: selected ? '#eff6ff' : '#fff',
+                                    color: selected ? '#3b82f6' : '#64748b',
+                                  }}>
+                                  {dept}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Tag</label>

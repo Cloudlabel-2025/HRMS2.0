@@ -23,6 +23,7 @@ export async function GET(req) {
       query = {
         $or: [
           { audience: 'Company-wide' },
+          ...(user.department ? [{ departments: user.department }] : []),
           ...(user.department ? [{ audience: user.department }] : []),
           ...(teamIds.length > 0 ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
         ],
@@ -45,7 +46,7 @@ export async function POST(req) {
     if (!['super_admin','admin_full','team_admin','team_lead'].includes(user.role)) return fail('Access denied', 403);
     await connectDB();
     const body = await req.json();
-    if (user.role === 'team_lead') body.audience = 'My Team';
+    if (user.role === 'team_lead') { body.audience = 'My Team'; body.departments = []; }
     const announcement = await Announcement.create({ ...body, author: user._id });
     await announcement.populate('author', 'name avatar');
     return ok({ announcement }, 201);

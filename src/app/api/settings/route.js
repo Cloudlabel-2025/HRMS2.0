@@ -1,5 +1,5 @@
 import dbConnect from '@/lib/db';
-import { Department, Shift, Holiday, SystemConfig, Role, Designation } from '@/lib/models/index';
+import { Department, Shift, Holiday, SystemConfig, Role, Designation, Leave } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -107,6 +107,17 @@ export async function POST(req) {
   if (type === 'config') {
     const doc = await MODEL_MAP[type].findOneAndUpdate({ key: data.key }, { value: data.value }, { new: true, upsert: true });
     return ok(doc);
+  }
+
+  if (type === 'holidays') {
+    const conflict = await Leave.findOne({
+      status: 'approved',
+      from: { $lte: data.date },
+      to:   { $gte: data.date },
+    });
+    if (conflict) {
+      return fail(`Cannot mark holiday on ${data.date} — an approved leave (${conflict.type}) already exists for this date`, 400);
+    }
   }
 
   const doc = await MODEL_MAP[type].create(data);
