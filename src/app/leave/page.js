@@ -50,6 +50,7 @@ export default function LeavePage() {
   const isAdmin     = ['super_admin', 'admin_full'].includes(user?.role);
   const isTeamLead  = user?.role === 'team_lead';
   const isTeamAdmin = user?.role === 'team_admin';
+  const isSme       = user?.role === 'sme';
   const canApprove  = isAdmin || isTeamLead || isTeamAdmin;
 
   const load = async (scope) => {
@@ -167,7 +168,7 @@ export default function LeavePage() {
         </div>
       )}
 
-      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && (
+      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && !isSme && (
         <div className="row g-3 mb-4">
           {balanceSummary.map((b, i) => {
             const avail = b.total - b.used;
@@ -195,9 +196,9 @@ export default function LeavePage() {
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
         {[
-          { key: 'my',        label: isSuperAdmin ? 'Employee Leaves' : 'My Leaves' },
-          ...(canApprove ? [{ key: 'approvals', label: 'Pending Approvals' }] : []),
-          ...(isAdmin    ? [{ key: 'all',       label: 'All Leaves' }]        : []),
+          { key: 'my', label: isSuperAdmin ? 'Employee Leaves' : 'My Leaves' },
+          ...(canApprove && !isSme ? [{ key: 'approvals', label: 'Pending Approvals' }] : []),
+          ...(isAdmin && !isSme    ? [{ key: 'all',       label: 'All Leaves' }]        : []),
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t.key ? '#fff' : 'transparent', color: tab === t.key ? '#1e293b' : '#64748b', boxShadow: tab === t.key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
@@ -263,18 +264,21 @@ export default function LeavePage() {
                 <table className="table mb-0">
                   <thead>
                     <tr>
-                      {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && <th>Employee</th>}
+                      {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && !isSme && <th>Employee</th>}
                       <th>Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th>
-                      <th>Admin</th><th>Team Admin</th><th>Team Lead</th><th>Status</th>
+                      {!isSme && <th>Admin</th>}
+                      {!isSme && <th>Team Admin</th>}
+                      {!isSme && <th>Team Lead</th>}
+                      <th>Status</th>
                       {tab === 'approvals' && <th>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={11}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
+                      <tr><td colSpan={isSme ? 6 : 11}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
                     ) : filtered.map(l => (
                       <tr key={l._id} style={hasObjection(l) ? { background: '#fff7ed' } : {}}>
-                        {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && (
+                        {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && !isSme && (
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700 }}>
@@ -292,15 +296,19 @@ export default function LeavePage() {
                         <td style={{ fontSize: 13 }}>{l.to}</td>
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
-                        <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
-                        <td>
-                          <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
-                          {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
-                        </td>
-                        <td>
-                          <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
-                          {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
-                        </td>
+                        {!isSme && <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>}
+                        {!isSme && (
+                          <td>
+                            <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
+                            {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
+                          </td>
+                        )}
+                        {!isSme && (
+                          <td>
+                            <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
+                            {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
+                          </td>
+                        )}
                         <td><span className="badge" style={{ background: STATUS_STYLE[l.status]?.bg, color: STATUS_STYLE[l.status]?.color }}>{l.status}</span></td>
                         {tab === 'approvals' && (
                           <td>
@@ -394,7 +402,10 @@ export default function LeavePage() {
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
                   <i className="bi bi-info-circle me-2 text-primary" />
-                  Approval flow: <strong>Admin</strong> approves first → Team Admin &amp; Team Lead are notified for any objection. Silence = no objection.
+                  {isSme
+                    ? 'Your leave will be reviewed by the Super Admin. You will be notified once a decision is made.'
+                    : 'Approval flow: <strong>Admin</strong> approves first → Team Admin &amp; Team Lead are notified for any objection. Silence = no objection.'
+                  }
                 </div>
               </div>
               <div className="modal-footer">

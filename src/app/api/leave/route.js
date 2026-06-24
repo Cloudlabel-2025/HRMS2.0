@@ -13,12 +13,18 @@ export async function GET(req) {
     await connectDB();
 
     const { searchParams } = new URL(req.url);
-    const scope  = searchParams.get('scope');
-    const status = searchParams.get('status');
+    const scope    = searchParams.get('scope');
+    const status   = searchParams.get('status');
     const userIdParam = searchParams.get('userId');
+    const smeOnly  = searchParams.get('smeOnly');
     const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
 
     let query = {};
+
+    if (smeOnly === 'true') {
+      if (!isAdmin) return fail('Access denied', 403);
+      query.smeId = { $ne: null };
+    }
 
     if (scope === 'all') {
       if (!isAdmin) return fail('Access denied', 403);
@@ -87,6 +93,18 @@ export async function POST(req) {
       return fail('Interns can only apply for Casual or Sick Leave', 400);
     }
 
+    let smeId = null;
+    if (user.role === 'sme') {
+      const { SME } = await import('@/lib/models/index');
+      const sme = await SME.findOne({ userId: user._id });
+      if (!sme) return fail('SME profile not found', 404);
+      if (sme.status !== 'active') return fail('Your account is inactive. Contact admin.', 400);
+      if (sme.contractEnd && new Date(to) > new Date(sme.contractEnd)) {
+        return fail(`Cannot apply leave beyond contract end date (${new Date(sme.contractEnd).toLocaleDateString()})`, 400);
+      }
+      smeId = sme._id;
+    }
+
     const existing = await Leave.findOne({ userId: user._id, status: 'pending' });
     if (existing) {
       auditLog('Leave Apply Failed', 'Leave', user._id, 'Already has a pending leave application', 'low', ip, null, user._id);
@@ -112,7 +130,7 @@ export async function POST(req) {
       return fail(`Cannot apply leave from ${from} to ${to} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${holidayOverlap.date}.`, 400);
     }
 
-    const leave = await Leave.create({ userId: user._id, type, from, to, days, reason, status: 'pending' });
+    const leave = await Leave.create({ userId: user._id, type, from, to, days, reason, status: 'pending', smeId });
 
     const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] } }).select('_id');
     if (admins.length) {

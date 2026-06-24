@@ -5,15 +5,16 @@ export const ROLES = [
   'super_admin',
   'admin_full',
   'recruiter',
-  'team_admin',
   'team_lead',
+  'team_admin',
   'employee',
   'intern',
+  'sme',
 ];
 
 // Roles that can approve / manage others
 export const ADMIN_ROLES  = ['super_admin', 'admin_full'];
-export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_admin', 'team_lead'];
+export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_admin'];
 
 const UserSchema = new mongoose.Schema({
   name:         { type: String, required: true, trim: true },

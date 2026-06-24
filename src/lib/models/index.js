@@ -142,16 +142,29 @@ const AuditLogSchema = new mongoose.Schema({
   ip:            { type: String, default: '' },
 }, { timestamps: true });
 
-// ── SME ───────────────────────────────────────────────────────────────────────
+// ── SME (Subject Matter Expert) ────────────────────────────────────────────────
 const SMESchema = new mongoose.Schema({
   name:           { type: String, required: true },
-  contact:        { type: String },
-  plan:           { type: String, enum: ['Basic','Pro','Enterprise'], default: 'Basic' },
-  status:         { type: String, enum: ['active','trial','inactive'], default: 'trial' },
-  saturdayConfig: { type: String, enum: ['all','alternate','none'], default: 'alternate' },
-  payrollStart:   { type: Number, default: 1 },
-  attendanceStart:{ type: Number, default: 1 },
-  defaultShift:   { type: String, default: 'Morning (9AM-6PM)' },
+  email:          { type: String, required: true, unique: true, lowercase: true, trim: true },
+  phone:          { type: String, default: '' },
+  dob:            { type: Date },
+  pan:            { type: String, default: '' },
+  expertise:      [{ type: String }],
+  departments:    [{ type: String }],
+  accountDetails: {
+    bankName:      { type: String, default: '' },
+    accountNumber: { type: String, default: '' },
+    ifscCode:      { type: String, default: '' },
+    accountHolder: { type: String, default: '' },
+  },
+  rate: {
+    amount:        { type: Number, default: 0 },
+    type:          { type: String, enum: ['hourly', 'daily', 'fixed'], default: 'hourly' },
+  },
+  contractStart:  { type: Date },
+  contractEnd:    { type: Date },
+  status:         { type: String, enum: ['active', 'inactive'], default: 'active' },
+  userId:         { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 
 // ── Recruitment ───────────────────────────────────────────────────────────────
@@ -310,6 +323,10 @@ const SettingsSchema = new mongoose.Schema({
   value: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
+const SmeExpertiseSchema = new mongoose.Schema({
+  name: { type: String, required: true, unique: true, trim: true },
+}, { timestamps: true });
+
 // Re-export models from separate files
 export { Task, Project } from './Task';
 export { Payroll, SalaryStructure } from './Payroll';
@@ -342,6 +359,7 @@ export const Expense     = mongoose.models.Expense     || mongoose.model('Expens
 export const Budget      = mongoose.models.Budget      || mongoose.model('Budget', BudgetSchema);
 export const AuditLog    = mongoose.models.AuditLog    || mongoose.model('AuditLog', AuditLogSchema);
 export const Employee    = mongoose.models.Employee    || mongoose.model('Employee', EmployeeSchema);
+if (process.env.NODE_ENV === 'development' && mongoose.models.SME) { delete mongoose.models.SME; }
 export const SME         = mongoose.models.SME         || mongoose.model('SME', SMESchema);
 export const JobPosting   = mongoose.models.Job         || mongoose.model('Job', JobSchema);
 export const Applicant   = mongoose.models.Applicant   || mongoose.model('Applicant', ApplicantSchema);
@@ -356,6 +374,7 @@ export const Role          = mongoose.models.Role          || mongoose.model('Ro
 export const Designation   = mongoose.models.Designation   || mongoose.model('Designation', DesignationSchema);
 export const AssetCategory = mongoose.models.AssetCategory || mongoose.model('AssetCategory', AssetCategorySchema);
 export const Notification= mongoose.models.Notification|| mongoose.model('Notification', NotificationSchema);
+export const SmeExpertise= mongoose.models.SmeExpertise|| mongoose.model('SmeExpertise', SmeExpertiseSchema);
 
 // Re-import Leave model here to ensure the updated schema is always used
 export { default as Leave } from './Leave';

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import AppShell from '@/components/AppShell';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -23,6 +24,7 @@ const EMPTY_FORM = {
 
 export default function SelfServicePage() {
   const { user } = useAuth();
+  const router = useRouter();
   const { formatDate } = useSettings();
   const [identity, setIdentity] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -109,6 +111,13 @@ export default function SelfServicePage() {
   const load = async () => {
     setLoading(true);
     try {
+      if (user?.role === 'sme') {
+        const res = await api.get('/api/sme/me');
+        if (res?.sme?._id) {
+          router.replace(`/sme/${res.sme._id}`);
+          return;
+        }
+      }
       const res = await api.get('/api/self-service/me');
       setIdentity(res.identity || null);
       setProfile(res.profile || null);

@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getToken, useAuth } from '@/lib/auth';
 import Sidebar from './Sidebar';
@@ -48,7 +48,7 @@ export default function AppShell({ title, children }) {
     }, IDLE_TIMEOUT_MS);
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!loading && !user) router.replace('/login');
   }, [user, loading, router]);
 

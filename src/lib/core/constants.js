@@ -1,6 +1,6 @@
 export const CORE_HR_ADMIN_ROLES = ['super_admin', 'admin_full', 'recruiter'];
 export const CORE_HR_WRITE_ROLES = ['super_admin', 'admin_full'];
-export const CORE_HR_MANAGER_ROLES = ['super_admin', 'admin_full', 'team_admin', 'team_lead'];
+export const CORE_HR_MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_admin'];
 
 export const IDENTITY_STATUSES = ['active', 'inactive', 'archived'];
 export const GENDER_VALUES = ['male', 'female', 'transgender', 'non_binary', 'prefer_not_to_say'];
