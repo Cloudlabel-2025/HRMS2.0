@@ -25,7 +25,8 @@ export default function PayrollPage() {
   const [running, setRunning] = useState(false);
   const [showSlip, setShowSlip] = useState(null);
   const [showStructureModal, setShowStructureModal] = useState(false);
-  const [structureForm, setStructureForm] = useState({ userId: '', basic: '', hra: '', allowances: '', pf: '', esi: '', tds: '' });
+  const [structureForm, setStructureForm] = useState({ userId: '', grossLPA: '' });
+  const strVal = (v) => v === '' || v === undefined || v === null ? '' : String(v);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
@@ -103,16 +104,18 @@ export default function PayrollPage() {
       <div style='display:flex;gap:12px'>
         <div class='box' style='flex:1'>
           <div style='font-weight:700;font-size:13px;color:#10b981;margin-bottom:10px'>EARNINGS</div>
-          <div class='row'><span style='color:#64748b'>Basic</span><span>${fmt(slip.basic)}</span></div>
+          <div class='row'><span style='color:#64748b'>Monthly Gross</span><span>${fmt(slip.monthlyGross)}</span></div>
+          <div class='row'><span style='color:#64748b'>Basic Pay</span><span>${fmt(slip.basicPay)}</span></div>
           <div class='row'><span style='color:#64748b'>HRA</span><span>${fmt(slip.hra)}</span></div>
-          <div class='row'><span style='color:#64748b'>Allowances</span><span>${fmt(slip.allowances)}</span></div>
-          <div class='row gross'><span>Gross Pay</span><span>${fmt(slip.grossPay)}</span></div>
+          <div class='row'><span style='color:#64748b'>Dearness Allowance</span><span>${fmt(slip.dearnessAllowance)}</span></div>
+          <div class='row'><span style='color:#64748b'>Conveyance Allowance</span><span>${fmt(slip.conveyanceAllowance)}</span></div>
+          <div class='row'><span style='color:#64748b'>Medical Allowance</span><span>${fmt(slip.medicalAllowance)}</span></div>
         </div>
         <div class='box' style='flex:1'>
           <div style='font-weight:700;font-size:13px;color:#ef4444;margin-bottom:10px'>DEDUCTIONS</div>
           <div class='row ded'><span>PF</span><span>${fmt(slip.pf)}</span></div>
           <div class='row ded'><span>ESI</span><span>${fmt(slip.esi)}</span></div>
-          <div class='row ded'><span>TDS</span><span>${fmt(slip.tds)}</span></div>
+          <div class='row ded'><span>Loss of Pay</span><span>${fmt(slip.lossOfPay)}</span></div>
           <div class='row ded'><span>Total Deductions</span><span>${fmt(slip.totalDeductions)}</span></div>
         </div>
       </div>
@@ -125,14 +128,12 @@ export default function PayrollPage() {
   };
 
   const saveStructure = async () => {
-    if (!structureForm.userId || !structureForm.basic) return showToast('Employee and basic salary required', 'error');
+    if (!structureForm.userId || !structureForm.grossLPA) return showToast('Employee and gross LPA required', 'error');
     setSaving(true);
     try {
       await api.post('/api/payroll/structure', {
-        ...structureForm,
-        basic: +structureForm.basic, hra: +structureForm.hra || 0,
-        allowances: +structureForm.allowances || 0, pf: +structureForm.pf || 0,
-        esi: +structureForm.esi || 0, tds: +structureForm.tds || 0,
+        userId: structureForm.userId,
+        grossLPA: +structureForm.grossLPA,
       });
       showToast('Salary structure saved');
       setShowStructureModal(false);
@@ -163,11 +164,11 @@ export default function PayrollPage() {
 
       <div className="page-header">
         <div><h4>Payroll Management</h4><p>Salary processing, payslips, and statutory deductions</p></div>
-        {isAdmin && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <select className="form-select" style={{ width: 160, fontSize: 13 }} value={month} onChange={e => setMonth(e.target.value)}>
-              {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <select className="form-select" style={{ width: 160, fontSize: 13 }} value={month} onChange={e => setMonth(e.target.value)}>
+            {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          {isAdmin && <>
             <button className="btn btn-outline-primary" onClick={() => approvePayroll('approve')}>
               <i className="bi bi-check-circle me-2" />Approve
             </button>
@@ -178,8 +179,8 @@ export default function PayrollPage() {
               {running ? <><span className="spinner-border spinner-border-sm me-2" />Running...</> : <><i className="bi bi-play-circle me-2" />Run Payroll</>}
             </button>
             {!cycleReady && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 12, padding: '6px 12px', borderRadius: 8, alignSelf: 'center' }}><i className="bi bi-exclamation-triangle me-1" />Cycle not ended</span>}
-          </div>
-        )}
+          </>}
+        </div>
       </div>
 
       {isAdmin && (
@@ -224,10 +225,10 @@ export default function PayrollPage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Employee</th><th>Basic</th><th>HRA</th><th>Allowances</th><th>Gross</th><th>PF</th><th>ESI</th><th>TDS</th><th>LOP</th><th>Net Pay</th><th>Status</th><th>Payslip</th></tr></thead>
+                  <thead><tr><th>Employee</th><th>Monthly Gross</th><th>Basic</th><th>HRA</th><th>DA</th><th>CA</th><th>MA</th><th>PF</th><th>ESI</th><th>LOP (₹)</th><th>Net Pay</th><th>Status</th><th>Payslip</th></tr></thead>
                   <tbody>
                     {payrolls.length === 0 ? (
-                      <tr><td colSpan={12}><div className="empty-state"><i className="bi bi-cash-stack" /><h6>No payroll records for {month}. Run payroll to generate.</h6></div></td></tr>
+                      <tr><td colSpan={13}><div className="empty-state"><i className="bi bi-cash-stack" /><h6>No payroll records for {month}. Run payroll to generate.</h6></div></td></tr>
                     ) : payrolls.map(p => (
                       <tr key={p._id}>
                         <td>
@@ -236,9 +237,8 @@ export default function PayrollPage() {
                             <div><div style={{ fontSize: 13, fontWeight: 600 }}>{p.userId?.name}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{p.userId?.department}</div></div>
                           </div>
                         </td>
-                        {[p.basic, p.hra, p.allowances, p.grossPay].map((v, i) => <td key={i} style={{ fontSize: 13 }}>{fmt(v)}</td>)}
-                        {[p.pf, p.esi, p.tds].map((v, i) => <td key={i} style={{ fontSize: 13, color: '#ef4444' }}>{fmt(v)}</td>)}
-                        <td style={{ fontSize: 13, color: '#f59e0b' }}>{p.lopDays || 0}d</td>
+                        {[p.monthlyGross, p.basicPay, p.hra, p.dearnessAllowance, p.conveyanceAllowance, p.medicalAllowance].map((v, i) => <td key={i} style={{ fontSize: 13 }}>{fmt(v)}</td>)}
+                        {[p.pf, p.esi, p.lossOfPay].map((v, i) => <td key={i} style={{ fontSize: 13, color: '#ef4444' }}>{fmt(v)}</td>)}
                         <td style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>{fmt(p.netPay)}</td>
                         <td><span className={`badge ${p.status === 'finalized' ? 'status-approved' : p.status === 'approved' ? 'status-approved' : p.status === 'draft' ? 'status-pending' : 'status-pending'}`} style={p.status === 'draft' ? { background: '#dbeafe', color: '#2563eb' } : p.status === 'approved' ? { background: '#fef3c7', color: '#d97706' } : {}}>{p.status}</span></td>
                         <td>
@@ -278,16 +278,15 @@ export default function PayrollPage() {
                       <div className="col-6">
                         <div style={{ background: '#f8fafc', borderRadius: 10, padding: 16 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: '#10b981' }}>EARNINGS</div>
-                          {[['Basic Salary', mySlip.basic], ['HRA', mySlip.hra], ['Allowances', mySlip.allowances]].map(([l, v]) => (
+                          {[['Monthly Gross', mySlip.monthlyGross], ['Basic Pay', mySlip.basicPay], ['HRA', mySlip.hra], ['Dearness Allowance', mySlip.dearnessAllowance], ['Conveyance Allowance', mySlip.conveyanceAllowance], ['Medical Allowance', mySlip.medicalAllowance]].map(([l, v]) => (
                             <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}><span style={{ color: '#64748b' }}>{l}</span><span style={{ fontWeight: 600 }}>{fmt(v)}</span></div>
                           ))}
-                          <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Gross</span><span style={{ color: '#10b981' }}>{fmt(mySlip.grossPay)}</span></div>
                         </div>
                       </div>
                       <div className="col-6">
                         <div style={{ background: '#f8fafc', borderRadius: 10, padding: 16 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12, color: '#ef4444' }}>DEDUCTIONS</div>
-                          {[['Provident Fund', mySlip.pf], ['ESI', mySlip.esi], ['TDS', mySlip.tds], ['LOP', mySlip.lopDays ? Math.round((mySlip.basic / 26) * mySlip.lopDays) : 0]].map(([l, v]) => (
+                          {[['Provident Fund', mySlip.pf], ['ESI', mySlip.esi], ['Loss of Pay', mySlip.lossOfPay]].map(([l, v]) => (
                             <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 8 }}><span style={{ color: '#64748b' }}>{l}</span><span style={{ fontWeight: 600, color: '#ef4444' }}>{fmt(v)}</span></div>
                           ))}
                           <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: 8, display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}><span>Total</span><span style={{ color: '#ef4444' }}>{fmt(mySlip.totalDeductions)}</span></div>
@@ -315,27 +314,30 @@ export default function PayrollPage() {
             <div className="card">
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Salary Structures</span>
-                <button className="btn btn-primary btn-sm" onClick={() => { setStructureForm({ userId: '', basic: '', hra: '', allowances: '', pf: '', esi: '', tds: '' }); setShowStructureModal(true); }}><i className="bi bi-plus-lg me-1" />Add Structure</button>
+                <button className="btn btn-primary btn-sm" onClick={() => { setStructureForm({ userId: '', grossLPA: '' }); setShowStructureModal(true); }}><i className="bi bi-plus-lg me-1" />Add Structure</button>
               </div>
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Employee</th><th>Basic</th><th>HRA</th><th>Allowances</th><th>PF</th><th>ESI</th><th>TDS</th><th>CTC/yr</th><th>Edit</th></tr></thead>
+                  <thead><tr><th>Employee</th><th>Gross LPA (₹)</th><th>Monthly Gross</th><th>Basic 50%</th><th>HRA 20%</th><th>DA 15%</th><th>CA 10%</th><th>MA 5%</th><th>Edit</th></tr></thead>
                   <tbody>
                     {structures.length === 0 ? (
                       <tr><td colSpan={9}><div className="empty-state"><i className="bi bi-diagram-3" /><h6>No salary structures defined</h6></div></td></tr>
-                    ) : structures.map ? structures.map(s => (
+                    ) : structures.map ? structures.map(s => {
+                      const mg = s.grossLPA / 12;
+                      return (
                       <tr key={s._id}>
                         <td style={{ fontSize: 13, fontWeight: 600 }}>{s.userId?.name || '—'}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(s.basic)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(s.hra)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(s.allowances)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(s.pf)}</td>
-                        <td style={{ fontSize: 13 }}>{s.esi > 0 ? fmt(s.esi) : 'N/A'}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(s.tds)}</td>
-                        <td style={{ fontSize: 13, fontWeight: 700 }}>{fmt((s.basic + s.hra + s.allowances) * 12)}</td>
-                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setStructureForm({ userId: s.userId?._id || '', basic: s.basic, hra: s.hra, allowances: s.allowances, pf: s.pf, esi: s.esi, tds: s.tds }); setShowStructureModal(true); }}><i className="bi bi-pencil" /></button></td>
+                        <td style={{ fontSize: 13, fontWeight: 700 }}>{fmt(s.grossLPA)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.5)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.2)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.15)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.10)}</td>
+                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.05)}</td>
+                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setStructureForm({ userId: s.userId?._id || '', grossLPA: String(s.grossLPA) }); setShowStructureModal(true); }}><i className="bi bi-pencil" /></button></td>
                       </tr>
-                    )) : null}
+                      );
+                    }) : null}
                   </tbody>
                 </table>
               </div>
@@ -359,11 +361,10 @@ export default function PayrollPage() {
                   <button className="btn-close" onClick={() => setShowSlip(null)} />
                 </div>
               </div>
-              {[['Basic', showSlip.basic], ['HRA', showSlip.hra], ['Allowances', showSlip.allowances]].map(([l, v]) => (
+              {[['Monthly Gross', showSlip.monthlyGross], ['Basic Pay', showSlip.basicPay], ['HRA', showSlip.hra], ['DA', showSlip.dearnessAllowance], ['CA', showSlip.conveyanceAllowance], ['MA', showSlip.medicalAllowance]].map(([l, v]) => (
                 <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', fontSize: 13 }}><span style={{ color: '#64748b' }}>{l}</span><span>{fmt(v)}</span></div>
               ))}
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', fontWeight: 700, color: '#10b981', fontSize: 13 }}><span>Gross</span><span>{fmt(showSlip.grossPay)}</span></div>
-              {[['PF', showSlip.pf], ['ESI', showSlip.esi], ['TDS', showSlip.tds]].map(([l, v]) => (
+              {[['PF', showSlip.pf], ['ESI', showSlip.esi], ['LOP', showSlip.lossOfPay]].map(([l, v]) => (
                 <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', color: '#ef4444', fontSize: 13 }}><span>{l}</span><span>-{fmt(v)}</span></div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', fontWeight: 800, fontSize: 16 }}><span>Net Pay</span><span style={{ color: '#3b82f6' }}>{fmt(showSlip.netPay)}</span></div>
@@ -393,12 +394,28 @@ export default function PayrollPage() {
                       </select>
                     )}
                   </div>
-                  {[['Basic Salary', 'basic'], ['HRA', 'hra'], ['Allowances', 'allowances'], ['PF', 'pf'], ['ESI', 'esi'], ['TDS', 'tds']].map(([label, key]) => (
-                    <div key={key} className="col-6">
-                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label>
-                      <input type="number" className="form-control" value={structureForm[key]} onChange={e => setStructureForm(p => ({ ...p, [key]: e.target.value }))} />
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Gross LPA (₹)</label>
+                    <input type="number" className="form-control" value={strVal(structureForm.grossLPA)} onChange={e => setStructureForm(p => ({ ...p, grossLPA: e.target.value }))} placeholder="e.g. 180000" />
+                  </div>
+                  {structureForm.grossLPA > 0 && (
+                    <div className="col-12" style={{ background: '#f8fafc', borderRadius: 8, padding: 12, marginTop: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', marginBottom: 8 }}>MONTHLY BREAKDOWN (Auto-computed)</div>
+                      {(() => { const m = +structureForm.grossLPA / 12; return [
+                        ['Monthly Gross', m],
+                        ['Basic (50%)', m * 0.5],
+                        ['HRA (20%)', m * 0.2],
+                        ['DA (15%)', m * 0.15],
+                        ['CA (10%)', m * 0.1],
+                        ['MA (5%)', m * 0.05],
+                      ].map(([l, v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '2px 0' }}>
+                          <span style={{ color: '#64748b' }}>{l}</span>
+                          <span style={{ fontWeight: 600 }}>₹{Number(v).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</span>
+                        </div>
+                      )) })()}
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
               <div className="modal-footer">

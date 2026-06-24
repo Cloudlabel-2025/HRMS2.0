@@ -1,30 +1,37 @@
 import mongoose from 'mongoose';
 
 const SalaryStructureSchema = new mongoose.Schema({
-  userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  basic:      { type: Number, required: true },
-  hra:        { type: Number, default: 0 },
-  allowances: { type: Number, default: 0 },
-  pf:         { type: Number, default: 0 },
-  esi:        { type: Number, default: 0 },
-  tds:        { type: Number, default: 0 },
+  userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  grossLPA:{ type: Number, required: true },
 }, { timestamps: true });
 
 const PayrollSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  month:      { type: String, required: true },   // 'YYYY-MM'
-  basic:      { type: Number },
+  month:      { type: String, required: true },
+
+  // Earnings breakdown
+  monthlyGross:{ type: Number },
+  basicPay:   { type: Number },
   hra:        { type: Number },
-  allowances: { type: Number },
-  grossPay:   { type: Number },
+  dearnessAllowance:   { type: Number },
+  conveyanceAllowance: { type: Number },
+  medicalAllowance:    { type: Number },
+
+  // Deductions
   pf:         { type: Number },
   esi:        { type: Number },
-  tds:        { type: Number },
+  lossOfPay:  { type: Number, default: 0 },
+
+  // Totals
   totalDeductions: { type: Number },
   netPay:     { type: Number },
+
+  // Attendance
   presentDays:{ type: Number },
-  cycleLabel:{ type: String },
   lopDays:    { type: Number, default: 0 },
+
+  // meta
+  cycleLabel:{ type: String },
   status:     { type: String, enum: ['pending','draft','approved','finalized'], default: 'pending' },
   processedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   processedAt:{ type: Date, default: null },

@@ -12,7 +12,6 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get('userId');
 
-    // Admin with no userId param → return all structures
     if (!userId && ['super_admin', 'admin_full'].includes(user.role)) {
       const all = await SalaryStructure.find()
         .populate('userId', 'name avatar department designation');
@@ -36,9 +35,11 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
+    if (!body.grossLPA || body.grossLPA <= 0) return fail('grossLPA is required and must be positive', 400);
+
     const structure = await SalaryStructure.findOneAndUpdate(
       { userId: body.userId },
-      body,
+      { userId: body.userId, grossLPA: body.grossLPA },
       { upsert: true, new: true, runValidators: true }
     );
     return ok(structure, 201);

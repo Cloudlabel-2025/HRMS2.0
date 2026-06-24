@@ -2,7 +2,8 @@ import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { getGlobalConfig, getPayrollDay, getCycleRange, countWorkingDays, getCycleLabel } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleRange, countWorkingDays, getCycleLabel, getCycleCalendarStats } from '@/lib/payroll-cycle';
+import { calculatePayroll } from '@/lib/payroll-calculator';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -33,6 +34,8 @@ export async function POST(req) {
     const workingDays = await countWorkingDays(fromDate, toDate, config);
     const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
 
+    const calendarStats = getCycleCalendarStats(fromDate, toDate);
+
     const employees = await User.find({ status: 'active' });
     const results = [];
 
@@ -62,18 +65,35 @@ export async function POST(req) {
         .reduce((sum, l) => sum + l.days, 0);
 
       const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
-      const lopDeduction = lopDays > 0 ? Math.round((structure.basic / workingDays) * lopDays) : 0;
-      const grossPay = structure.basic + structure.hra + structure.allowances - lopDeduction;
-      const totalDeductions = structure.pf + structure.esi + structure.tds;
-      const netPay = grossPay - totalDeductions;
+
+      const result = calculatePayroll({
+        grossLPA: structure.grossLPA,
+        totalDaysInMonth: calendarStats.totalDays,
+        sundaysInMonth: calendarStats.sundays,
+        alternateSaturdaysInMonth: calendarStats.alternateSaturdays,
+        unpaidLeavesTaken: lopDays,
+      });
 
       const payroll = await Payroll.findOneAndUpdate(
         { userId: emp._id, month },
         {
-          basic: structure.basic, hra: structure.hra, allowances: structure.allowances,
-          grossPay, pf: structure.pf, esi: structure.esi, tds: structure.tds,
-          totalDeductions, netPay, presentDays, lopDays, cycleLabel,
-          status: 'draft', processedBy: user._id, processedAt: new Date(),
+          monthlyGross: result.earnings.monthlyGross,
+          basicPay: result.earnings.basicPay,
+          hra: result.earnings.hra,
+          dearnessAllowance: result.earnings.dearnessAllowance,
+          conveyanceAllowance: result.earnings.conveyanceAllowance,
+          medicalAllowance: result.earnings.medicalAllowance,
+          pf: result.deductions.employeePF,
+          esi: result.deductions.employeeESI,
+          lossOfPay: result.deductions.lossOfPayDeduction,
+          totalDeductions: result.deductions.totalDeductions,
+          netPay: result.netTakeHome,
+          presentDays,
+          lopDays,
+          cycleLabel,
+          status: 'draft',
+          processedBy: user._id,
+          processedAt: new Date(),
         },
         { upsert: true, new: true }
       );
