@@ -233,6 +233,8 @@ export default function TasksPage() {
   };
 
   const filtered = tasks.filter(t => !filterProject || t.projectId?._id === filterProject || t.projectId === filterProject);
+  const userProjectIds = [...new Set(tasks.map(t => t.projectId?._id || t.projectId).filter(Boolean))];
+  const visibleProjects = projects.filter(p => userProjectIds.includes(p._id));
 
   const selectedProjectDepts = selectedProjectObj?.departments || [];
   const assignableEmployees = selectedProjectDepts.length > 0
@@ -275,11 +277,11 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {tab !== 'projects' && projects.length > 0 && (
+      {tab !== 'projects' && visibleProjects.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <select className="form-select" style={{ width: 220, fontSize: 13 }} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
             <option value="">All Projects</option>
-            {projects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
+            {visibleProjects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
           </select>
         </div>
       )}

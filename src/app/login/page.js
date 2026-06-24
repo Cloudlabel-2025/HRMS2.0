@@ -1,12 +1,11 @@
 'use client';
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useLayoutEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginPage() {
-  const router = useRouter();
-  const { login } = useAuth();
+  const { login, logout, user, loading: authLoading } = useAuth();
+  const justLoggedIn = useRef(false);
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -18,6 +17,16 @@ export default function LoginPage() {
   const [lateLogoutReason, setLateLogoutReason] = useState('');
   const [submittingReason, setSubmittingReason] = useState(false);
   const [reasonError, setReasonError] = useState('');
+
+  useLayoutEffect(() => {
+    if (!authLoading && user && !justLoggedIn.current) {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('hrms_token')}` },
+      }).catch(() => {});
+      logout();
+    }
+  }, [user, authLoading, logout]);
 
   const submitLateLogoutReason = async (e) => {
     e.preventDefault();
@@ -50,7 +59,8 @@ export default function LoginPage() {
     }
     setSubmittingReason(false);
     setShowLateLogoutModal(false);
-    router.push('/dashboard');
+    justLoggedIn.current = true;
+    window.location.replace('/dashboard');
   };
 
   const handleSubmit = async (e) => {
@@ -60,13 +70,14 @@ export default function LoginPage() {
     const result = await login(form.email, form.password);
     setLoading(false);
     if (result.success) {
+      justLoggedIn.current = true;
       if (result.needsLateLogoutReason && result.lateLogoutDate) {
         setLateLogoutDate(result.lateLogoutDate);
         setShowLateLogoutModal(true);
       } else if (result.isFirstLogin) {
-        router.push('/login/setup-password');
+        window.location.replace('/login/setup-password');
       } else {
-        router.push('/dashboard');
+        window.location.replace('/dashboard');
       }
     } else {
       setError(result.error);

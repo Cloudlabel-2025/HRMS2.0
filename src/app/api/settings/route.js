@@ -1,16 +1,17 @@
 import dbConnect from '@/lib/db';
-import { Department, Shift, Holiday, SystemConfig, Role, Designation, AssetCategory, Leave } from '@/lib/models/index';
+import { Department, Shift, Holiday, SystemConfig, Role, Designation, AssetCategory, Leave, SmeExpertise } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
 const MODEL_MAP = {
-  departments:  Department,
-  shifts:       Shift,
-  holidays:     Holiday,
-  config:       SystemConfig,
-  roles:        Role,
-  designations: Designation,
-  categories:   AssetCategory,
+  departments:        Department,
+  shifts:             Shift,
+  holidays:           Holiday,
+  config:             SystemConfig,
+  roles:              Role,
+  designations:       Designation,
+  categories:         AssetCategory,
+  sme_expertise:      SmeExpertise,
 };
 
 const ADMIN_ROLES = ['super_admin', 'admin_full'];
@@ -23,6 +24,7 @@ const FIELD_ALLOWLIST = {
   roles:        ['name', 'description'],
   designations: ['name', 'department', 'description'],
   categories:   ['name', 'description'],
+  sme_expertise:['name'],
 };
 
 function requireSettingsAdmin(user) {
@@ -83,6 +85,11 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
 
   if (type === 'categories') {
     if (!isUpdate && !data.name?.trim()) return { error: fail('Category name is required', 400) };
+    if (data.name !== undefined) data.name = data.name.trim();
+  }
+
+  if (type === 'sme_expertise') {
+    if (!isUpdate && !data.name?.trim()) return { error: fail('Expertise name is required', 400) };
     if (data.name !== undefined) data.name = data.name.trim();
   }
 

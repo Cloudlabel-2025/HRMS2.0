@@ -25,7 +25,7 @@ const NAV_ITEMS = [
   { module: 'communication', href: '/communication', icon: 'bi-megaphone',             label: 'Announcements', section: 'HR' },
   { module: 'calendar',      href: '/calendar',      icon: 'bi-calendar3',             label: 'Calendar',      section: 'HR' },
   { module: 'reports',       href: '/reports',       icon: 'bi-file-earmark-bar-graph',label: 'Reports',       section: 'ANALYTICS' },
-  { module: 'sme',           href: '/sme',           icon: 'bi-building',              label: 'SME Portal',    section: 'ANALYTICS' },
+  { module: 'sme',           href: '/sme',           icon: 'bi-person-gear',           label: 'SME Portal',    section: 'ANALYTICS' },
   { module: 'settings',      href: '/settings',      icon: 'bi-gear',                  label: 'Settings',      section: 'SYSTEM' },
   { module: 'audit',         href: '/audit',         icon: 'bi-shield-check',          label: 'Audit Logs',    section: 'SYSTEM' },
 ];

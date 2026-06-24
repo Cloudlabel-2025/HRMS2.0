@@ -59,6 +59,24 @@ export async function PUT(req, { params }) {
     const applicantId   = leave.userId._id || leave.userId;
     const applicantName = leave.userId.name || 'Employee';
 
+    // ── SME Leave: simple admin approval, skip multi-level chain ──
+    if (leave.smeId) {
+      if (!isAdmin) return fail('Access denied', 403);
+      leave.adminApproval   = action;
+      leave.adminApprovedBy = user._id;
+      leave.adminApprovedAt = new Date();
+      if (action === 'held') return fail('Hold is not supported for SME leaves', 400);
+      leave.status = action === 'approved' ? 'approved' : 'rejected';
+      if (action === 'rejected') {
+        await notify(applicantId, 'Leave Rejected', `Your leave request (${leave.from} to ${leave.to}) has been rejected.`, 'leave', leave._id);
+      } else {
+        await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
+      }
+      await leave.save();
+      await auditLog(`Leave ${action}`, 'Leave', user._id, `${action} SME leave for ${leave.days} days (${leave.from} to ${leave.to})`, action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, applicantId);
+      return ok(leave);
+    }
+
     if (isAdmin) {
       if (leave.adminApproval !== 'pending' && !hasObjection) {
         return fail('You have already actioned this leave', 400);
