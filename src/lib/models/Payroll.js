@@ -1,40 +1,37 @@
 import mongoose from 'mongoose';
 
 const SalaryStructureSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-  // Earnings
-  da:      { type: Number, required: true },  // Dearness Allowance
-  hra:     { type: Number, required: true },  // House Rent Allowance
-  ca:      { type: Number, required: true },  // Conveyance Allowances
-  medical: { type: Number, required: true },  // Medical Allowances
-  bonus:   { type: Number, default: 0 },      // Bonus (optional)
-  // Deductions
-  epfo:            { type: Number, required: true },  // EPFO
-  esi:             { type: Number, required: true },  // ESI
-  professionalTax: { type: Number, default: 0 },  // Professional Tax
-  lop:             { type: Number, default: 0 },  // Loss of Pay
-  loan:            { type: Number, default: 0 },  // Loan
+  userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
+  grossLPA:{ type: Number, required: true },
 }, { timestamps: true });
 
 const PayrollSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  month:      { type: String, required: true },   // 'YYYY-MM'
-  da:         { type: Number },
+  month:      { type: String, required: true },
+
+  // Earnings breakdown
+  monthlyGross:{ type: Number },
+  basicPay:   { type: Number },
   hra:        { type: Number },
-  ca:         { type: Number },
-  medical:    { type: Number },
-  bonus:      { type: Number },
-  grossPay:   { type: Number },
-  epfo:            { type: Number },
-  esi:             { type: Number },
-  professionalTax: { type: Number },
-  lop:             { type: Number },
-  loan:            { type: Number },
+  dearnessAllowance:   { type: Number },
+  conveyanceAllowance: { type: Number },
+  medicalAllowance:    { type: Number },
+
+  // Deductions
+  pf:         { type: Number },
+  esi:        { type: Number },
+  lossOfPay:  { type: Number, default: 0 },
+
+  // Totals
   totalDeductions: { type: Number },
   netPay:     { type: Number },
+
+  // Attendance
   presentDays:{ type: Number },
-  cycleLabel:{ type: String },
   lopDays:    { type: Number, default: 0 },
+
+  // meta
+  cycleLabel:{ type: String },
   status:     { type: String, enum: ['pending','draft','approved','finalized'], default: 'pending' },
   processedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   processedAt:{ type: Date, default: null },

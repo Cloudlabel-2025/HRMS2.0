@@ -8,6 +8,7 @@ import { Payroll, SalaryStructure, Project, Task } from '@/lib/models';
 import { Goal, Review, Document, Announcement, Asset, AuditLog, Absence, Notification, Department, Shift, Holiday, Settings, EmpLifecycleHistory, SelfServiceRequest, Employee, AttendanceRegularization } from '@/lib/models';
 import { ok, fail } from '@/lib/jwt';
 import bcrypt from 'bcryptjs';
+import { calculatePayroll } from '@/lib/payroll-calculator';
 
 function getSubmittedSetupToken(req, body = {}) {
   return req.headers.get('x-setup-token') || body.setupToken || '';
@@ -46,32 +47,32 @@ const WP_STATUSES = ['pending', 'work_in_progress', 'completed', 'task_blocked',
 const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Compensatory Leave'];
 
 const TASK_TEMPLATES = [
-  'Implement user authentication module',
-  'Design dashboard wireframes',
-  'Write unit tests for API endpoints',
-  'Refactor database queries for performance',
-  'Create API documentation',
-  'Fix UI responsiveness issues',
-  'Integrate payment gateway',
-  'Set up CI/CD pipeline',
-  'Conduct code review for PR #42',
-  'Update dependency versions',
-  'Migrate legacy data to new schema',
-  'Build notification service',
-  'Optimize image loading',
-  'Create onboarding guide',
-  'Implement search functionality',
-  'Add export to CSV feature',
-  'Fix login redirect bug',
-  'Design email templates',
-  'Create backup strategy document',
-  'Set up monitoring dashboards',
+  'AuthModule',
+  'DashboardWireframes',
+  'UnitTestsAPI',
+  'RefactorDBQueries',
+  'APIDocs',
+  'FixUIResponsiveness',
+  'PaymentGateway',
+  'CICDPipeline',
+  'CodeReviewPR42',
+  'UpdateDeps',
+  'MigrateLegacyData',
+  'NotificationService',
+  'OptimizeImages',
+  'OnboardingGuide',
+  'SearchFeature',
+  'ExportCSV',
+  'FixLoginRedirect',
+  'EmailTemplates',
+  'BackupStrategy',
+  'MonitoringDashboards',
 ];
 
 const PROJECT_TEMPLATES = [
-  { name: 'HR Portal Redesign', desc: 'Complete redesign of the internal HR portal with modern UI and improved UX' },
-  { name: 'Payroll System Upgrade', desc: 'Upgrade payroll processing system to support new tax regulations' },
-  { name: 'Employee Mobile App', desc: 'Build a mobile application for employees to manage attendance, leaves, and tasks' },
+  { name: 'PortalRedesign', desc: 'Complete redesign of the internal HR portal with modern UI and improved UX' },
+  { name: 'PayrollUpgrade', desc: 'Upgrade payroll processing system to support new tax regulations' },
+  { name: 'MobileApp', desc: 'Build a mobile application for employees to manage attendance, leaves, and tasks' },
 ];
 
 const WP_TASK_TEMPLATES = [
@@ -114,7 +115,7 @@ export async function POST(req) {
     if (existing) return fail('Test data already seeded. Drop the collection first.', 409);
 
     // ── 1. Settings: Department, Shift, Holidays ─────────────────────────
-    await Department.findOneAndUpdate({ name: 'Engineering' }, { name: 'Engineering', head: 'Super Admin', members: 2 }, { upsert: true });
+    await Department.findOneAndUpdate({ name: 'Engineering' }, { name: 'Engineering', head: 'Super Admin', members: 3 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Design' }, { name: 'Design', head: 'Super Admin', members: 0 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Marketing' }, { name: 'Marketing', head: 'Super Admin', members: 0 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Sales' }, { name: 'Sales', head: 'Super Admin', members: 0 }, { upsert: true });
@@ -153,6 +154,16 @@ export async function POST(req) {
         address: { line1: '456 Tech Hub', city: 'Bangalore', state: 'Karnataka', postalCode: '560002', country: 'India' },
         emergency: { name: 'Jagadeesh Wife', relation: 'Spouse', phone: '9988776644' },
         hireDate: new Date('2023-03-15'),
+      },
+      {
+        name: 'Ravi', email: 'ravi@hrms.com', password: 'Test@123456',
+        role: 'employee', department: 'Engineering', designation: 'Junior Software Engineer',
+        phone: '9876543212', shift: 'Morning (9AM-6PM)', skills: ['JavaScript','React','CSS','HTML'],
+        empNumber: 'CHC-2026-0008', leaveBalance: 24,
+        identity: { legalName: 'Ravi Kumar', preferredName: 'Ravi', bloodGroup: 'A+', gender: 'male', nationality: 'Indian', maritalStatus: 'single' },
+        address: { line1: '789 Test Street', city: 'Bangalore', state: 'Karnataka', postalCode: '560003', country: 'India' },
+        emergency: { name: 'Ravi Father', relation: 'Father', phone: '9988776633' },
+        hireDate: new Date('2025-01-15'),
       },
     ];
 
@@ -262,34 +273,27 @@ export async function POST(req) {
       });
 
       // ── 2f. Salary Structure ────────────────────────────────────────────
-      const base = empDef.name === 'Karun' ? 35000 : 55000;
-      const da = Math.round(base * 0.15);
-      const hra = Math.round(base * 0.4);
-      const ca = Math.round(base * 0.1);
-      const medical = Math.round(base * 0.08);
-      const bonus = Math.round(base * 0.1);
-      const epfo = Math.round(base * 0.12);
-      const esi = base <= 21000 ? Math.round(base * 0.0075) : 0;
-      const professionalTax = base > 50000 ? 200 : 150;
-      const lop = 0;
-      const loan = 0;
+      const grossLPA = empDef.name === 'Karun' ? 420000 : empDef.name === 'Ravi' ? 240000 : 660000;
 
       await SalaryStructure.create({
         userId: user._id,
-        da, hra, ca, medical, bonus, epfo, esi, professionalTax, lop, loan,
+        grossLPA,
       });
 
-      createdUsers.push({ user, identity, profile, def: empDef, da, hra, ca, medical, bonus, epfo, esi, professionalTax });
+      createdUsers.push({ user, identity, profile, def: empDef, grossLPA });
     }
 
     // ── 3. Projects ─────────────────────────────────────────────────────
     const projects = [];
     for (const pt of PROJECT_TEMPLATES) {
+      const projStart = toYYYYMMDD(addDays(today, -randomInt(30, 60)));
+      const projEnd = toYYYYMMDD(addDays(today, randomInt(15, 60)));
       const proj = await Project.create({
         name: pt.name,
         description: pt.desc,
         team: createdUsers.map(u => u.user._id),
-        deadline: toYYYYMMDD(addDays(today, randomInt(15, 60))),
+        startDate: projStart,
+        endDate: projEnd,
         progress: randomInt(20, 80),
         status: randomPick(['active', 'active', 'active', 'completed']),
         createdBy: admin._id,
@@ -483,27 +487,36 @@ export async function POST(req) {
 
     for (const u of createdUsers) {
       for (const monthStr of payMonths) {
-        const totalEarnings = u.da + u.hra + u.ca + u.medical + u.bonus;
-        const totalDeductions = u.epfo + u.esi + u.professionalTax;
-        const net = totalEarnings - totalDeductions;
+        const [yr, mo] = monthStr.split('-').map(Number);
+        const daysInMonth = new Date(yr, mo, 0).getDate();
+        const sundays = Math.floor(daysInMonth / 7);
+        const altSaturdays = 2;
+        const lopDays = randomInt(0, 2);
+
+        const result = calculatePayroll({
+          grossLPA: u.grossLPA,
+          totalDaysInMonth: daysInMonth,
+          sundaysInMonth: sundays,
+          alternateSaturdaysInMonth: altSaturdays,
+          unpaidLeavesTaken: lopDays,
+        });
+
         await Payroll.create({
           userId: u.user._id,
           month: monthStr,
-          da: u.da,
-          hra: u.hra,
-          ca: u.ca,
-          medical: u.medical,
-          bonus: u.bonus,
-          grossPay: totalEarnings,
-          epfo: u.epfo,
-          esi: u.esi,
-          professionalTax: u.professionalTax,
-          lop: 0,
-          loan: 0,
-          totalDeductions,
-          netPay: net,
+          monthlyGross: result.earnings.monthlyGross,
+          basicPay: result.earnings.basicPay,
+          hra: result.earnings.hra,
+          dearnessAllowance: result.earnings.dearnessAllowance,
+          conveyanceAllowance: result.earnings.conveyanceAllowance,
+          medicalAllowance: result.earnings.medicalAllowance,
+          pf: result.deductions.employeePF,
+          esi: result.deductions.employeeESI,
+          lossOfPay: result.deductions.lossOfPayDeduction,
+          totalDeductions: result.deductions.totalDeductions,
+          netPay: result.netTakeHome,
           presentDays: randomInt(20, 24),
-          lopDays: randomInt(0, 2),
+          lopDays,
           status: 'finalized',
           processedBy: admin._id,
           processedAt: new Date(),
@@ -558,6 +571,9 @@ export async function POST(req) {
       { name: 'Logitech Keyboard', category: 'Peripheral', assetId: 'AST-KEY-001', condition: 'good', value: 2500 },
       { name: 'MacBook Pro 16"', category: 'Laptop', assetId: 'AST-LAP-002', condition: 'good', value: 199000 },
       { name: 'Noise Cancelling Headphones', category: 'Peripheral', assetId: 'AST-HPH-001', condition: 'good', value: 12000 },
+      { name: 'HP Laptop 15s', category: 'Laptop', assetId: 'AST-LAP-003', condition: 'good', value: 55000 },
+      { name: 'Dell 27\" Monitor', category: 'Monitor', assetId: 'AST-MON-002', condition: 'good', value: 18000 },
+      { name: 'Samsung Galaxy A54', category: 'Phone', assetId: 'AST-PHN-002', condition: 'good', value: 35000 },
     ];
 
     // Assign 3 assets to each employee

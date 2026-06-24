@@ -102,6 +102,34 @@ export async function getCycleWorkingDays(year, month, config) {
   return { fromDate, toDate, workingDays };
 }
 
+export function getCycleCalendarStats(fromDate, toDate) {
+  let totalDays = 0;
+  let sundays = 0;
+  let alternateSaturdays = 0;
+
+  const from = new Date(fromDate + 'T00:00:00');
+  const to = new Date(toDate + 'T00:00:00');
+
+  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    totalDays++;
+    const dayOfWeek = d.getDay();
+    if (dayOfWeek === 0) {
+      sundays++;
+    } else if (dayOfWeek === 6) {
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const day = d.getDate();
+      let count = 0;
+      for (let i = 1; i <= day; i++) {
+        if (new Date(year, month, i).getDay() === 6) count++;
+      }
+      if (count === 2 || count === 4) alternateSaturdays++;
+    }
+  }
+
+  return { totalDays, sundays, alternateSaturdays };
+}
+
 const TIME_IN_PARENS = /\((\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i;
 const TIME_RANGE = /(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i;
 
