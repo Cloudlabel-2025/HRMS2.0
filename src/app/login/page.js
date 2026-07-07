@@ -91,7 +91,7 @@ export default function LoginPage() {
           <div style={{ width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
             <i className="bi bi-hexagon-fill" style={{ color: '#fff', fontSize: 24 }} />
           </div>
-          <h4 style={{ color: '#fff', fontWeight: 700, margin: 0 }}>HRMS Pro</h4>
+          <h4 style={{ color: '#fff', fontWeight: 700, margin: 0 }}>CHC-HRMS</h4>
           <p style={{ color: '#94a3b8', fontSize: 13, margin: '4px 0 0' }}>Enterprise Human Resource Management</p>
         </div>
 
