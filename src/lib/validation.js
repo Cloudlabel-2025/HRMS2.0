@@ -57,7 +57,7 @@ export const CreateEmployeeSchema = z.object({
   sourceApplicantId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
   department: z.string().min(1, 'Department required'),
   designation: z.string().min(1, 'Designation required').max(100),
-  role: z.enum(['employee', 'team_lead', 'recruiter', 'team_admin', 'super_admin', 'admin_full', 'intern']).default('employee'),
+  role: z.enum(['super_admin', 'admin_full', 'recruiter', 'team_lead', 'team_admin', 'employee', 'intern', 'sme']).default('employee'),
   shift: z.string().optional().default('Morning (9AM-6PM)'),
   skills: z.array(z.string().max(50)).optional().default([]),
   joinDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date({ required_error: 'Join date required' })),

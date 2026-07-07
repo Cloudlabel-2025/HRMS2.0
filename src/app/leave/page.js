@@ -58,6 +58,7 @@ export default function LeavePage() {
   const isAdmin     = ['super_admin', 'admin_full'].includes(user?.role);
   const isTeamLead  = user?.role === 'team_lead';
   const isTeamAdmin = user?.role === 'team_admin';
+  const isSme       = user?.role === 'sme';
   const canApprove  = isAdmin || isTeamLead || isTeamAdmin;
 
   const targetUserId = useMemo(() => {
@@ -182,21 +183,6 @@ export default function LeavePage() {
     return ['Admin', 'Team Admin', 'Team Lead'];
   }, [leaves]);
 
-  const renderWorkflowBadges = (l) => {
-    if (l.workflowApprovals?.length > 0) {
-      return l.workflowApprovals.map(s => (
-        <div key={s.step} style={{ marginBottom: 2 }}>
-          <ApprovalBadge value={s.action} holdReason={s.holdReason} />
-        </div>
-      ));
-    }
-    return (
-      <>
-        <ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} />
-      </>
-    );
-  };
-
   return (
     <AppShell title="Leave Management">
       {toast && (
@@ -228,7 +214,7 @@ export default function LeavePage() {
         </div>
       )}
 
-      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && balanceData?.balances && (
+      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && !isSme && balanceData?.balances && (
         <div className="row g-3 mb-4">
           {balanceData.balances.map(b => {
             const lt = typeMap[b.typeId?._id || b.typeId];
@@ -267,9 +253,9 @@ export default function LeavePage() {
 
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
         {[
-          { key: 'my',        label: isSuperAdmin ? 'Employee Leaves' : 'My Leaves' },
-          ...(canApprove ? [{ key: 'approvals', label: 'Pending Approvals' }] : []),
-          ...(isAdmin    ? [{ key: 'all',       label: 'All Leaves' }]        : []),
+          { key: 'my', label: isSuperAdmin ? 'Employee Leaves' : 'My Leaves' },
+          ...(canApprove && !isSme ? [{ key: 'approvals', label: 'Pending Approvals' }] : []),
+          ...(isAdmin && !isSme    ? [{ key: 'all',       label: 'All Leaves' }]        : []),
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t.key ? '#fff' : 'transparent', color: tab === t.key ? '#1e293b' : '#64748b', boxShadow: tab === t.key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
@@ -294,7 +280,7 @@ export default function LeavePage() {
                   onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
-                    {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
+                     {emp.avatar || emp.name?.slice(0, 2).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13.5, fontWeight: 600, color: '#0f172a' }}>{emp.name}</div>
@@ -332,19 +318,20 @@ export default function LeavePage() {
                 <table className="table mb-0">
                   <thead>
                     <tr>
-                      {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && <th>Employee</th>}
+                      {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && !isSme && <th>Employee</th>}
                       <th>Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th>
-                      {workflowColumns.map((col, i) => <th key={i}>{col}</th>)}
+                      {!isSme && workflowColumns.map((col, i) => <th key={i}>{col}</th>)}
+                      {isSme && <th>Admin</th>}
                       <th>Status</th>
                       {tab === 'approvals' && <th>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={12}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
+                      <tr><td colSpan={isSme ? 7 : 12}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
                     ) : filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(l => (
                       <tr key={l._id} style={hasObjection(l) ? { background: '#fff7ed' } : {}}>
-                        {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && (
+                        {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && !isSme && (
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 30, height: 30, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700 }}>
@@ -369,7 +356,9 @@ export default function LeavePage() {
                         <td style={{ fontSize: 13 }}>{l.to}</td>
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
-                        {l.workflowApprovals?.length > 0 ? (
+                        {isSme ? (
+                          <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
+                        ) : l.workflowApprovals?.length > 0 ? (
                           l.workflowApprovals.map(s => (
                             <td key={s.step}>
                               <ApprovalBadge value={s.action} holdReason={s.holdReason} />
@@ -495,7 +484,10 @@ export default function LeavePage() {
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
                   <i className="bi bi-info-circle me-2 text-primary" />
-                  Leave policy will determine the approval workflow and available balance.
+                  {isSme
+                    ? 'Your leave will be reviewed by the Super Admin. You will be notified once a decision is made.'
+                    : 'Leave policy will determine the approval workflow and available balance.'
+                  }
                 </div>
               </div>
               <div className="modal-footer">

@@ -14,12 +14,18 @@ export async function GET(req) {
     await connectDB();
 
     const { searchParams } = new URL(req.url);
-    const scope  = searchParams.get('scope');
-    const status = searchParams.get('status');
+    const scope    = searchParams.get('scope');
+    const status   = searchParams.get('status');
     const userIdParam = searchParams.get('userId');
+    const smeOnly  = searchParams.get('smeOnly');
     const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
 
     let query = {};
+
+    if (smeOnly === 'true') {
+      if (!isAdmin) return fail('Access denied', 403);
+      query.smeId = { $ne: null };
+    }
 
     if (scope === 'all') {
       if (!isAdmin) return fail('Access denied', 403);
@@ -79,6 +85,81 @@ export async function POST(req) {
       return fail('Invalid or deactivated leave type', 400);
     }
 
+    // Calculate days
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    let days = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Check date overlap
+    const overlap = await Leave.findOne({
+      userId: user._id,
+      status: { $in: ['pending', 'approved'] },
+      from: { $lte: to },
+      to:   { $gte: from },
+    });
+    if (overlap) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
+      return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+    }
+
+    // Check holiday overlap
+    const holidayOverlap = await Holiday.findOne({
+      date: { $gte: from, $lte: to },
+    });
+    if (holidayOverlap) {
+      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
+      return fail(`Cannot apply leave from ${from} to ${to} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${holidayOverlap.date}.`, 400);
+    }
+
+    // ── SME Flow ──
+    if (user.role === 'sme') {
+      const { SME } = await import('@/lib/models/index');
+      const sme = await SME.findOne({ userId: user._id });
+      if (!sme) return fail('SME profile not found', 404);
+      if (sme.status !== 'active') return fail('Your account is inactive. Contact admin.', 400);
+      if (sme.contractEnd && new Date(to) > new Date(sme.contractEnd)) {
+        return fail(`Cannot apply leave beyond contract end date (${new Date(sme.contractEnd).toLocaleDateString()})`, 400);
+      }
+
+      const existing = await Leave.findOne({ userId: user._id, status: 'pending' });
+      if (existing) {
+        auditLog('Leave Apply Failed', 'Leave', user._id, 'Already has a pending leave application', 'low', ip, null, user._id);
+        return fail('You already have a pending leave application. Wait for it to be resolved before applying again.', 400);
+      }
+
+      const leave = await Leave.create({
+        userId: user._id,
+        type: leaveType.name,
+        typeId,
+        from,
+        to,
+        days,
+        halfDay,
+        reason,
+        documents,
+        status: 'pending',
+        smeId: sme._id,
+        adminApproval: 'pending',
+        teamAdminApproval: 'pending',
+        tlApproval: 'pending',
+      });
+
+      const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] } }).select('_id');
+      if (admins.length) {
+        await notify(
+          admins.map(a => a._id),
+          'New Leave Request',
+          `${user.name} applied for ${days} day(s) of ${leaveType.name} (${from} to ${to})`,
+          'leave',
+          leave._id
+        );
+      }
+
+      await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${leaveType.name} (${from} to ${to})`, 'low', ip, null, user._id);
+      return ok(leave, 201);
+    }
+
+    // ── Regular Policy Flow ──
     // Resolve policy for this user
     const policy = await resolvePolicyForUser(user);
     if (!policy) {
@@ -109,11 +190,6 @@ export async function POST(req) {
       }
     }
 
-    // Calculate days
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
-    let days = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
-
     // Check max consecutive days
     if (typeConfig.maxConsecutiveDays > 0 && days > typeConfig.maxConsecutiveDays) {
       return fail(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${leaveType.name}`, 400);
@@ -125,26 +201,6 @@ export async function POST(req) {
       if (pendingCount >= policy.maxPendingApplications) {
         return fail(`You already have ${pendingCount} pending application(s). Max ${policy.maxPendingApplications} allowed.`, 400);
       }
-    }
-
-    // Check date overlap
-    const overlap = await Leave.findOne({
-      userId: user._id,
-      status: { $in: ['pending', 'approved'] },
-      from: { $lte: to },
-      to:   { $gte: from },
-    });
-    if (overlap) {
-      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
-      return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
-    }
-
-    const holidayOverlap = await Holiday.findOne({
-      date: { $gte: from, $lte: to },
-    });
-    if (holidayOverlap) {
-      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
-      return fail(`Cannot apply leave from ${from} to ${to} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${holidayOverlap.date}.`, 400);
     }
 
     // Check min gap between leaves

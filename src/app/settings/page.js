@@ -19,6 +19,7 @@ const NOTIFICATION_RULES = [
 const TABS = [
   { key: 'general',      label: 'General',      icon: 'bi-gear' },
   { key: 'departments',  label: 'Departments',  icon: 'bi-diagram-3' },
+  { key: 'expertise',    label: 'Expertise',    icon: 'bi-person-gear' },
   { key: 'roles',        label: 'Roles',        icon: 'bi-person-badge' },
   { key: 'designations', label: 'Designations', icon: 'bi-briefcase' },
   { key: 'categories',   label: 'Asset Categories', icon: 'bi-tag' },
@@ -68,6 +69,7 @@ export default function SettingsPage() {
   const [roles, setRoles]           = useState([]);
   const [designations, setDesignations] = useState([]);
   const [categories, setCategories]   = useState([]);
+  const [expertise, setExpertise]     = useState([]);
   const [shifts, setShifts]         = useState([]);
   const [holidays, setHolidays]     = useState([]);
   const [config, setConfig]         = useState({
@@ -113,7 +115,7 @@ export default function SettingsPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [d, r, dg, cat, s, h, c] = await Promise.all([
+      const [d, r, dg, cat, s, h, c, e] = await Promise.all([
         api.get('/api/settings?type=departments'),
         api.get('/api/settings?type=roles'),
         api.get('/api/settings?type=designations'),
@@ -121,6 +123,7 @@ export default function SettingsPage() {
         api.get('/api/settings?type=shifts'),
         api.get('/api/settings?type=holidays'),
         api.get('/api/settings?type=config'),
+        api.get('/api/settings?type=sme_expertise'),
       ]);
       setDepartments(Array.isArray(d)   ? d   : []);
       setRoles(Array.isArray(r)         ? r   : []);
@@ -128,6 +131,7 @@ export default function SettingsPage() {
       setCategories(Array.isArray(cat)  ? cat : []);
       setShifts(Array.isArray(s)        ? s   : []);
       setHolidays(Array.isArray(h)      ? h   : []);
+      setExpertise(Array.isArray(e)     ? e   : []);
       if (Array.isArray(c)) {
         const gc = c.find(i => i.key === 'global_config');
         if (gc?.value) setConfig(p => ({
@@ -437,6 +441,15 @@ export default function SettingsPage() {
             id => deleteItem('departments', id)
           )}
 
+          {/* EXPERTISE */}
+          {tab === 'expertise' && renderSimpleTable(
+            'sme_expertise', expertise,
+            [{ key: 'name', label: 'Expertise Area', bold: true }],
+            () => { setModalForm({ name: '' }); setShowModal('expertise'); },
+            item => { setModalForm({ ...item }); setShowModal('expertise'); },
+            id => deleteItem('sme_expertise', id)
+          )}
+
           {/* ROLES */}
           {tab === 'roles' && renderSimpleTable(
             'roles', roles,
@@ -611,6 +624,34 @@ export default function SettingsPage() {
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
                 <button className="btn btn-primary" onClick={() => saveItem('departments', modalForm)} disabled={saving}>
+                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EXPERTISE MODAL */}
+      {showModal === 'expertise' && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">{modalForm._id ? 'Edit' : 'Add'} Expertise Area</h5>
+                <button className="btn-close" onClick={() => setShowModal(null)} />
+              </div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Expertise Name *</label>
+                    <input className="form-control" placeholder="e.g. Machine Learning" value={modalForm.name || ''} onChange={e => setModalForm(p => ({ ...p, name: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={() => saveItem('sme_expertise', modalForm)} disabled={saving}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
                 </button>
               </div>
