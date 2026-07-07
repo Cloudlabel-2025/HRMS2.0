@@ -4,40 +4,47 @@ const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected', 'held
 
 const LeaveSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type:    {
-    type: String,
-    enum: ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave',
-           'Paternity Leave', 'Compensatory Leave', 'Loss of Pay'],
-    required: true,
-  },
+  typeId:  { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveType', default: null },
+  type:    { type: String, required: true }, // kept for backward compatibility; new records use typeId
   from:   { type: String, required: true },
   to:     { type: String, required: true },
   days:   { type: Number, required: true },
+  halfDay:{ type: Boolean, default: false },
   reason: { type: String, required: true },
+  documents: [{ type: String }], // file URLs for supporting documents
+  policyId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeavePolicy', default: null },
 
   // Overall resolved status
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
 
-  // Step 1 — Admin (super_admin / admin_full) — must act first
+  // ── Legacy hardcoded approval fields (kept for backward compatibility) ──
   adminApproval:   { ...APPROVAL },
   adminApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   adminApprovedAt: { type: Date, default: null },
   adminHoldReason: { type: String, default: '' },
 
-  // Step 2a — Team Admin (notified after admin approves, optional objection)
   teamAdminApproval:   { ...APPROVAL },
   teamAdminApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   teamAdminApprovedAt: { type: Date, default: null },
   teamAdminHoldReason: { type: String, default: '' },
 
-  // Step 2b — Team Lead (notified after admin approves, optional objection)
   tlApproval:   { ...APPROVAL },
   tlApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   tlApprovedAt: { type: Date, default: null },
   tlHoldReason: { type: String, default: '' },
 
-  // Track if step-2 notifications have been sent
   objectionNotified: { type: Boolean, default: false },
+
+  // ── Dynamic workflow approvals (used by policy-driven leaves) ──
+  workflowApprovals: [{
+    step:      { type: Number, required: true },
+    label:     { type: String },
+    action:    { type: String, enum: ['pending', 'approved', 'rejected', 'held'], default: 'pending' },
+    approvedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt:{ type: Date, default: null },
+    holdReason:{ type: String, default: '' },
+    actionType:{ type: String, enum: ['approve', 'review'], default: 'approve' },
+  }],
 
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });

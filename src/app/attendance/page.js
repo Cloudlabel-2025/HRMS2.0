@@ -6,6 +6,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import { getAttendanceDate } from '@/lib/attendance-date';
+import Pagination from '@/components/Pagination';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present' },
@@ -58,8 +59,18 @@ export default function AttendancePage() {
   const [toast, setToast]               = useState(null);
   const [regRequests, setRegRequests]   = useState([]);
   const [showRegModal, setShowRegModal] = useState(false);
-  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', reason: '' });
+  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedBreakStart: '', requestedBreakEnd: '', requestedLunchStart: '', requestedLunchEnd: '', reason: '' });
   const [regSaving, setRegSaving]       = useState(false);
+  const [todayPage, setTodayPage]       = useState(1);
+  const [regPage, setRegPage]           = useState(1);
+  const [progressEmpPage, setProgressEmpPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setTodayPage(1);
+    setRegPage(1);
+    setProgressEmpPage(1);
+  }, [tab]);
 
   // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
   const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
@@ -201,7 +212,32 @@ export default function AttendancePage() {
       const result = await api.post('/api/attendance/clock', { action });
       setTodayRecord(result.record);
       showToast('Clocked ' + (action === 'in' ? 'in' : 'out') + ' at ' + result.time);
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) {
+      if (action === 'in' && e.message && e.message.includes('requires a reason')) {
+        const reason = window.prompt('You are clocking in early by more than 2 hours. Please enter a reason (min 10 chars):');
+        if (reason !== null) {
+          if (!reason.trim()) {
+            showToast('Reason is required for early clock-in.', 'error');
+            setClockLoading(false);
+            return;
+          }
+          if (reason.trim().length < 10) {
+            showToast('Please enter a detailed reason (at least 10 characters).', 'error');
+            setClockLoading(false);
+            return;
+          }
+          try {
+            const result = await api.post('/api/attendance/clock', { action, reason });
+            setTodayRecord(result.record);
+            showToast('Clocked in at ' + result.time);
+          } catch (retryErr) {
+            showToast(retryErr.message, 'error');
+          }
+        }
+      } else {
+        showToast(e.message, 'error');
+      }
+    }
     finally { setClockLoading(false); }
   };
 
@@ -428,7 +464,7 @@ export default function AttendancePage() {
       await api.post('/api/attendance/regularize', regForm);
       showToast('Regularization request submitted');
       setShowRegModal(false);
-      setRegForm({ date: '', requestedIn: '', requestedOut: '', reason: '' });
+      setRegForm({ date: '', requestedIn: '', requestedOut: '', requestedBreakStart: '', requestedBreakEnd: '', requestedLunchStart: '', requestedLunchEnd: '', reason: '' });
       loadRegRequests('my');
     } catch (e) { showToast(e.message, 'error'); }
     finally { setRegSaving(false); }
@@ -840,7 +876,7 @@ export default function AttendancePage() {
                   <table className="table mb-0">
                     <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
                     <tbody>
-                      {teamToday.map(row => {
+                      {teamToday.slice((todayPage - 1) * pageSize, todayPage * pageSize).map(row => {
                         const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
                         const hasClockOut = !!row.clockOut;
                         return (
@@ -878,6 +914,15 @@ export default function AttendancePage() {
                     </tbody>
                   </table>
                 </div>
+                {teamToday.length > 0 && (
+                  <Pagination
+                    currentPage={todayPage}
+                    totalPages={Math.ceil(teamToday.length / pageSize)}
+                    onPageChange={setTodayPage}
+                    totalItems={teamToday.length}
+                    pageSize={pageSize}
+                  />
+                )}
               </div>
             </>
           ) : (
@@ -1052,12 +1097,12 @@ export default function AttendancePage() {
                     <thead>
                       <tr>
                         {isAdmin && <th>Employee</th>}
-                        <th>Date</th><th>Req. In</th><th>Req. Out</th><th>Reason</th><th>Status</th>
+                        <th>Date</th><th>Req. In</th><th>Req. Out</th><th>Req. Break</th><th>Req. Lunch</th><th>Reason</th><th>Status</th>
                         {isAdmin && <th>Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
-                      {regRequests.map(r => (
+                      {regRequests.slice((regPage - 1) * pageSize, regPage * pageSize).map(r => (
                         <tr key={r._id}>
                           {isAdmin && (
                             <td>
@@ -1070,6 +1115,16 @@ export default function AttendancePage() {
                           <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedIn  || '—'}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedOut || '—'}</td>
+                          <td style={{ fontSize: 13 }}>
+                            {r.requestedBreakStart || r.requestedBreakEnd ? (
+                              `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}`
+                            ) : '—'}
+                          </td>
+                          <td style={{ fontSize: 13 }}>
+                            {r.requestedLunchStart || r.requestedLunchEnd ? (
+                              `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}`
+                            ) : '—'}
+                          </td>
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
                           <td><span className={'badge status-' + r.status}>{r.status}</span></td>
                           {isAdmin && (
@@ -1089,7 +1144,7 @@ export default function AttendancePage() {
                 </div>
               </div>
               <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {regRequests.map(r => (
+                {regRequests.slice((regPage - 1) * pageSize, regPage * pageSize).map(r => (
                   <div key={r._id} className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                       <div>
@@ -1101,6 +1156,8 @@ export default function AttendancePage() {
                     <div className="row g-2 mb-2">
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div></div>
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOut || '—'}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedBreakStart || r.requestedBreakEnd ? `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}` : '—'}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedLunchStart || r.requestedLunchEnd ? `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}` : '—'}</div></div>
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: isAdmin && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
                     {isAdmin && r.status === 'pending' && (
@@ -1112,6 +1169,15 @@ export default function AttendancePage() {
                   </div>
                 ))}
               </div>
+              {regRequests.length > 0 && (
+                <Pagination
+                  currentPage={regPage}
+                  totalPages={Math.ceil(regRequests.length / pageSize)}
+                  onPageChange={setRegPage}
+                  totalItems={regRequests.length}
+                  pageSize={pageSize}
+                />
+              )}
             </>
           )}
           {showRegModal && (
@@ -1135,6 +1201,22 @@ export default function AttendancePage() {
                       <div className="col-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Clock Out</label>
                         <input type="time" className="form-control" value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Break Start</label>
+                        <input type="time" className="form-control" value={regForm.requestedBreakStart} onChange={e => setRegForm(p => ({ ...p, requestedBreakStart: e.target.value }))} />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Break End</label>
+                        <input type="time" className="form-control" value={regForm.requestedBreakEnd} onChange={e => setRegForm(p => ({ ...p, requestedBreakEnd: e.target.value }))} />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Lunch Start</label>
+                        <input type="time" className="form-control" value={regForm.requestedLunchStart} onChange={e => setRegForm(p => ({ ...p, requestedLunchStart: e.target.value }))} />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Lunch End</label>
+                        <input type="time" className="form-control" value={regForm.requestedLunchEnd} onChange={e => setRegForm(p => ({ ...p, requestedLunchEnd: e.target.value }))} />
                       </div>
                       <div className="col-12">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason *</label>
@@ -1178,8 +1260,8 @@ export default function AttendancePage() {
                 />
               </div>
               <div style={{ maxHeight: 500, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {employees
-                  .filter(e => {
+                {(() => {
+                  const filteredEmps = employees.filter(e => {
                     // Search filter
                     if (progressSearch && !e.name.toLowerCase().includes(progressSearch.toLowerCase())) return false;
                     // RBAC filters
@@ -1187,46 +1269,63 @@ export default function AttendancePage() {
                     if (user?.role === 'team_lead') return true;
                     if (user?.role === 'team_admin') return e.role !== 'team_lead';
                     return false;
-                  })
-                  .map(e => {
-                    // Find if clocked in today from teamToday
-                    const todayRec = teamToday.find(r => r.userId?._id === e.userId);
-                    const isClockedIn = !!todayRec?.clockIn;
-                    const isClockedOut = !!todayRec?.clockOut;
-                    const isSelected = selectedProgressUserId === e.userId;
+                  });
+                  const paginated = filteredEmps.slice((progressEmpPage - 1) * pageSize, progressEmpPage * pageSize);
+                  return (
+                    <>
+                      {paginated.map(e => {
+                        const todayRec = teamToday.find(r => r.userId?._id === e.userId);
+                        const isClockedIn = !!todayRec?.clockIn;
+                        const isClockedOut = !!todayRec?.clockOut;
+                        const isSelected = selectedProgressUserId === e.userId;
 
-                    return (
-                      <div
-                        key={e._id}
-                        onClick={() => setSelectedProgressUserId(e.userId)}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          padding: '10px 12px',
-                          borderRadius: 10,
-                          cursor: 'pointer',
-                          background: isSelected ? '#3b82f615' : 'transparent',
-                          border: isSelected ? '1px solid #3b82f650' : '1px solid transparent',
-                          transition: 'all 0.15s'
-                        }}>
-                        <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
-                          {e.avatar || e.name.slice(0, 2).toUpperCase()}
+                        return (
+                          <div
+                            key={e._id}
+                            onClick={() => setSelectedProgressUserId(e.userId)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 10,
+                              padding: '10px 12px',
+                              borderRadius: 10,
+                              cursor: 'pointer',
+                              background: isSelected ? '#3b82f615' : 'transparent',
+                              border: isSelected ? '1px solid #3b82f650' : '1px solid transparent',
+                              transition: 'all 0.15s',
+                              marginBottom: 4
+                            }}>
+                            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+                              {e.avatar || e.name.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{e.name}</div>
+                              <div style={{ fontSize: 10, color: '#64748b' }}>{e.designation || e.role}</div>
+                            </div>
+                            {/* Attendance status indicator dot */}
+                            <div style={{
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: isClockedOut ? '#ef4444' : isClockedIn ? '#10b981' : '#cbd5e1'
+                            }} title={isClockedOut ? 'Clocked Out' : isClockedIn ? 'Clocked In' : 'Not Clocked In'} />
+                          </div>
+                        );
+                      })}
+                      {filteredEmps.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                          <Pagination
+                            currentPage={progressEmpPage}
+                            totalPages={Math.ceil(filteredEmps.length / pageSize)}
+                            onPageChange={setProgressEmpPage}
+                            totalItems={filteredEmps.length}
+                            pageSize={pageSize}
+                          />
                         </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{e.name}</div>
-                          <div style={{ fontSize: 10, color: '#64748b' }}>{e.designation || e.role}</div>
-                        </div>
-                        {/* Attendance status indicator dot */}
-                        <div style={{
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: isClockedOut ? '#ef4444' : isClockedIn ? '#10b981' : '#cbd5e1'
-                        }} title={isClockedOut ? 'Clocked Out' : isClockedIn ? 'Clocked In' : 'Not Clocked In'} />
-                      </div>
-                    );
-                  })}
+                      )}
+                    </>
+                  );
+                })()}
               </div>
             </div>
           </div>
@@ -1428,6 +1527,12 @@ export default function AttendancePage() {
 function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_STYLE, DAYS }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [recordsPage, setRecordsPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setRecordsPage(1);
+  }, [query, uid]);
 
   useEffect(() => {
     if (!uid) return;
@@ -1476,7 +1581,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           <table className="table mb-0">
             <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
             <tbody>
-              {records.map(row => {
+              {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
                 const d = new Date(row.date + 'T00:00:00');
                 const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
                 return (
@@ -1497,7 +1602,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
 
       {/* Mobile cards */}
       <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {records.map(row => {
+        {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
           const d = new Date(row.date + 'T00:00:00');
           const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
           return (
@@ -1521,6 +1626,15 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           );
         })}
       </div>
+      {records.length > 0 && (
+        <Pagination
+          currentPage={recordsPage}
+          totalPages={Math.ceil(records.length / pageSize)}
+          onPageChange={setRecordsPage}
+          totalItems={records.length}
+          pageSize={pageSize}
+        />
+      )}
     </>
   );
 }

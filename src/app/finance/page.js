@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Pagination from '@/components/Pagination';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
@@ -60,6 +61,14 @@ export default function FinancePage() {
   const [budgetForm, setBudgetForm] = useState({ department: 'Engineering', year: new Date().getFullYear(), allocated: '', spent: '0' });
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [invPage, setInvPage] = useState(1);
+  const [expPage, setExpPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setInvPage(1);
+    setExpPage(1);
+  }, [tab]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -198,7 +207,7 @@ export default function FinancePage() {
                   <tbody>
                     {invoices.length === 0 ? (
                       <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-receipt" /><h6>No invoices yet</h6></div></td></tr>
-                    ) : invoices.map(inv => (
+                    ) : invoices.slice((invPage - 1) * pageSize, invPage * pageSize).map(inv => (
                       <tr key={inv._id}>
                         <td style={{ fontSize: 13, fontWeight: 700, color: '#3b82f6' }}>{inv.invoiceNo}</td>
                         <td style={{ fontSize: 13, fontWeight: 600 }}>{inv.client}</td>
@@ -211,6 +220,15 @@ export default function FinancePage() {
                   </tbody>
                 </table>
               </div>
+              {invoices.length > 0 && (
+                <Pagination
+                  currentPage={invPage}
+                  totalPages={Math.ceil(invoices.length / pageSize)}
+                  onPageChange={setInvPage}
+                  totalItems={invoices.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
@@ -222,7 +240,7 @@ export default function FinancePage() {
                   <tbody>
                     {expenses.length === 0 ? (
                       <tr><td colSpan={7}><div className="empty-state"><i className="bi bi-receipt" /><h6>No expense claims</h6></div></td></tr>
-                    ) : expenses.map(exp => (
+                    ) : expenses.slice((expPage - 1) * pageSize, expPage * pageSize).map(exp => (
                       <tr key={exp._id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -250,6 +268,15 @@ export default function FinancePage() {
                   </tbody>
                 </table>
               </div>
+              {expenses.length > 0 && (
+                <Pagination
+                  currentPage={expPage}
+                  totalPages={Math.ceil(expenses.length / pageSize)}
+                  onPageChange={setExpPage}
+                  totalItems={expenses.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 

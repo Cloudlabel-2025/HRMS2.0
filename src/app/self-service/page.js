@@ -19,6 +19,9 @@ const EMPTY_FORM = {
   lastWorkingDate: '',
   settlementStatus: 'pending',
   exitInterviewComplete: false,
+  permissionDate: '',
+  permissionStartTime: '',
+  permissionEndTime: '',
 };
 
 export default function SelfServicePage() {
@@ -95,6 +98,20 @@ export default function SelfServicePage() {
         if (lastDate < today) errs.lastWorkingDate = 'Last working date cannot be in the past';
       }
     }
+    if (form.requestType === 'permission') {
+      if (!form.permissionDate) errs.permissionDate = 'Permission date is required';
+      if (!form.permissionStartTime) errs.permissionStartTime = 'Start time is required';
+      if (!form.permissionEndTime) errs.permissionEndTime = 'End time is required';
+      if (form.permissionStartTime && form.permissionEndTime) {
+        const [sh, sm] = form.permissionStartTime.split(':').map(Number);
+        const [eh, em] = form.permissionEndTime.split(':').map(Number);
+        let durationMins = (eh * 60 + em) - (sh * 60 + sm);
+        if (durationMins < 0) durationMins += 24 * 60;
+        if (durationMins > 120) {
+          errs.permissionEndTime = 'Permission duration cannot exceed 2 hours';
+        }
+      }
+    }
     setFormErrors(errs);
     return Object.keys(errs).length === 0;
   };
@@ -104,6 +121,7 @@ export default function SelfServicePage() {
     address_update: 'Address Update',
     emergency_contact_update: 'Emergency Contact Update',
     resignation: 'Resignation',
+    permission: 'Permission Request',
   }), []);
 
   const load = async () => {
@@ -144,6 +162,11 @@ export default function SelfServicePage() {
       payload.payload.lastWorkingDate = form.lastWorkingDate;
       payload.payload.settlementStatus = form.settlementStatus;
       payload.payload.exitInterviewComplete = !!form.exitInterviewComplete;
+    }
+    if (form.requestType === 'permission') {
+      payload.payload.date = form.permissionDate;
+      payload.payload.startTime = form.permissionStartTime;
+      payload.payload.endTime = form.permissionEndTime;
     }
 
     setSaving(true);
@@ -246,6 +269,12 @@ export default function SelfServicePage() {
                     <span className="badge bg-light text-dark">{req.status}</span>
                   </div>
                   <div className="small text-secondary">{formatDate(req.createdAt)}</div>
+                  {req.requestType === 'permission' && req.payload && (
+                    <div style={{ fontSize: 12, color: '#475569', marginTop: 4, background: '#f8fafc', padding: '4px 8px', borderRadius: 4 }}>
+                      <strong>Date:</strong> {req.payload.date} <br/>
+                      <strong>Time:</strong> {req.payload.startTime} - {req.payload.endTime} {req.payload.duration ? `(${req.payload.duration} mins)` : ''}
+                    </div>
+                  )}
                   <div className="small mt-1">{req.reason}</div>
                 </div>
               ))}
@@ -265,6 +294,7 @@ export default function SelfServicePage() {
                   <option value="address_update">Address Update</option>
                   <option value="emergency_contact_update">Emergency Contact Update</option>
                   <option value="resignation">Resignation</option>
+                  <option value="permission">Permission Request</option>
                 </select>
               </div>
               <div className="col-md-8">
@@ -272,6 +302,26 @@ export default function SelfServicePage() {
                 <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z0-9 ]/g, ''); setForm(prev => ({ ...prev, reason: v })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
                 {formErrors.reason && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.reason}</div>}
               </div>
+
+              {form.requestType === 'permission' && (
+                <>
+                  <div className="col-md-4">
+                    <label className="form-label">Permission Date <span style={{color:'#ef4444'}}>*</span></label>
+                    <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />
+                    {formErrors.permissionDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionDate}</div>}
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label">Start Time <span style={{color:'#ef4444'}}>*</span></label>
+                    <input type="time" className={`form-control${formErrors.permissionStartTime ? ' is-invalid' : ''}`} value={form.permissionStartTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionStartTime: e.target.value })); clearError('permissionStartTime'); }} />
+                    {formErrors.permissionStartTime && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionStartTime}</div>}
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label">End Time <span style={{color:'#ef4444'}}>*</span></label>
+                    <input type="time" className={`form-control${formErrors.permissionEndTime ? ' is-invalid' : ''}`} value={form.permissionEndTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionEndTime: e.target.value })); clearError('permissionEndTime'); }} />
+                    {formErrors.permissionEndTime && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionEndTime}</div>}
+                  </div>
+                </>
+              )}
 
               {form.requestType === 'profile_update' && (
                 <>

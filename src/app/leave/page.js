@@ -4,15 +4,15 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Pagination from '@/components/Pagination';
 
-const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'Compensatory Leave', 'Loss of Pay'];
 const STATUS_STYLE = {
   pending:  { bg: '#fef3c7', color: '#d97706' },
   approved: { bg: '#dcfce7', color: '#16a34a' },
   rejected: { bg: '#fee2e2', color: '#dc2626' },
   held:     { bg: '#ede9fe', color: '#7c3aed' },
 };
-const EMPTY_FORM = { type: 'Casual Leave', from: '', to: '', reason: '' };
+const EMPTY_FORM = { typeId: '', from: '', to: '', reason: '', halfDay: false, documents: [] };
 
 function ApprovalBadge({ value, holdReason }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
@@ -28,17 +28,25 @@ function ApprovalBadge({ value, holdReason }) {
 export default function LeavePage() {
   const { user } = useAuth();
   const [leaves, setLeaves]         = useState([]);
+  const [leaveTypes, setLeaveTypes] = useState([]);
   const [employees, setEmployees]   = useState([]);
+  const [balanceData, setBalanceData] = useState(null);
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [tab, setTab]               = useState('my');
   const [showModal, setShowModal]   = useState(false);
-  const [holdModal, setHoldModal]   = useState(null); // { id, action }
+  const [holdModal, setHoldModal]   = useState(null);
   const [holdReason, setHoldReason] = useState('');
   const [form, setForm]             = useState(EMPTY_FORM);
   const [saving, setSaving]         = useState(false);
   const [loading, setLoading]       = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [toast, setToast]           = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterStatus, tab, selectedEmpId]);
   const [fieldErrs, setFieldErrs]   = useState({});
   const fieldErrTimers = typeof window !== 'undefined' ? (window.__leaveErrTimers = window.__leaveErrTimers || {}) : {};
   const setFErrs = (obj) => { setFieldErrs(obj); Object.keys(obj).forEach(k => { if(fieldErrTimers[k]) clearTimeout(fieldErrTimers[k]); fieldErrTimers[k] = setTimeout(() => setFieldErrs(p => { const n={...p}; delete n[k]; return n; }), 10000); }); };
@@ -51,6 +59,28 @@ export default function LeavePage() {
   const isTeamLead  = user?.role === 'team_lead';
   const isTeamAdmin = user?.role === 'team_admin';
   const canApprove  = isAdmin || isTeamLead || isTeamAdmin;
+
+  const targetUserId = useMemo(() => {
+    if (tab === 'my' && isSuperAdmin && selectedEmpId) return selectedEmpId;
+    return null;
+  }, [tab, isSuperAdmin, selectedEmpId]);
+
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    Promise.all([
+      api.get('/api/settings/leave-types').then(d => setLeaveTypes(Array.isArray(d) ? d : [])).catch(() => {}),
+      api.get('/api/leave/balance').then(d => setBalanceData(d)).catch(() => {}),
+    ]).finally(() => setLoading(false));
+  }, [user]);
+
+  useEffect(() => {
+    if (user && targetUserId) {
+      api.get(`/api/leave/balance?userId=${targetUserId}`).then(d => setBalanceData(d)).catch(() => {});
+    } else if (user && tab === 'my') {
+      api.get('/api/leave/balance').then(d => setBalanceData(d)).catch(() => {});
+    }
+  }, [targetUserId, tab]);
 
   const load = async (scope) => {
     setLoading(true);
@@ -86,7 +116,7 @@ export default function LeavePage() {
   }, [tab]);
 
   const handleApply = async () => {
-    if (!form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
+    if (!form.typeId || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
     setSaving(true);
     try {
       await api.post('/api/leave', form);
@@ -116,25 +146,56 @@ export default function LeavePage() {
 
   const openHold = (id) => { setHoldModal({ id, action: 'held' }); setHoldReason(''); };
 
-  // Who can act on a given leave
   const canActOn = (l) => {
+    if (l.workflowApprovals?.length > 0) {
+      const pendingStep = l.workflowApprovals.find(s => s.action === 'pending');
+      if (!pendingStep) {
+        const heldStep = l.workflowApprovals.find(s => s.action === 'held' || s.action === 'rejected');
+        return !!heldStep && isAdmin;
+      }
+      return true;
+    }
     if (isAdmin)     return l.adminApproval === 'pending' || (l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected'));
     if (isTeamAdmin) return l.adminApproval === 'approved' && l.teamAdminApproval === 'pending';
     if (isTeamLead)  return l.adminApproval === 'approved' && l.tlApproval === 'pending';
     return false;
   };
 
-  // For admin reviewing objections — show override buttons
   const hasObjection = (l) => l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected');
 
   const selectedEmployee = useMemo(() => employees.find(emp => emp.userId?.toString() === selectedEmpId) || null, [employees, selectedEmpId]);
 
   const filtered = leaves.filter(l => !filterStatus || l.status === filterStatus);
 
-  const balanceSummary = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave'].map((type, i) => {
-    const used = leaves.filter(l => l.type === type && l.status === 'approved').reduce((s, l) => s + l.days, 0);
-    return { type, total: [12, 10, 15, 3][i], used };
-  });
+  const typeMap = useMemo(() => {
+    const m = {};
+    leaveTypes.forEach(t => { m[t._id] = t; });
+    return m;
+  }, [leaveTypes]);
+
+  const workflowColumns = useMemo(() => {
+    if (!leaves.length) return ['Admin', 'Team Admin', 'Team Lead'];
+    const l = leaves.find(x => x.workflowApprovals?.length > 0);
+    if (l?.workflowApprovals) {
+      return l.workflowApprovals.map(s => s.label || `Step ${s.step}`);
+    }
+    return ['Admin', 'Team Admin', 'Team Lead'];
+  }, [leaves]);
+
+  const renderWorkflowBadges = (l) => {
+    if (l.workflowApprovals?.length > 0) {
+      return l.workflowApprovals.map(s => (
+        <div key={s.step} style={{ marginBottom: 2 }}>
+          <ApprovalBadge value={s.action} holdReason={s.holdReason} />
+        </div>
+      ));
+    }
+    return (
+      <>
+        <ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} />
+      </>
+    );
+  };
 
   return (
     <AppShell title="Leave Management">
@@ -167,25 +228,36 @@ export default function LeavePage() {
         </div>
       )}
 
-      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && (
+      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && balanceData?.balances && (
         <div className="row g-3 mb-4">
-          {balanceSummary.map((b, i) => {
-            const avail = b.total - b.used;
-            const pct   = Math.min(Math.round((b.used / b.total) * 100), 100);
-            const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b'];
+          {balanceData.balances.map(b => {
+            const lt = typeMap[b.typeId?._id || b.typeId];
+            const available = b.allocated + b.carriedForward - b.used - b.pending;
+            const total = b.allocated + b.carriedForward;
+            const pct = total > 0 ? Math.min(Math.round(((b.used + b.pending) / total) * 100), 100) : 0;
+            const color = lt?.color || '#3b82f6';
             return (
-              <div key={i} className="col-6 col-xl-3">
+              <div key={b.typeId?._id || b.typeId} className="col-6 col-xl-3">
                 <div className="stat-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>{b.type}</span>
-                    <span style={{ fontSize: 12, color: colors[i], fontWeight: 700 }}>{avail} left</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>
+                      <span className="badge me-1" style={{ background: color, color: '#fff', fontSize: 10 }}>{lt?.code || '?'}</span>
+                      {lt?.name || 'Unknown'}
+                    </span>
+                    <span style={{ fontSize: 12, color, fontWeight: 700 }}>{available} left</span>
                   </div>
                   <div className="progress mb-2">
-                    <div className="progress-bar" style={{ width: `${pct}%`, background: colors[i] }} />
+                    <div className="progress-bar" style={{ width: `${pct}%`, background: color }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8' }}>
-                    <span>Used: {b.used}</span><span>Total: {b.total}</span>
+                    <span>Used: {b.used}{b.pending > 0 ? ` (+${b.pending})` : ''}</span>
+                    <span>Total: {total}</span>
                   </div>
+                  {b.carriedForward > 0 && (
+                    <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>
+                      Carry fwd: +{b.carriedForward}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -218,10 +290,7 @@ export default function LeavePage() {
             <div style={{ maxHeight: 500, overflow: 'auto' }}>
               {employees.map(emp => (
                 <div key={emp._id} onClick={() => emp.userId && setSelectedEmpId(emp.userId.toString())}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px',
-                    cursor: 'pointer', borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s',
-                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 20px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9', transition: 'background 0.15s' }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                   <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
@@ -265,14 +334,15 @@ export default function LeavePage() {
                     <tr>
                       {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && <th>Employee</th>}
                       <th>Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th>
-                      <th>Admin</th><th>Team Admin</th><th>Team Lead</th><th>Status</th>
+                      {workflowColumns.map((col, i) => <th key={i}>{col}</th>)}
+                      <th>Status</th>
                       {tab === 'approvals' && <th>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={11}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
-                    ) : filtered.map(l => (
+                      <tr><td colSpan={12}><div className="empty-state"><i className="bi bi-calendar-check" /><h6>No leave records found</h6></div></td></tr>
+                    ) : filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(l => (
                       <tr key={l._id} style={hasObjection(l) ? { background: '#fff7ed' } : {}}>
                         {(tab === 'all' || tab === 'approvals' || (tab === 'my' && selectedEmpId)) && (
                           <td>
@@ -287,26 +357,43 @@ export default function LeavePage() {
                             </div>
                           </td>
                         )}
-                        <td style={{ fontSize: 13 }}>{l.type}</td>
+                        <td style={{ fontSize: 13 }}>
+                          {l.typeId ? (
+                            <span className="badge" style={{ background: typeMap[l.typeId]?.color || '#e2e8f0', color: '#fff' }}>
+                              {typeMap[l.typeId]?.code || l.type}
+                            </span>
+                          ) : l.type}
+                          {l.halfDay && <span className="badge ms-1" style={{ background: '#fef3c7', color: '#d97706' }}>½</span>}
+                        </td>
                         <td style={{ fontSize: 13 }}>{l.from}</td>
                         <td style={{ fontSize: 13 }}>{l.to}</td>
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
-                        <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
-                        <td>
-                          <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
-                          {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
-                        </td>
-                        <td>
-                          <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
-                          {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
-                        </td>
+                        {l.workflowApprovals?.length > 0 ? (
+                          l.workflowApprovals.map(s => (
+                            <td key={s.step}>
+                              <ApprovalBadge value={s.action} holdReason={s.holdReason} />
+                              {s.holdReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{s.holdReason}</div>}
+                            </td>
+                          ))
+                        ) : (
+                          <>
+                            <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
+                            <td>
+                              <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
+                              {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
+                            </td>
+                            <td>
+                              <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
+                              {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
+                            </td>
+                          </>
+                        )}
                         <td><span className="badge" style={{ background: STATUS_STYLE[l.status]?.bg, color: STATUS_STYLE[l.status]?.color }}>{l.status}</span></td>
                         {tab === 'approvals' && (
                           <td>
                             {canActOn(l) && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {/* Admin reviewing an objection gets approve/reject only */}
                                 {isAdmin && hasObjection(l) ? (
                                   <>
                                     <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Override Approve</button>
@@ -329,6 +416,15 @@ export default function LeavePage() {
                 </table>
               </div>
             )}
+            {!loading && filtered.length > 0 && (
+              <Pagination
+                currentPage={currentPage}
+                totalPages={Math.ceil(filtered.length / pageSize)}
+                onPageChange={setCurrentPage}
+                totalItems={filtered.length}
+                pageSize={pageSize}
+              />
+            )}
           </div>
         </>
       )}
@@ -344,7 +440,7 @@ export default function LeavePage() {
               </div>
               <div className="modal-body">
                 <p style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
-                  Your objection reason will be visible to the Admin who approved this leave.
+                  Your objection reason will be visible to the approving authority.
                 </p>
                 <textarea className="form-control" rows={3} placeholder="Explain why you are holding this leave request..." value={holdReason} onChange={e => setHoldReason(e.target.value)} />
               </div>
@@ -371,8 +467,13 @@ export default function LeavePage() {
               <div className="modal-body">
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type</label>
-                  <select className="form-select" value={form.type} onChange={e => setForm(p => ({ ...p, type: e.target.value }))}>
-                    {LEAVE_TYPES.map(t => <option key={t}>{t}</option>)}
+                  <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false })); }}>
+                    <option value="">— Select —</option>
+                    {leaveTypes.filter(t => t.isActive).map(t => (
+                      <option key={t._id} value={t._id}>
+                        {t.code} — {t.name}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div className="row g-3 mb-3">
@@ -394,7 +495,7 @@ export default function LeavePage() {
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
                   <i className="bi bi-info-circle me-2 text-primary" />
-                  Approval flow: <strong>Admin</strong> approves first → Team Admin &amp; Team Lead are notified for any objection. Silence = no objection.
+                  Leave policy will determine the approval workflow and available balance.
                 </div>
               </div>
               <div className="modal-footer">

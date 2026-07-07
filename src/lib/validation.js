@@ -294,18 +294,12 @@ export const ReviewSelfServiceRequestSchema = z.object({
 // ────────────────────────────────────────────────────────────────────────────
 
 export const CreateLeaveSchema = z.object({
-  type: z.enum([
-    'Casual Leave',
-    'Sick Leave',
-    'Earned Leave',
-    'Maternity Leave',
-    'Paternity Leave',
-    'Compensatory Leave',
-    'Loss of Pay'
-  ]),
+  typeId: z.string().regex(/^[0-9a-f]{24}$/, 'Invalid leave type'),
   from: DateSchema,
   to: DateSchema,
+  halfDay: z.boolean().optional().default(false),
   reason: z.string().min(10, 'Reason must be at least 10 characters').max(500),
+  documents: z.array(z.string()).optional().default([]),
 }).strict().refine(
   (data) => new Date(data.to) >= new Date(data.from),
   { message: 'End date must be after start date', path: ['to'] }
@@ -328,16 +322,21 @@ export const ApproveLeaveSchema = z.object({
 
 export const ClockInOutSchema = z.object({
   action: z.enum(['in', 'out']),
+  reason: z.string().optional(),
 }).strict();
 
 export const AttendanceRegularizeSchema = z.object({
   date: DateSchema,
-  requestedIn: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional(),
-  requestedOut: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional(),
+  requestedIn: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedOut: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedBreakStart: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedBreakEnd: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedLunchStart: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedLunchEnd: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
   reason: z.string().min(20, 'Reason must be detailed (min 20 chars)').max(1000),
 }).strict().refine(
-  (data) => data.requestedIn || data.requestedOut,
-  { message: 'At least one of requestedIn or requestedOut is required' }
+  (data) => data.requestedIn || data.requestedOut || data.requestedBreakStart || data.requestedBreakEnd || data.requestedLunchStart || data.requestedLunchEnd,
+  { message: 'At least one field (Clock In, Clock Out, Break, or Lunch) must be requested' }
 );
 
 export const ApproveRegularizationSchema = z.object({
@@ -382,10 +381,20 @@ export const CreateDocumentSchema = z.object({
   fileUrl: z.string().url('Invalid file URL'),
   fileSize: z.string().optional(),
   fileType: z.string().max(50).optional(),
+  mimeType: z.string().max(100).optional(),
+  cloudinaryPublicId: z.string().optional(),
   access: z.enum(['all', 'admin', 'employee']).default('all'),
   employeeId: ObjectIdSchema.optional(),
   expiry: DateSchema.optional(),
 }).strict().omit({ uploadedBy: true, _id: true, createdAt: true, updatedAt: true });
+
+export const UpdateDocumentSchema = z.object({
+  name: z.string().min(2).max(255).optional(),
+  category: z.enum(['Policy', 'Employee', 'Contract', 'HR', 'Other']).optional(),
+  access: z.enum(['all', 'admin', 'employee']).optional(),
+  employeeId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
+  expiry: DateSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
+}).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
 // UTILITY FUNCTIONS

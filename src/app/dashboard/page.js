@@ -40,6 +40,55 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
+  const [permissionForm, setPermissionForm] = useState({ date: '', startTime: '', endTime: '', reason: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [modalSuccess, setModalSuccess] = useState('');
+
+  const resetForm = () => {
+    setPermissionForm({ date: '', startTime: '', endTime: '', reason: '' });
+    setModalError('');
+    setModalSuccess('');
+  };
+
+  const submitPermission = async () => {
+    setModalError('');
+    setModalSuccess('');
+
+    const { date, startTime, endTime, reason } = permissionForm;
+    if (!date) return setModalError('Date is required');
+    if (!startTime) return setModalError('Start time is required');
+    if (!endTime) return setModalError('End time is required');
+    if (!reason || reason.trim().length < 10) return setModalError('Reason must be at least 10 characters');
+
+    const [sh, sm] = startTime.split(':').map(Number);
+    const [eh, em] = endTime.split(':').map(Number);
+    let durationMins = (eh * 60 + em) - (sh * 60 + sm);
+    if (durationMins < 0) durationMins += 24 * 60;
+    if (durationMins > 120) {
+      return setModalError('Permission duration cannot exceed 2 hours');
+    }
+
+    setSubmitting(true);
+    try {
+      await api.post('/api/self-service/requests', {
+        requestType: 'permission',
+        reason,
+        payload: { date, startTime, endTime }
+      });
+      setModalSuccess('Permission request submitted successfully!');
+      setTimeout(() => {
+        setShowPermissionModal(false);
+        resetForm();
+      }, 1500);
+    } catch (e) {
+      setModalError(e.message || 'Failed to submit permission request');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     api.get('/api/dashboard')
       .then(setStats)
@@ -91,10 +140,11 @@ export default function DashboardPage() {
     { icon: 'bi-calendar-check', label: 'Approve Leaves', color: '#f59e0b', href: '/leave' },
     { icon: 'bi-cash-stack', label: 'Run Payroll', color: '#10b981', href: '/payroll' },
     { icon: 'bi-megaphone', label: 'Announce', color: '#8b5cf6', href: '/communication' },
+    { icon: 'bi-shield-check', label: 'Request Permission', color: '#14b8a6', onClick: () => setShowPermissionModal(true) },
   ] : [
     { icon: 'bi-clock', label: 'Mark Attendance', color: '#3b82f6', href: '/attendance' },
     { icon: 'bi-calendar-plus', label: 'Request Leave', color: '#f59e0b', href: '/leave' },
-    { icon: 'bi-check2-square', label: 'My Tasks', color: '#10b981', href: '/tasks' },
+    { icon: 'bi-shield-check', label: 'Request Permission', color: '#10b981', onClick: () => setShowPermissionModal(true) },
     { icon: 'bi-person-badge', label: 'My Profile', color: '#8b5cf6', href: '/self-service' },
   ];
 
@@ -149,23 +199,31 @@ export default function DashboardPage() {
           <div style={{ marginBottom: 28 }}>
             <h6 style={{ fontSize: 13, fontWeight: 700, color: '#64748b', marginBottom: 14, letterSpacing: 0.5, textTransform: 'uppercase' }}>Quick Actions</h6>
             <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              {quickActions.map((a, i) => (
-                <Link key={i} href={a.href}
-                  style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 8,
-                    padding: '10px 18px', borderRadius: 999,
-                    background: '#fff', border: `1px solid ${a.color}20`,
-                    color: a.color, textDecoration: 'none',
-                    fontSize: 13, fontWeight: 600,
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                    transition: 'all 0.2s',
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = a.color; e.currentTarget.style.color = '#fff'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 12px ${a.color}30`; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.color = a.color; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; }}>
-                  <i className={`bi ${a.icon}`} style={{ fontSize: 15 }} />
-                  <span>{a.label}</span>
-                </Link>
-              ))}
+              {quickActions.map((a, i) => {
+                const isButton = !!a.onClick;
+                const Component = isButton ? 'button' : Link;
+                const props = isButton
+                  ? { onClick: a.onClick, type: 'button' }
+                  : { href: a.href };
+
+                return (
+                  <Component key={i} {...props}
+                    style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 8,
+                      padding: '10px 18px', borderRadius: 999,
+                      background: '#fff', border: `1px solid ${a.color}20`,
+                      color: a.color, textDecoration: 'none',
+                      fontSize: 13, fontWeight: 600,
+                      boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = a.color; e.currentTarget.style.color = '#fff'; e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = `0 4px 12px ${a.color}30`; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#fff'; e.currentTarget.style.color = a.color; e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)'; }}>
+                    <i className={`bi ${a.icon}`} style={{ fontSize: 15 }} />
+                    <span>{a.label}</span>
+                  </Component>
+                );
+              })}
             </div>
           </div>
 
@@ -230,6 +288,51 @@ export default function DashboardPage() {
             </div>
           </div>
         </>
+      )}
+
+      {showPermissionModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999, transition: 'all 0.3s ease-in-out'
+        }}>
+          <div className="card shadow-lg" style={{ width: '100%', maxWidth: 500, borderRadius: 16, border: 'none', overflow: 'hidden' }}>
+            <div className="card-header border-0 bg-white pt-4 px-4 d-flex justify-content-between align-items-center">
+              <h5 className="fw-bold m-0" style={{ color: '#0f172a' }}>Request Permission</h5>
+              <button type="button" className="btn-close" onClick={() => { setShowPermissionModal(false); resetForm(); }}></button>
+            </div>
+            <div className="card-body px-4 py-3">
+              {modalError && <div className="alert alert-danger py-2" style={{ fontSize: 13 }}>{modalError}</div>}
+              {modalSuccess && <div className="alert alert-success py-2" style={{ fontSize: 13 }}>{modalSuccess}</div>}
+
+              <div className="mb-3">
+                <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Date <span style={{color:'#ef4444'}}>*</span></label>
+                <input type="date" className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={new Date().toISOString().split('T')[0]} />
+              </div>
+
+              <div className="row g-3 mb-3">
+                <div className="col-6">
+                  <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Start Time <span style={{color:'#ef4444'}}>*</span></label>
+                  <input type="time" className="form-control" value={permissionForm.startTime} onChange={e => setPermissionForm(prev => ({ ...prev, startTime: e.target.value }))} />
+                </div>
+                <div className="col-6">
+                  <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>End Time <span style={{color:'#ef4444'}}>*</span></label>
+                  <input type="time" className="form-control" value={permissionForm.endTime} onChange={e => setPermissionForm(prev => ({ ...prev, endTime: e.target.value }))} />
+                </div>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Reason <span style={{color:'#ef4444'}}>*</span></label>
+                <textarea className="form-control" rows="3" placeholder="Please explain why you need permission (min 10 chars)" value={permissionForm.reason} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z0-9 ]/g, ''); setPermissionForm(prev => ({ ...prev, reason: v })); }}></textarea>
+              </div>
+            </div>
+            <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">
+              <button type="button" className="btn btn-outline-secondary px-3 py-2 btn-sm fw-bold" onClick={() => { setShowPermissionModal(false); resetForm(); }} disabled={submitting}>Cancel</button>
+              <button type="button" className="btn btn-primary px-3 py-2 btn-sm fw-bold" onClick={submitPermission} disabled={submitting}>{submitting ? 'Submitting...' : 'Submit Request'}</button>
+            </div>
+          </div>
+        </div>
       )}
     </AppShell>
   );

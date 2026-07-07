@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 export default function HiredRecruitmentPage() {
   const router = useRouter();
@@ -14,6 +15,8 @@ export default function HiredRecruitmentPage() {
   const [rejectModal, setRejectModal] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [confirmAddModal, setConfirmAddModal] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -96,7 +99,7 @@ export default function HiredRecruitmentPage() {
             <table className="table mb-0">
               <thead><tr><th>Candidate</th><th>Role</th><th>Referral</th><th>Experience</th><th>Action</th></tr></thead>
               <tbody>
-                {applicants.map(app => {
+                {applicants.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(app => {
                   const job = jobs.find(j => j._id === app.jobId || j._id === app.jobId?._id);
                   return (
                     <tr key={app._id}>
@@ -128,6 +131,15 @@ export default function HiredRecruitmentPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && applicants.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.ceil(applicants.length / pageSize)}
+            onPageChange={setCurrentPage}
+            totalItems={applicants.length}
+            pageSize={pageSize}
+          />
         )}
       </div>
 

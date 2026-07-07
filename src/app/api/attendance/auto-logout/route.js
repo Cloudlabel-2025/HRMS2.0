@@ -5,6 +5,7 @@ import { Shift, Notification } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getAttendanceDate } from '@/lib/attendance-date';
+import { getTzTime } from '@/lib/timezone';
 
 const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
 
@@ -14,10 +15,7 @@ function parseTimeToMinutes(timeStr) {
   return h * 60 + m;
 }
 
-function getTodayStr() {
-  const now = new Date();
-  return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
-}
+// getTodayStr is removed as we get the timezone-aware date string directly in POST
 
 export async function POST(req) {
   try {
@@ -35,8 +33,8 @@ export async function POST(req) {
 
     await connectDB();
 
-    const now = new Date();
-    const todayStr = getTodayStr();
+    const now = await getTzTime();
+    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 
     // Get all shifts
     const shifts = await Shift.find({}).lean();
@@ -100,24 +98,45 @@ export async function POST(req) {
         // Calculate hours worked
         const [ih, im] = record.clockIn.split(':').map(Number);
         const [oh, om] = nowTimeStr.split(':').map(Number);
-        const minutes = (oh * 60 + om) - (ih * 60 + im);
+        let elapsedMins = (oh * 60 + om) - (ih * 60 + im);
+        if (elapsedMins < 0) elapsedMins += 24 * 60;
+
+        let finalClockOut = nowTimeStr;
+        let finalMinutes = elapsedMins;
+
+        if (elapsedMins >= 600) {
+          const clockOutMinutes = ih * 60 + im + 600;
+          const foh = Math.floor(clockOutMinutes / 60) % 24;
+          const fom = clockOutMinutes % 60;
+          finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
+          finalMinutes = 600;
+        }
+
         const deduction = record.breakDeduction || 0;
+        const finalHours = Math.min(480, Math.max(0, finalMinutes - deduction));
+        let status = record.status;
+        if (finalHours < 240) {
+          status = 'absent';
+        } else {
+          status = 'present';
+        }
 
         await Attendance.findOneAndUpdate(
           { _id: record._id },
           {
             $set: {
-              clockOut: nowTimeStr,
-              hoursWorked: Math.max(0, minutes - deduction),
-              baseHoursWorked: record.baseHoursWorked || minutes,
+              clockOut: finalClockOut,
+              hoursWorked: finalHours,
+              baseHoursWorked: record.baseHoursWorked || finalMinutes,
               autoLoggedOut: true,
+              status,
               workProgress: (record.workProgress || []).map(row => (
                 row.startTime && !row.endTime
-                  ? { ...row, endTime: nowTimeStr, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
+                  ? { ...row, endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
                   : row
               )),
               breaks: (record.breaks || []).map(row => (
-                row.start && !row.end ? { ...row, end: nowTimeStr } : row
+                row.start && !row.end ? { ...row, end: finalClockOut } : row
               )),
             },
           }

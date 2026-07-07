@@ -18,4 +18,11 @@ const SelfServiceRequestSchema = new mongoose.Schema({
 SelfServiceRequestSchema.index({ identityId: 1, createdAt: -1 });
 SelfServiceRequestSchema.index({ profileId: 1, createdAt: -1 });
 
+if (mongoose.models.SelfServiceRequest) {
+  const oldEnum = mongoose.models.SelfServiceRequest.schema?.path('requestType')?.enumValues || [];
+  if (!oldEnum.includes('permission')) {
+    delete mongoose.models.SelfServiceRequest;
+  }
+}
+
 export default mongoose.models.SelfServiceRequest || mongoose.model('SelfServiceRequest', SelfServiceRequestSchema, 'self_service_requests');

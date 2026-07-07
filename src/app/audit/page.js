@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 const SEVERITY_STYLE = {
   high:   { bg: '#fee2e2', color: '#dc2626', icon: 'bi-shield-exclamation' },
@@ -24,6 +25,12 @@ export default function AuditPage() {
   const [filterSeverity, setFilterSeverity] = useState('');
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 15;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterModule, filterSeverity, search]);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -116,7 +123,7 @@ export default function AuditPage() {
               <tbody>
                 {logs.length === 0 ? (
                   <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-shield-check" /><h6>No logs found</h6></div></td></tr>
-                ) : logs.map(log => {
+                ) : logs.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(log => {
                   const sev = SEVERITY_STYLE[log.severity] || SEVERITY_STYLE.low;
                   return (
                     <tr key={log._id}>
@@ -137,6 +144,15 @@ export default function AuditPage() {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && logs.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.ceil(logs.length / pageSize)}
+            onPageChange={setCurrentPage}
+            totalItems={logs.length}
+            pageSize={pageSize}
+          />
         )}
       </div>
     </AppShell>

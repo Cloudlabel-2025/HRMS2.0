@@ -5,12 +5,14 @@ import AppShell from '@/components/AppShell';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
+import Pagination from '@/components/Pagination';
 
 const TYPE_LABELS = {
   profile_update:            'Profile Update',
   address_update:            'Address Update',
   emergency_contact_update:  'Emergency Contact Update',
   resignation:               'Resignation',
+  permission:                'Permission Request',
 };
 
 const STATUS_STYLE = {
@@ -96,6 +98,32 @@ function PayloadView({ requestType, payload }) {
     );
   }
 
+  if (requestType === 'permission') {
+    return (
+      <div>
+        <div className="row g-2">
+          {[
+            ['Permission Date', payload.date],
+            ['Start Time', payload.startTime],
+            ['End Time', payload.endTime],
+            ['Duration', `${payload.duration} mins`],
+            ['Requests this cycle', `${payload.permissionCountInCycle || 1}`],
+          ].map(([label, val]) => (
+            <div key={label} className="col-md-2">
+              <div style={{ fontSize: 11, color: '#94a3b8' }}>{label}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{val ?? '—'}</div>
+            </div>
+          ))}
+        </div>
+        {payload.isThirdOrMore && (
+          <div className="alert alert-warning py-2 px-3 mt-3 mb-0" style={{ fontSize: 13, borderLeft: '4px solid #f59e0b', color: '#854d0e', backgroundColor: '#fef9c3', borderColor: '#fef08a' }}>
+            <strong>⚠️ Warning:</strong> This is the employee's <strong>{payload.permissionCountInCycle}th</strong> permission request in this payroll cycle ({payload.cycleRange?.fromDate} to {payload.cycleRange?.toDate}).
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return <pre style={{ fontSize: 12 }}>{JSON.stringify(payload, null, 2)}</pre>;
 }
 
@@ -109,6 +137,8 @@ export default function CoreHrRequestsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -122,6 +152,7 @@ export default function CoreHrRequestsPage() {
       setRequests(Array.isArray(res.requests) ? res.requests : []);
       setSelected(null);
       setReviewNote('');
+      setPage(1);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -151,6 +182,7 @@ export default function CoreHrRequestsPage() {
 
   const handleFilter = (status) => {
     setFilterStatus(status);
+    setPage(1);
     load(status);
   };
 
@@ -191,8 +223,9 @@ export default function CoreHrRequestsPage() {
                 <h6>No {filterStatus} requests</h6>
               </div>
             ) : (
-              <div className="list-group list-group-flush">
-                {requests.map(req => (
+              <>
+                <div className="list-group list-group-flush">
+                  {requests.slice((page - 1) * pageSize, page * pageSize).map(req => (
                   <button key={req._id} type="button"
                     onClick={() => { setSelected(req); setReviewNote(''); }}
                     className="list-group-item list-group-item-action"
@@ -216,6 +249,18 @@ export default function CoreHrRequestsPage() {
                   </button>
                 ))}
               </div>
+              {requests.length > 0 && (
+                <div className="p-3 border-top">
+                  <Pagination
+                    currentPage={page}
+                    totalPages={Math.ceil(requests.length / pageSize)}
+                    onPageChange={setPage}
+                    totalItems={requests.length}
+                    pageSize={pageSize}
+                  />
+                </div>
+              )}
+            </>
             )}
           </div>
         </div>

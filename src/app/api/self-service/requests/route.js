@@ -8,6 +8,7 @@ import { ok, fail } from '@/lib/jwt';
 import { CORE_HR_ADMIN_ROLES } from '@/lib/core/constants';
 import { CreateSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
+import { getGlobalConfig, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
 
 function normalizePayload(requestType, payload) {
   if (requestType === 'profile_update') {
@@ -37,6 +38,18 @@ function normalizePayload(requestType, payload) {
       lastWorkingDate: payload.lastWorkingDate || null,
       settlementStatus: payload.settlementStatus || 'pending',
       exitInterviewComplete: !!payload.exitInterviewComplete,
+    };
+  }
+
+  if (requestType === 'permission') {
+    return {
+      date: payload.date || '',
+      startTime: payload.startTime || '',
+      endTime: payload.endTime || '',
+      duration: Number(payload.duration || 0),
+      permissionCountInCycle: Number(payload.permissionCountInCycle || 1),
+      isThirdOrMore: !!payload.isThirdOrMore,
+      cycleRange: payload.cycleRange || null,
     };
   }
 
@@ -107,10 +120,50 @@ export async function POST(req) {
       return fail('This profile is already separated', 400);
     }
 
-    const existingPending = await SelfServiceRequest.findOne({ identityId: identity._id, status: 'pending', requestType: body.requestType });
+    if (body.requestType === 'permission') {
+      const { date, startTime, endTime } = body.payload || {};
+      if (!date || !startTime || !endTime) {
+        return fail('Date, start time, and end time are required for permission requests', 400);
+      }
+      const [sh, sm] = startTime.split(':').map(Number);
+      const [eh, em] = endTime.split(':').map(Number);
+      if (Number.isNaN(sh) || Number.isNaN(sm) || Number.isNaN(eh) || Number.isNaN(em)) {
+        return fail('Invalid start or end time format', 400);
+      }
+      let durationMins = (eh * 60 + em) - (sh * 60 + sm);
+      if (durationMins < 0) durationMins += 24 * 60;
+
+      if (durationMins > 120) {
+        return fail('Permission request cannot exceed 2 hours', 400);
+      }
+
+      const config = await getGlobalConfig();
+      const startDay = config.payrollStartDay || 26;
+      const endDay = config.payrollEndDay || 25;
+      const { year, month } = getCycleMonth(date, startDay);
+      const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
+
+      const count = await SelfServiceRequest.countDocuments({
+        profileId: profile._id,
+        requestType: 'permission',
+        status: { $in: ['approved', 'pending'] },
+        'payload.date': { $gte: fromDate, $lte: toDate },
+      });
+
+      body.payload.duration = durationMins;
+      body.payload.permissionCountInCycle = count + 1;
+      body.payload.isThirdOrMore = (count + 1) >= 3;
+      body.payload.cycleRange = { fromDate, toDate };
+    }
+
+    const pendingQuery = { identityId: identity._id, status: 'pending', requestType: body.requestType };
+    if (body.requestType === 'permission') {
+      pendingQuery['payload.date'] = body.payload?.date;
+    }
+    const existingPending = await SelfServiceRequest.findOne(pendingQuery);
     if (existingPending) {
       auditLog('Self-Service Request Failed', 'SelfService', user._id, `Already has pending ${body.requestType} request`, 'low', ip, null, user._id);
-      return fail('You already have a pending request of this type', 409);
+      return fail(body.requestType === 'permission' ? 'You already have a pending permission request for this date' : 'You already have a pending request of this type', 409);
     }
 
     const request = await SelfServiceRequest.create({

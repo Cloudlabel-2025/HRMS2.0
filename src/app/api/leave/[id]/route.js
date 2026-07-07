@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Leave } from '@/lib/models/index';
+import { Leave, LeavePolicy, UserLeaveBalance } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -14,15 +14,32 @@ const ActionSchema = z.object({
 });
 
 function resolveStatus(leave) {
-  // Admin rejected → done
+  const workflow = leave.workflowApprovals || [];
+
+  // Find all "approve" type steps that are required
+  const approveSteps = workflow.filter(s => s.actionType === 'approve');
+
+  // If any required approve step is rejected → final reject
+  const anyRejected = approveSteps.some(s => s.action === 'rejected');
+  if (anyRejected) return 'rejected';
+
+  // If any approve step is held → still pending (admin needs to review)
+  const anyHeld = approveSteps.some(s => s.action === 'held');
+  if (anyHeld) return 'pending';
+
+  // All approve steps must be approved
+  const allApproved = approveSteps.length > 0 && approveSteps.every(s => s.action === 'approved');
+
+  // For review-type steps, they don't block final approval (they can object but don't need to act)
+  if (allApproved) return 'approved';
+
+  // Fallback to legacy logic
   if (leave.adminApproval === 'rejected') return 'rejected';
-  // Admin hasn't acted yet
   if (!leave.adminApproval || leave.adminApproval === 'pending') return 'pending';
-  // Admin approved — any hold from team = still pending for admin to review
   if (leave.teamAdminApproval === 'held' || leave.tlApproval === 'held') return 'pending';
   if (leave.teamAdminApproval === 'rejected' || leave.tlApproval === 'rejected') return 'pending';
-  // Admin approved + no holds/rejections = fully approved
-  return 'approved';
+  if (leave.adminApproval === 'approved') return 'approved';
+  return leave.status;
 }
 
 export async function PUT(req, { params }) {
@@ -33,9 +50,7 @@ export async function PUT(req, { params }) {
     await connectDB();
 
     const body = await req.json();
-    const { id: _x, ...rest } = body;
-
-    const result = ActionSchema.safeParse(rest);
+    const result = ActionSchema.safeParse(body);
     if (!result.success) {
       const msg = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
       return fail('Validation failed: ' + msg, 400);
@@ -45,35 +60,175 @@ export async function PUT(req, { params }) {
     const leave = await Leave.findById(id).populate('userId', 'name email _id');
     if (!leave) return fail('Leave not found', 404);
 
-    const isAdmin     = ['super_admin', 'admin_full'].includes(user.role);
+    if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
+
+    const applicantId = leave.userId._id || leave.userId;
+    const applicantName = leave.userId.name || 'Employee';
+
+    // Try to use dynamic workflow first
+    const policy = leave.policyId
+      ? await LeavePolicy.findById(leave.policyId)
+      : null;
+
+    if (policy && leave.workflowApprovals?.length > 0) {
+      // ── Dynamic workflow approval ──
+      const workflow = leave.workflowApprovals;
+
+      // Find the current step this user can act on
+      const approverStep = workflow.find(s => {
+        if (s.action !== 'pending') return false;
+        const stepDef = policy.approvalWorkflow.find(w => w.step === s.step);
+        return stepDef && stepDef.approverRoles.includes(user.role);
+      });
+
+      if (!approverStep) {
+        // Check if user can override (admin approving after a hold)
+        const heldStep = workflow.find(s => s.action === 'held' || s.action === 'rejected');
+        const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
+        if (heldStep && isAdmin) {
+          // Admin override — approve or reject
+          approveStep(approverStep, action, user, holdReason);
+          // If re-approving after hold, reset held steps
+          if (action === 'approved') {
+            workflow.forEach(s => {
+              if (s.action === 'held' || s.action === 'rejected') {
+                s.action = 'pending';
+                s.holdReason = '';
+              }
+            });
+          }
+        } else {
+          return fail('No pending approval step available for your role', 400);
+        }
+      } else {
+        approveStep(approverStep, action, user, holdReason);
+      }
+
+      function approveStep(stepObj, act, actor, reason) {
+        stepObj.action = act;
+        stepObj.approvedBy = actor._id;
+        stepObj.approvedAt = new Date();
+        if (act === 'held') stepObj.holdReason = reason || '';
+      }
+
+      const newStatus = resolveStatus(leave);
+      leave.status = newStatus;
+
+      // Handle final approval — deduct balance
+      if (newStatus === 'approved') {
+        const isPaid = policy.leaveTypeConfigs?.find(
+          c => c.typeId.toString() === (leave.typeId?.toString() || '')
+        )?.isPaid ?? true;
+
+        if (isPaid && leave.type !== 'Loss of Pay') {
+          const now = new Date();
+          const cycleStart = new Date(now.getFullYear(), 0, 1);
+          const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
+          if (balance) {
+            const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+            if (entry) {
+              const currentAvailable = entry.allocated + entry.carriedForward - entry.used - entry.pending;
+              if (entry.pending >= leave.days) {
+                entry.pending -= leave.days;
+                entry.used += leave.days;
+              } else if (currentAvailable >= leave.days) {
+                entry.used += leave.days;
+                entry.pending = Math.max(0, entry.pending - leave.days);
+              }
+              await balance.save();
+            }
+          }
+
+          // Legacy balance deduction
+          const { Employee } = await import('@/lib/models/index');
+          const emp = await Employee.findOne({ userId: applicantId });
+          if (emp) {
+            const currentBalance = emp.leaveBalance ?? 24;
+            if (currentBalance >= leave.days) {
+              emp.leaveBalance = currentBalance - leave.days;
+              await emp.save();
+            }
+          }
+        }
+
+        await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
+      }
+
+      if (newStatus === 'rejected') {
+        // Restore pending balance
+        const now = new Date();
+        const cycleStart = new Date(now.getFullYear(), 0, 1);
+        const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
+        if (balance) {
+          const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+          if (entry) {
+            entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
+            await balance.save();
+          }
+        }
+
+        await notify(applicantId, 'Leave Rejected', `Your leave request (${leave.from} to ${leave.to}) has been rejected.`, 'leave', leave._id);
+      }
+
+      // Notify next step approvers if approved
+      if (action === 'approved') {
+        const currentStepIndex = policy.approvalWorkflow?.findIndex(w => w.step === approverStep?.step);
+        const nextStep = policy.approvalWorkflow?.[currentStepIndex !== undefined ? currentStepIndex + 1 : -1];
+        if (nextStep) {
+          const nextApprovers = await User.find({ role: { $in: nextStep.approverRoles }, status: 'active' }).select('_id');
+          if (nextApprovers.length) {
+            await notify(
+              nextApprovers.map(a => a._id),
+              `Leave ${action === 'approved' ? 'Approved' : 'Rejected'} — ${nextStep.label} Review`,
+              `${applicantName}'s leave (${leave.from} to ${leave.to}) needs your review.`,
+              'leave',
+              leave._id
+            );
+          }
+        }
+      }
+
+      await leave.save();
+
+      await auditLog(
+        `Leave ${action}`,
+        'Leave',
+        user._id,
+        `${action} leave for ${leave.days} days (${leave.from} to ${leave.to})${action === 'held' ? ` — ${holdReason}` : ''}`,
+        action === 'approved' ? 'medium' : 'low',
+        req.headers.get('x-forwarded-for') || '',
+        null,
+        applicantId
+      );
+
+      return ok(leave);
+    }
+
+    // ── Fallback to legacy approval logic ──
+    const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
     const isTeamAdmin = user.role === 'team_admin';
-    const isTeamLead  = user.role === 'team_lead';
+    const isTeamLead = user.role === 'team_lead';
 
     const hasObjection = leave.teamAdminApproval === 'held' || leave.tlApproval === 'held' ||
                          leave.teamAdminApproval === 'rejected' || leave.tlApproval === 'rejected';
 
-    // Admin can't act on already rejected. Team roles can always act if admin approved.
     if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
     if (isAdmin && leave.status === 'approved' && !hasObjection) return fail('This leave is already approved with no objections', 400);
-
-    const applicantId   = leave.userId._id || leave.userId;
-    const applicantName = leave.userId.name || 'Employee';
 
     if (isAdmin) {
       if (leave.adminApproval !== 'pending' && !hasObjection) {
         return fail('You have already actioned this leave', 400);
       }
-      leave.adminApproval   = action;
+      leave.adminApproval = action;
       leave.adminApprovedBy = user._id;
       leave.adminApprovedAt = new Date();
       if (action === 'held') leave.adminHoldReason = holdReason;
 
-      // When admin overrides (re-approves or rejects after objection), clear objection flags
       if (hasObjection) {
         leave.teamAdminApproval = 'pending';
-        leave.tlApproval        = 'pending';
+        leave.tlApproval = 'pending';
         leave.teamAdminHoldReason = '';
-        leave.tlHoldReason        = '';
+        leave.tlHoldReason = '';
       }
 
       if (action === 'approved') {
@@ -96,7 +251,7 @@ export async function PUT(req, { params }) {
     } else if (isTeamAdmin) {
       if (leave.adminApproval !== 'approved') return fail('Waiting for Admin to approve first', 400);
       if (leave.teamAdminApproval && leave.teamAdminApproval !== 'pending') return fail('You have already actioned this leave', 400);
-      leave.teamAdminApproval   = action;
+      leave.teamAdminApproval = action;
       leave.teamAdminApprovedBy = user._id;
       leave.teamAdminApprovedAt = new Date();
       if (action === 'held') leave.teamAdminHoldReason = holdReason;
@@ -104,27 +259,15 @@ export async function PUT(req, { params }) {
       if (action === 'held' || action === 'rejected') {
         const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id');
         if (admins.length) {
-          await notify(
-            admins.map(a => a._id),
-            `Leave ${action === 'held' ? 'Held' : 'Rejected'} by Team Admin`,
-            `Team Admin ${action === 'held' ? 'placed a hold' : 'rejected'} on ${applicantName}'s leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`,
-            'leave',
-            leave._id
-          );
+          await notify(admins.map(a => a._id), `Leave ${action === 'held' ? 'Held' : 'Rejected'} by Team Admin`, `Team Admin ${action === 'held' ? 'placed a hold' : 'rejected'} on ${applicantName}'s leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`, 'leave', leave._id);
         }
-        await notify(
-          applicantId,
-          `Your Leave has been ${action === 'held' ? 'Held' : 'Rejected'} by Team Admin`,
-          `Team Admin ${action === 'held' ? 'placed a hold on' : 'rejected'} your leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`,
-          'leave',
-          leave._id
-        );
+        await notify(applicantId, `Your Leave has been ${action === 'held' ? 'Held' : 'Rejected'} by Team Admin`, `Team Admin ${action === 'held' ? 'placed a hold on' : 'rejected'} your leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`, 'leave', leave._id);
       }
 
     } else if (isTeamLead) {
       if (leave.adminApproval !== 'approved') return fail('Waiting for Admin to approve first', 400);
       if (leave.tlApproval && leave.tlApproval !== 'pending') return fail('You have already actioned this leave', 400);
-      leave.tlApproval   = action;
+      leave.tlApproval = action;
       leave.tlApprovedBy = user._id;
       leave.tlApprovedAt = new Date();
       if (action === 'held') leave.tlHoldReason = holdReason;
@@ -132,21 +275,9 @@ export async function PUT(req, { params }) {
       if (action === 'held' || action === 'rejected') {
         const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id');
         if (admins.length) {
-          await notify(
-            admins.map(a => a._id),
-            `Leave ${action === 'held' ? 'Held' : 'Rejected'} by Team Lead`,
-            `Team Lead ${action === 'held' ? 'placed a hold' : 'rejected'} on ${applicantName}'s leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`,
-            'leave',
-            leave._id
-          );
+          await notify(admins.map(a => a._id), `Leave ${action === 'held' ? 'Held' : 'Rejected'} by Team Lead`, `Team Lead ${action === 'held' ? 'placed a hold' : 'rejected'} on ${applicantName}'s leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`, 'leave', leave._id);
         }
-        await notify(
-          applicantId,
-          `Your Leave has been ${action === 'held' ? 'Held' : 'Rejected'} by Team Lead`,
-          `Team Lead ${action === 'held' ? 'placed a hold on' : 'rejected'} your leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`,
-          'leave',
-          leave._id
-        );
+        await notify(applicantId, `Your Leave has been ${action === 'held' ? 'Held' : 'Rejected'} by Team Lead`, `Team Lead ${action === 'held' ? 'placed a hold on' : 'rejected'} your leave (${leave.from} to ${leave.to}). Reason: ${holdReason}`, 'leave', leave._id);
       }
 
     } else {
@@ -156,7 +287,6 @@ export async function PUT(req, { params }) {
     const newStatus = resolveStatus(leave);
     leave.status = newStatus;
 
-    // Deduct balance on final approval
     if (newStatus === 'approved' && leave.type !== 'Loss of Pay') {
       const { Employee } = await import('@/lib/models/index');
       const emp = await Employee.findOne({ userId: applicantId });
@@ -168,7 +298,6 @@ export async function PUT(req, { params }) {
         emp.leaveBalance = currentBalance - leave.days;
         await emp.save();
       }
-      // Notify employee of final approval
       await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
     }
 
@@ -202,17 +331,45 @@ export async function DELETE(req, { params }) {
     if (error) return error;
     await connectDB();
 
-    const leave = await Leave.findById(id);
+    const leave = await Leave.findById(id).populate('typeId', 'name');
     if (!leave) return fail('Leave not found', 404);
     if (leave.userId.toString() !== user._id.toString()) return fail('Access denied', 403);
     if (!['pending', 'approved'].includes(leave.status)) return fail('Cannot cancel an already processed leave', 400);
 
+    // Restore balance
     if (leave.status === 'approved' && leave.type !== 'Loss of Pay') {
+      const now = new Date();
+      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
+      if (balance) {
+        const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+        if (entry) {
+          if (leave.status === 'approved') {
+            entry.used = Math.max(0, (entry.used || 0) - leave.days);
+          } else {
+            entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
+          }
+          await balance.save();
+        }
+      }
+
       const { Employee } = await import('@/lib/models/index');
       const emp = await Employee.findOne({ userId: leave.userId });
       if (emp) {
         emp.leaveBalance = (emp.leaveBalance ?? 0) + leave.days;
         await emp.save();
+      }
+    } else if (leave.status === 'pending') {
+      // Restore pending
+      const now = new Date();
+      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
+      if (balance) {
+        const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+        if (entry) {
+          entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
+          await balance.save();
+        }
       }
     }
 

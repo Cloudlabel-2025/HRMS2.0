@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Pagination from '@/components/Pagination';
 
 const STATUSES  = ['To Do', 'In Progress', 'Completed', 'Blocked'];
 const PRIORITIES = ['low', 'medium', 'high'];
@@ -37,6 +38,14 @@ export default function TasksPage() {
   const [loading, setLoading]           = useState(true);
   const [saving, setSaving]         = useState(false);
   const [toast, setToast]           = useState(null);
+  const [listPage, setListPage] = useState(1);
+  const [projPage, setProjPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setListPage(1);
+    setProjPage(1);
+  }, [tab, filterProject]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
@@ -344,7 +353,7 @@ export default function TasksPage() {
                   <tbody>
                     {filtered.length === 0 ? (
                       <tr><td colSpan={7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
-                    ) : filtered.map(task => (
+                    ) : filtered.slice((listPage - 1) * pageSize, listPage * pageSize).map(task => (
                       <tr key={task._id}>
                         <td>
                           <div style={{ fontSize: 13, fontWeight: 600 }}>{task.title}</div>
@@ -374,14 +383,24 @@ export default function TasksPage() {
                   </tbody>
                 </table>
               </div>
+              {filtered.length > 0 && (
+                <Pagination
+                  currentPage={listPage}
+                  totalPages={Math.ceil(filtered.length / pageSize)}
+                  onPageChange={setListPage}
+                  totalItems={filtered.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
           {/* Projects */}
           {tab === 'projects' && (
-            <div className="row g-3">
-              {projects.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-kanban" /><p>No projects yet. Create one!</p></div></div>}
-              {projects.map(proj => {
+            <>
+              <div className="row g-3">
+                {projects.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-kanban" /><p>No projects yet. Create one!</p></div></div>}
+                {projects.slice((projPage - 1) * pageSize, projPage * pageSize).map(proj => {
                 const projTasks = tasks.filter(t => t.projectId?._id === proj._id || t.projectId === proj._id);
                 const done = projTasks.filter(t => t.status === 'Completed').length;
                 const pct  = projTasks.length > 0 ? Math.round((done / projTasks.length) * 100) : proj.progress || 0;
@@ -424,6 +443,18 @@ export default function TasksPage() {
                 );
               })}
             </div>
+            {projects.length > 0 && (
+              <div className="mt-3">
+                <Pagination
+                  currentPage={projPage}
+                  totalPages={Math.ceil(projects.length / pageSize)}
+                  onPageChange={setProjPage}
+                  totalItems={projects.length}
+                  pageSize={pageSize}
+                />
+              </div>
+            )}
+          </>
           )}
         </>
       )}

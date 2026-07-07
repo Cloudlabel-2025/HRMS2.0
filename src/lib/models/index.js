@@ -34,11 +34,14 @@ const DocumentSchema = new mongoose.Schema({
   fileUrl:    { type: String, required: true },
   fileSize:   { type: String },
   fileType:   { type: String },
+  mimeType:   { type: String, default: '' },
   access:     { type: String, enum: ['all','admin','employee'], default: 'all' },
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   employeeId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   expiry:     { type: String, default: null },
   version:    { type: Number, default: 1 },
+  cloudinaryPublicId: { type: String, default: null },
+  deletedAt:  { type: Date, default: null },
 }, { timestamps: true });
 
 // ── Announcement ─────────────────────────────────────────────────────────────
@@ -246,6 +249,10 @@ const AttendanceRegularizationSchema = new mongoose.Schema({
   date:        { type: String, required: true },
   requestedIn: { type: String },
   requestedOut:{ type: String },
+  requestedBreakStart: { type: String, default: null },
+  requestedBreakEnd:   { type: String, default: null },
+  requestedLunchStart: { type: String, default: null },
+  requestedLunchEnd:   { type: String, default: null },
   reason:      { type: String, required: true },
   status:      { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
   reviewedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -350,7 +357,8 @@ export const Shift       = mongoose.models.Shift       || mongoose.model('Shift'
 export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holiday', HolidaySchema);
 export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('SystemConfig', SystemConfigSchema);
 export const Settings    = mongoose.models.Settings    || mongoose.model('Settings', SettingsSchema);
-export const AttendanceRegularization = mongoose.models.AttendanceRegularization || mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
+if (mongoose.models.AttendanceRegularization) delete mongoose.models.AttendanceRegularization;
+export const AttendanceRegularization = mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
 export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('TokenBlacklist', TokenBlacklistSchema);
 export const Role          = mongoose.models.Role          || mongoose.model('Role', RoleSchema);
 export const Designation   = mongoose.models.Designation   || mongoose.model('Designation', DesignationSchema);
@@ -363,3 +371,8 @@ export { default as UsrIdentity } from './Identity';
 export { default as EmpProfile } from './EmploymentProfile';
 export { default as EmpLifecycleHistory } from './LifecycleHistory';
 export { default as SelfServiceRequest } from './SelfServiceRequest';
+
+// Leave Policy models
+export { default as LeaveType } from './LeaveType';
+export { default as LeavePolicy } from './LeavePolicy';
+export { default as UserLeaveBalance } from './UserLeaveBalance';

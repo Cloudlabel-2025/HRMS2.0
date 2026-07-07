@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Pagination from '@/components/Pagination';
 
 const STAGES = ['Applied', 'Screening', 'Interview', 'Offer', 'Hired', 'Rejected'];
 const STAGE_COLORS = { Applied: '#64748b', Screening: '#3b82f6', Interview: '#f59e0b', Offer: '#8b5cf6', Hired: '#10b981', Rejected: '#ef4444' };
@@ -83,6 +84,21 @@ export default function RecruitmentPage() {
   const [savingApp, setSavingApp] = useState(false);
   const [pendingApplicant, setPendingApplicant] = useState(null);
   const router = useRouter();
+
+  const [jobsPage, setJobsPage] = useState(1);
+  const [applicantsPage, setApplicantsPage] = useState(1);
+  const [hiredPage, setHiredPage] = useState(1);
+  const [rejectedPage, setRejectedPage] = useState(1);
+  const [screeningPage, setScreeningPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setJobsPage(1);
+    setApplicantsPage(1);
+    setHiredPage(1);
+    setRejectedPage(1);
+    setScreeningPage(1);
+  }, [tab]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const setAppField = (key, value) => {
@@ -624,9 +640,10 @@ export default function RecruitmentPage() {
       {loading ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
         <>
           {tab === 'jobs' && (
-            <div className="row g-3">
-              {jobs.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-briefcase" /><h6>No job postings yet</h6></div></div>}
-              {jobs.map(job => (
+            <>
+              <div className="row g-3">
+                {jobs.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-briefcase" /><h6>No job postings yet</h6></div></div>}
+                {jobs.slice((jobsPage - 1) * pageSize, jobsPage * pageSize).map(job => (
                 <div key={job._id} className="col-md-6">
                   <div className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -658,6 +675,18 @@ export default function RecruitmentPage() {
                 </div>
               ))}
             </div>
+            {jobs.length > 0 && (
+              <div className="mt-3">
+                <Pagination
+                  currentPage={jobsPage}
+                  totalPages={Math.ceil(jobs.length / pageSize)}
+                  onPageChange={setJobsPage}
+                  totalItems={jobs.length}
+                  pageSize={pageSize}
+                />
+              </div>
+            )}
+          </>
           )}
 
           {tab === 'pipeline' && (
@@ -720,8 +749,9 @@ export default function RecruitmentPage() {
               {jobsWithScreeningQuestions.length === 0 ? (
                 <div className="empty-state"><i className="bi bi-question-circle" /><h6>No screening questions added yet</h6></div>
               ) : (
-                <div style={{ padding: 20, display: 'grid', gap: 14 }}>
-                  {jobsWithScreeningQuestions.map(job => {
+                <>
+                  <div style={{ padding: 20, display: 'grid', gap: 14 }}>
+                    {jobsWithScreeningQuestions.slice((screeningPage - 1) * pageSize, screeningPage * pageSize).map(job => {
                     const hiringManager = findAssignedPerson(job.hiringManagerId);
                     const recruiter = findAssignedPerson(job.recruiterId);
                     const screeningQuestions = getScreeningQuestions(job);
@@ -782,6 +812,18 @@ export default function RecruitmentPage() {
                     );
                   })}
                 </div>
+                {jobsWithScreeningQuestions.length > 0 && (
+                  <div style={{ padding: '0 20px 20px 20px' }}>
+                    <Pagination
+                      currentPage={screeningPage}
+                      totalPages={Math.ceil(jobsWithScreeningQuestions.length / pageSize)}
+                      onPageChange={setScreeningPage}
+                      totalItems={jobsWithScreeningQuestions.length}
+                      pageSize={pageSize}
+                    />
+                  </div>
+                )}
+              </>
               )}
             </div>
           )}
@@ -800,7 +842,7 @@ export default function RecruitmentPage() {
                   <tbody>
                     {applicants.length === 0 ? (
                       <tr><td colSpan={8}><div className="empty-state"><i className="bi bi-people" /><h6>No applicants yet</h6></div></td></tr>
-                    ) : applicants.map(app => {
+                    ) : applicants.slice((applicantsPage - 1) * pageSize, applicantsPage * pageSize).map(app => {
                       const job = jobs.find(j => j._id === app.jobId || j._id === app.jobId?._id);
                       return (
                         <tr key={app._id}>
@@ -847,6 +889,15 @@ export default function RecruitmentPage() {
                   </tbody>
                 </table>
               </div>
+              {applicants.length > 0 && (
+                <Pagination
+                  currentPage={applicantsPage}
+                  totalPages={Math.ceil(applicants.length / pageSize)}
+                  onPageChange={setApplicantsPage}
+                  totalItems={applicants.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
@@ -864,7 +915,7 @@ export default function RecruitmentPage() {
                   <table className="table mb-0">
                     <thead><tr><th>Candidate</th><th>Role</th><th>Referral</th><th>Experience</th><th>Action</th></tr></thead>
                     <tbody>
-                      {hiredApplicants.map(app => {
+                      {hiredApplicants.slice((hiredPage - 1) * pageSize, hiredPage * pageSize).map(app => {
                         const job = jobs.find(j => j._id === app.jobId || j._id === app.jobId?._id);
                         return (
                           <tr key={app._id}>
@@ -897,6 +948,15 @@ export default function RecruitmentPage() {
                   </table>
                 </div>
               )}
+              {hiredApplicants.length > 0 && (
+                <Pagination
+                  currentPage={hiredPage}
+                  totalPages={Math.ceil(hiredApplicants.length / pageSize)}
+                  onPageChange={setHiredPage}
+                  totalItems={hiredApplicants.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
@@ -914,7 +974,7 @@ export default function RecruitmentPage() {
                   <table className="table mb-0">
                     <thead><tr><th>Applicant</th><th>Job</th><th>Experience</th><th>Rejected On</th><th>Reason</th>{isAdmin && <th>Reconsider</th>}</tr></thead>
                     <tbody>
-                      {rejectedApplicants.map(app => {
+                      {rejectedApplicants.slice((rejectedPage - 1) * pageSize, rejectedPage * pageSize).map(app => {
                         const job = jobs.find(j => j._id === app.jobId || j._id === app.jobId?._id);
                         return (
                           <tr key={app._id}>
@@ -943,6 +1003,15 @@ export default function RecruitmentPage() {
                     </tbody>
                   </table>
                 </div>
+              )}
+              {rejectedApplicants.length > 0 && (
+                <Pagination
+                  currentPage={rejectedPage}
+                  totalPages={Math.ceil(rejectedApplicants.length / pageSize)}
+                  onPageChange={setRejectedPage}
+                  totalItems={rejectedApplicants.length}
+                  pageSize={pageSize}
+                />
               )}
             </div>
           )}
