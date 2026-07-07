@@ -1,0 +1,9 @@
+{
+  "appId": "com.cloudlabel.hrms",
+  "appName": "CHC-HRMS",
+  "webDir": "out",
+  "server": {
+    "url": "https://hrms-20.vercel.app",
+    "cleartext": true
+  }
+}
