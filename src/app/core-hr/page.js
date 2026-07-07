@@ -6,6 +6,7 @@ import AppShell from '@/components/AppShell';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
+import Pagination from '@/components/Pagination';
 
 const STATUS_CONFIG = {
   onboarding: { color: '#3b82f6', bg: '#eff6ff', label: 'Onboarding' },
@@ -41,6 +42,12 @@ export default function CoreHrPage() {
   const [search, setSearch]             = useState('');
   const [filterDept, setFilterDept]     = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  const [page, setPage]                 = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterDept, filterStatus]);
 
   const load = async () => {
     setLoading(true); setError('');
@@ -156,8 +163,9 @@ export default function CoreHrPage() {
         {loading ? (
           <div style={{ textAlign: 'center', padding: 48 }}><div className="spinner-border text-primary" /></div>
         ) : (
-          <div className="table-responsive">
-            <table className="table mb-0">
+          <>
+            <div className="table-responsive">
+              <table className="table mb-0">
               <thead>
                 <tr>
                   <th>Employee</th>
@@ -172,7 +180,7 @@ export default function CoreHrPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={7}><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></td></tr>
-                ) : filtered.map(item => (
+                ) : filtered.slice((page - 1) * pageSize, page * pageSize).map(item => (
                   <tr key={item.id} style={{ cursor: 'pointer' }} onClick={() => router.push(`/core-hr/${item.id}`)}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -205,6 +213,18 @@ export default function CoreHrPage() {
               </tbody>
             </table>
           </div>
+          {filtered.length > 0 && (
+            <div className="p-3 border-top">
+              <Pagination
+                currentPage={page}
+                totalPages={Math.ceil(filtered.length / pageSize)}
+                onPageChange={setPage}
+                totalItems={filtered.length}
+                pageSize={pageSize}
+              />
+            </div>
+          )}
+        </>
         )}
       </div>
 

@@ -8,10 +8,12 @@ import { useSettings } from '@/lib/settings';
 const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', general: 'bi-bell', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack' };
 const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', general: '#3b82f6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316' };
 
-function getNotifRoute(n) {
+function getNotifRoute(n, role) {
   if (n.type === 'leave') return '/leave';
   if (n.type === 'attendance') return '/attendance';
-  if (n.type === 'self_service') return '/core-hr/requests';
+  if (n.type === 'self_service') {
+    return ['super_admin', 'admin_full'].includes(role) ? '/core-hr/requests' : '/self-service';
+  }
   if (n.type === 'lifecycle') return '/core-hr';
   if (n.type === 'payroll') return '/payroll';
   return null;
@@ -50,7 +52,7 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
 
   const handleNotifClick = async (n) => {
     await markRead(n._id);
-    const route = getNotifRoute(n);
+    const route = getNotifRoute(n, user?.role);
     if (route) { setShowNotif(false); router.push(route); }
   };
 
@@ -110,7 +112,7 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
               {notifications.length === 0 && <div style={{ padding: '20px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}><i className="bi bi-bell-slash d-block mb-2" style={{ fontSize: 24 }} />No notifications</div>}
               {notifications.slice(0, 8).map(n => (
                 <div key={n._id} className="notif-item" onClick={() => handleNotifClick(n)}
-                  style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: getNotifRoute(n) ? 'pointer' : 'default' }}>
+                  style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: getNotifRoute(n, user?.role) ? 'pointer' : 'default' }}>
                   <div style={{ width: 32, height: 32, borderRadius: 8, background: (NOTIF_COLORS[n.type] || '#3b82f6') + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <i className={`bi ${NOTIF_ICONS[n.type] || 'bi-bell'}`} style={{ color: NOTIF_COLORS[n.type] || '#3b82f6', fontSize: 14 }} />
                   </div>

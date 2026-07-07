@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 export default function AbsencePage() {
   const { user } = useAuth();
@@ -12,6 +13,12 @@ export default function AbsencePage() {
   const [loading, setLoading] = useState(true);
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [toast, setToast] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [month]);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -71,7 +78,7 @@ export default function AbsencePage() {
               <tbody>
                 {absences.length === 0 ? (
                   <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-person-check" /><h6>No absences recorded for {month}</h6></div></td></tr>
-                ) : absences.map(a => (
+                ) : absences.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(a => (
                   <tr key={a._id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -93,6 +100,15 @@ export default function AbsencePage() {
               </tbody>
             </table>
           </div>
+        )}
+        {!loading && absences.length > 0 && (
+          <Pagination
+            currentPage={currentPage}
+            totalPages={Math.ceil(absences.length / pageSize)}
+            onPageChange={setCurrentPage}
+            totalItems={absences.length}
+            pageSize={pageSize}
+          />
         )}
       </div>
     </AppShell>

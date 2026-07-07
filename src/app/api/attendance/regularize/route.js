@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { AttendanceRegularization } from '@/lib/models/index';
+import { AttendanceRegularization, Notification } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -58,16 +58,42 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { date, requestedIn, requestedOut, reason } = validation.data;
+    const {
+      date,
+      requestedIn,
+      requestedOut,
+      requestedBreakStart,
+      requestedBreakEnd,
+      requestedLunchStart,
+      requestedLunchEnd,
+      reason
+    } = validation.data;
 
     const request = await AttendanceRegularization.create({
       userId: user._id,
       date,
-      requestedIn,
-      requestedOut,
+      requestedIn: requestedIn || null,
+      requestedOut: requestedOut || null,
+      requestedBreakStart: requestedBreakStart || null,
+      requestedBreakEnd: requestedBreakEnd || null,
+      requestedLunchStart: requestedLunchStart || null,
+      requestedLunchEnd: requestedLunchEnd || null,
       reason,
       status: 'pending',
     });
+
+    // Send notification to reviewers (super admins, admins, team leads, team admins)
+    const reviewers = await User.find({ role: { $in: ['super_admin', 'admin_full', 'team_lead', 'team_admin'] }, status: 'active' }).lean();
+    const notificationPromises = reviewers.map(reviewer =>
+      Notification.create({
+        userId: reviewer._id,
+        title: 'Attendance Regularization Requested',
+        message: `${user.name} requested attendance regularization for ${date}. Reason: ${reason}`,
+        type: 'attendance',
+        refId: request._id,
+      })
+    );
+    await Promise.all(notificationPromises);
 
     // Audit log
     await auditLog(
@@ -123,17 +149,125 @@ export async function PUT(req) {
 
     // If approved, update the actual attendance record
     if (action === 'approved') {
-      const update = {};
-      if (reg.requestedIn)  update.clockIn = reg.requestedIn;
-      if (reg.requestedOut) update.clockOut = reg.requestedOut;
-      if (reg.requestedIn && reg.requestedOut) {
-        const [inH, inM] = reg.requestedIn.split(':').map(Number);
-        const [outH, outM] = reg.requestedOut.split(':').map(Number);
-        update.hoursWorked = (outH * 60 + outM) - (inH * 60 + inM);
-        update.status = 'present';
+      let attendance = await Attendance.findOne({ userId: reg.userId, date: reg.date });
+      if (!attendance) {
+        attendance = new Attendance({
+          userId: reg.userId,
+          date: reg.date,
+          status: 'present',
+        });
       }
-      await Attendance.findOneAndUpdate({ userId: reg.userId, date: reg.date }, update);
+
+      if (reg.requestedIn)  attendance.clockIn = reg.requestedIn;
+      if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
+
+      // Update breaks
+      const breaks = attendance.breaks ? [...attendance.breaks] : [];
+      const updateBreakType = (breaksArray, type, start, end) => {
+        const index = breaksArray.findIndex(b => b.type === type);
+        if (start || end) {
+          if (index !== -1) {
+            if (start !== undefined && start !== null) breaksArray[index].start = start;
+            if (end !== undefined && end !== null) breaksArray[index].end = end;
+          } else {
+            breaksArray.push({
+              type,
+              start: start || '',
+              end: end || null
+            });
+          }
+        }
+      };
+
+      if (reg.requestedBreakStart !== undefined && reg.requestedBreakStart !== null || reg.requestedBreakEnd !== undefined && reg.requestedBreakEnd !== null) {
+        updateBreakType(breaks, 'break', reg.requestedBreakStart, reg.requestedBreakEnd);
+      }
+      if (reg.requestedLunchStart !== undefined && reg.requestedLunchStart !== null || reg.requestedLunchEnd !== undefined && reg.requestedLunchEnd !== null) {
+        updateBreakType(breaks, 'lunch', reg.requestedLunchStart, reg.requestedLunchEnd);
+      }
+      attendance.breaks = breaks;
+
+      // Update work progress entries for breaks
+      const workProgress = attendance.workProgress ? [...attendance.workProgress] : [];
+      const updateWorkProgressBreak = (wpArray, type, start, end) => {
+        const index = wpArray.findIndex(w => w.type === type);
+        const taskDetails = type === 'lunch' ? 'Lunch break' : 'Break';
+        if (start || end) {
+          if (index !== -1) {
+            if (start !== undefined && start !== null) wpArray[index].startTime = start;
+            if (end !== undefined && end !== null) {
+              wpArray[index].endTime = end;
+              wpArray[index].status = 'completed';
+            }
+          } else {
+            wpArray.push({
+              type,
+              taskDetails,
+              startTime: start || '',
+              endTime: end || null,
+              status: end ? 'completed' : 'work_in_progress',
+              remarks: '',
+              feedback: ''
+            });
+          }
+        }
+      };
+
+      if (reg.requestedBreakStart !== undefined && reg.requestedBreakStart !== null || reg.requestedBreakEnd !== undefined && reg.requestedBreakEnd !== null) {
+        updateWorkProgressBreak(workProgress, 'break', reg.requestedBreakStart, reg.requestedBreakEnd);
+      }
+      if (reg.requestedLunchStart !== undefined && reg.requestedLunchStart !== null || reg.requestedLunchEnd !== undefined && reg.requestedLunchEnd !== null) {
+        updateWorkProgressBreak(workProgress, 'lunch', reg.requestedLunchStart, reg.requestedLunchEnd);
+      }
+      attendance.workProgress = workProgress;
+
+      // Recalculate hours worked
+      const BREAK_ALLOWANCE_MINS = 30;
+      const LUNCH_ALLOWANCE_MINS = 60;
+      
+      const toMinutes = (timeStr) => {
+        if (!timeStr) return 0;
+        const [h, m] = timeStr.split(':').map(Number);
+        return h * 60 + m;
+      };
+      
+      const diffMins = (start, end) => {
+        if (!start || !end) return 0;
+        const s = toMinutes(start), e = toMinutes(end);
+        return e > s ? e - s : 0;
+      };
+
+      if (attendance.clockIn && attendance.clockOut) {
+        const base = diffMins(attendance.clockIn, attendance.clockOut);
+        attendance.baseHoursWorked = base;
+
+        // Calculate break deductions
+        const breakOver = breaks.filter(b => b.type === 'break' && b.end)
+          .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - BREAK_ALLOWANCE_MINS), 0);
+        const lunchOver = breaks.filter(b => b.type === 'lunch' && b.end)
+          .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - LUNCH_ALLOWANCE_MINS), 0);
+        
+        attendance.breakDeduction = breakOver + lunchOver;
+        const finalHours = Math.min(480, Math.max(0, base - attendance.breakDeduction));
+        attendance.hoursWorked = finalHours;
+        if (finalHours < 240) {
+          attendance.status = 'absent';
+        } else {
+          attendance.status = 'present';
+        }
+      }
+      
+      await attendance.save();
     }
+
+    // Send notification to the employee
+    await Notification.create({
+      userId: reg.userId,
+      title: `Attendance Regularization ${action.charAt(0).toUpperCase() + action.slice(1)}`,
+      message: `Your attendance regularization request for ${reg.date} has been ${action} by ${user.name}.`,
+      type: 'attendance',
+      refId: reg._id,
+    });
 
     // Audit log
     await auditLog(

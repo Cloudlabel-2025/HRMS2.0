@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 const PLAN_COLORS = { Basic: '#64748b', Pro: '#3b82f6', Enterprise: '#8b5cf6' };
 const EMPTY_SME = { name: '', contact: '', plan: 'Basic', status: 'trial' };
@@ -17,6 +18,12 @@ export default function SMEPage() {
   const [form, setForm] = useState(EMPTY_SME);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [tab]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -97,9 +104,10 @@ export default function SMEPage() {
       {loading ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
         <>
           {tab === 'clients' && (
-            <div className="row g-3">
-              {smes.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-building" /><h6>No SME clients yet</h6></div></div>}
-              {smes.map(sme => (
+            <>
+              <div className="row g-3">
+                {smes.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-building" /><h6>No SME clients yet</h6></div></div>}
+                {smes.slice((page - 1) * pageSize, page * pageSize).map(sme => (
                 <div key={sme._id} className="col-md-6">
                   <div className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
@@ -123,6 +131,18 @@ export default function SMEPage() {
                 </div>
               ))}
             </div>
+            {smes.length > 0 && (
+              <div className="mt-3">
+                <Pagination
+                  currentPage={page}
+                  totalPages={Math.ceil(smes.length / pageSize)}
+                  onPageChange={setPage}
+                  totalItems={smes.length}
+                  pageSize={pageSize}
+                />
+              </div>
+            )}
+          </>
           )}
 
           {tab === 'settings' && (

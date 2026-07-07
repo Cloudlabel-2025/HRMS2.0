@@ -137,6 +137,24 @@ async function applyApprovedRequest(request, reviewer) {
       metadata: { requestId: request._id.toString(), source: 'self-service-resignation' },
     });
   }
+
+  if (request.requestType === 'permission') {
+    await recordLifecycleHistory({
+      entityType: 'identity',
+      entityId: identity._id,
+      identityId: identity._id,
+      profileId: profile._id,
+      eventType: 'update',
+      action: 'Approved self-service permission request',
+      fromState: '',
+      toState: '',
+      changes: [],
+      reason: request.reason,
+      actorUserId: reviewer._id,
+      actorRole: reviewer.role,
+      metadata: { requestId: request._id.toString(), source: 'self-service-permission' },
+    });
+  }
 }
 
 export async function GET(req) {
@@ -200,7 +218,7 @@ export async function PUT(req) {
         approved
           ? `Your ${typeLabel} request has been approved.${validation.data.reviewNote ? ' Note: ' + validation.data.reviewNote : ''}`
           : `Your ${typeLabel} request was rejected.${validation.data.reviewNote ? ' Reason: ' + validation.data.reviewNote : ''}`,
-        'general',
+        'self_service',
         request._id
       );
     }

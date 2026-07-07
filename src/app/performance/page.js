@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 const RATING_COLOR = (r) => r >= 4.5 ? '#10b981' : r >= 3.5 ? '#3b82f6' : r >= 2.5 ? '#f59e0b' : '#ef4444';
 const RATING_LABEL = (r) => r >= 4.5 ? 'Excellent' : r >= 3.5 ? 'Good' : r >= 2.5 ? 'Average' : 'Needs Improvement';
@@ -102,6 +103,20 @@ export default function PerformancePage() {
   const [payrollEndDay, setPayrollEndDay] = useState(25);
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [myGoalsPage, setMyGoalsPage] = useState(1);
+  const [empPage, setEmpPage] = useState(1);
+  const [empGoalsPage, setEmpGoalsPage] = useState(1);
+  const [reviewsPage, setReviewsPage] = useState(1);
+  const [analyticsPage, setAnalyticsPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setMyGoalsPage(1);
+    setEmpPage(1);
+    setEmpGoalsPage(1);
+    setReviewsPage(1);
+    setAnalyticsPage(1);
+  }, [tab, departmentFilter, searchQuery]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
@@ -328,9 +343,10 @@ export default function PerformancePage() {
       {loading ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
         <>
           {tab === 'overview' && (
-            <div className="row g-3">
-              {myGoals.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No goals set yet</h6><p>Click "Set Goal" to add your first goal.</p></div></div>}
-              {myGoals.map(goal => (
+            <>
+              <div className="row g-3">
+                {myGoals.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No goals set yet</h6><p>Click "Set Goal" to add your first goal.</p></div></div>}
+                {myGoals.slice((myGoalsPage - 1) * pageSize, myGoalsPage * pageSize).map(goal => (
                 <div key={goal._id} className="col-md-6">
                   <div className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
@@ -352,14 +368,27 @@ export default function PerformancePage() {
                 </div>
               ))}
             </div>
+            {myGoals.length > 0 && (
+              <div className="mt-3">
+                <Pagination
+                  currentPage={myGoalsPage}
+                  totalPages={Math.ceil(myGoals.length / pageSize)}
+                  onPageChange={setMyGoalsPage}
+                  totalItems={myGoals.length}
+                  pageSize={pageSize}
+                />
+              </div>
+            )}
+          </>
           )}
 
           {tab === 'employee-goals' && (
             <div>
               {!selectedEmployee ? (
-                <div className="row g-3">
-                  {filteredEmployees.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></div>}
-                  {filteredEmployees.map(emp => (
+                <>
+                  <div className="row g-3">
+                    {filteredEmployees.length === 0 && <div className="col-12"><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></div>}
+                    {filteredEmployees.slice((empPage - 1) * pageSize, empPage * pageSize).map(emp => (
                     <div key={emp._id} className="col-md-6">
                       <div className="card p-3" style={{ cursor: 'pointer' }} onClick={() => selectEmployee(emp)}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -374,8 +403,20 @@ export default function PerformancePage() {
                         </div>
                       </div>
                     </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                  {filteredEmployees.length > 0 && (
+                    <div className="mt-3">
+                      <Pagination
+                        currentPage={empPage}
+                        totalPages={Math.ceil(filteredEmployees.length / pageSize)}
+                        onPageChange={setEmpPage}
+                        totalItems={filteredEmployees.length}
+                        pageSize={pageSize}
+                      />
+                    </div>
+                  )}
+                </>
               ) : (
                 <>
                   <div style={{ marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -389,8 +430,9 @@ export default function PerformancePage() {
                   ) : employeeGoals.length === 0 ? (
                     <div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No goals set</h6><p>This employee has no goals yet.</p></div>
                   ) : (
-                    <div className="row g-3">
-                      {employeeGoals.map(goal => (
+                    <>
+                      <div className="row g-3">
+                        {employeeGoals.slice((empGoalsPage - 1) * pageSize, empGoalsPage * pageSize).map(goal => (
                         <div key={goal._id} className="col-md-6">
                           <div className="card p-3">
                             <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>{goal.title}</div>
@@ -409,8 +451,20 @@ export default function PerformancePage() {
                         </div>
                       ))}
                     </div>
-                  )}
-                </>
+                    {employeeGoals.length > 0 && (
+                      <div className="mt-3">
+                        <Pagination
+                          currentPage={empGoalsPage}
+                          totalPages={Math.ceil(employeeGoals.length / pageSize)}
+                          onPageChange={setEmpGoalsPage}
+                          totalItems={employeeGoals.length}
+                          pageSize={pageSize}
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+              </>
               )}
             </div>
           )}
@@ -423,7 +477,7 @@ export default function PerformancePage() {
                   <tbody>
                     {filteredReviews.length === 0 ? (
                       <tr><td colSpan={10}><div className="empty-state"><i className="bi bi-graph-up-arrow" /><h6>No reviews yet</h6></div></td></tr>
-                    ) : filteredReviews.map(r => (
+                    ) : filteredReviews.slice((reviewsPage - 1) * pageSize, reviewsPage * pageSize).map(r => (
                       <tr key={r._id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -445,6 +499,15 @@ export default function PerformancePage() {
                   </tbody>
                 </table>
               </div>
+              {filteredReviews.length > 0 && (
+                <Pagination
+                  currentPage={reviewsPage}
+                  totalPages={Math.ceil(filteredReviews.length / pageSize)}
+                  onPageChange={setReviewsPage}
+                  totalItems={filteredReviews.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
@@ -470,7 +533,7 @@ export default function PerformancePage() {
                     <table className="table mb-0">
                       <thead><tr><th>Employee</th><th>Project</th><th>Task</th><th>Overall Rating</th><th>Rating</th><th>Status</th></tr></thead>
                       <tbody>
-                        {filteredReviews.filter(r => r.overall).sort((a, b) => b.overall - a.overall).map(r => (
+                        {filteredReviews.filter(r => r.overall).sort((a, b) => b.overall - a.overall).slice((analyticsPage - 1) * pageSize, analyticsPage * pageSize).map(r => (
                           <tr key={r._id}>
                             <td style={{ fontSize: 13, fontWeight: 600 }}>{r.userId?.name}</td>
                             <td style={{ fontSize: 12 }}>{r.projectId?.name || '—'}</td>
@@ -488,6 +551,15 @@ export default function PerformancePage() {
                       </tbody>
                     </table>
                   </div>
+                  {filteredReviews.filter(r => r.overall).length > 0 && (
+                    <Pagination
+                      currentPage={analyticsPage}
+                      totalPages={Math.ceil(filteredReviews.filter(r => r.overall).length / pageSize)}
+                      onPageChange={setAnalyticsPage}
+                      totalItems={filteredReviews.filter(r => r.overall).length}
+                      pageSize={pageSize}
+                    />
+                  )}
                 </div>
               </div>
             </div>

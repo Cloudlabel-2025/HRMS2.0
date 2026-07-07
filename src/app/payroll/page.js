@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 const MONTHS = Array.from({ length: 6 }, (_, i) => {
   const now = new Date();
@@ -29,6 +30,14 @@ export default function PayrollPage() {
   const strVal = (v) => v === '' || v === undefined || v === null ? '' : String(v);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [registerPage, setRegisterPage] = useState(1);
+  const [structurePage, setStructurePage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setRegisterPage(1);
+    setStructurePage(1);
+  }, [tab, month]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -229,7 +238,7 @@ export default function PayrollPage() {
                   <tbody>
                     {payrolls.length === 0 ? (
                       <tr><td colSpan={13}><div className="empty-state"><i className="bi bi-cash-stack" /><h6>No payroll records for {month}. Run payroll to generate.</h6></div></td></tr>
-                    ) : payrolls.map(p => (
+                    ) : payrolls.slice((registerPage - 1) * pageSize, registerPage * pageSize).map(p => (
                       <tr key={p._id}>
                         <td>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -252,6 +261,15 @@ export default function PayrollPage() {
                   </tbody>
                 </table>
               </div>
+              {payrolls.length > 0 && (
+                <Pagination
+                  currentPage={registerPage}
+                  totalPages={Math.ceil(payrolls.length / pageSize)}
+                  onPageChange={setRegisterPage}
+                  totalItems={payrolls.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
 
@@ -322,7 +340,7 @@ export default function PayrollPage() {
                   <tbody>
                     {structures.length === 0 ? (
                       <tr><td colSpan={9}><div className="empty-state"><i className="bi bi-diagram-3" /><h6>No salary structures defined</h6></div></td></tr>
-                    ) : structures.map ? structures.map(s => {
+                    ) : structures.map ? structures.slice((structurePage - 1) * pageSize, structurePage * pageSize).map(s => {
                       const mg = s.grossLPA / 12;
                       return (
                       <tr key={s._id}>
@@ -341,6 +359,15 @@ export default function PayrollPage() {
                   </tbody>
                 </table>
               </div>
+              {structures.length > 0 && (
+                <Pagination
+                  currentPage={structurePage}
+                  totalPages={Math.ceil(structures.length / pageSize)}
+                  onPageChange={setStructurePage}
+                  totalItems={structures.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
         </>

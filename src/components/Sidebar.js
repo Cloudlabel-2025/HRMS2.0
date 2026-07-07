@@ -26,8 +26,9 @@ const NAV_ITEMS = [
   { module: 'calendar',      href: '/calendar',      icon: 'bi-calendar3',             label: 'Calendar',      section: 'HR' },
   { module: 'reports',       href: '/reports',       icon: 'bi-file-earmark-bar-graph',label: 'Reports',       section: 'ANALYTICS' },
   { module: 'sme',           href: '/sme',           icon: 'bi-building',              label: 'SME Portal',    section: 'ANALYTICS' },
-  { module: 'settings',      href: '/settings',      icon: 'bi-gear',                  label: 'Settings',      section: 'SYSTEM' },
-  { module: 'audit',         href: '/audit',         icon: 'bi-shield-check',          label: 'Audit Logs',    section: 'SYSTEM' },
+  { module: 'settings',      href: '/settings',         icon: 'bi-gear',                  label: 'Settings',         section: 'SYSTEM' },
+  { module: 'settings',      href: '/leave-policies',   icon: 'bi-calendar-check',       label: 'Leave Policies',    section: 'SYSTEM' },
+  { module: 'audit',         href: '/audit',             icon: 'bi-shield-check',          label: 'Audit Logs',        section: 'SYSTEM' },
 ];
 
 const MOBILE_NAV_MODULES = ['dashboard', 'self-service', 'attendance', 'leave', 'settings'];
@@ -123,7 +124,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
         </div>
       </div>
 
-      <nav className="mobile-bottom-nav d-md-none" aria-label="Primary mobile navigation">
+      <nav className={`mobile-bottom-nav d-md-none ${mobileOpen ? 'd-none' : ''}`} aria-label="Primary mobile navigation">
         {mobileNavItems.map(item => (
           <Link
             key={item.href}

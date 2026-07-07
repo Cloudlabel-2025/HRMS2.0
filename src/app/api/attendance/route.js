@@ -6,9 +6,11 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
+import { getTzTime } from '@/lib/timezone';
+import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 
 async function getShiftAwareToday(targetUserId) {
-  const now = new Date();
+  const now = await getTzTime();
   try {
     const targetUser = await User.findById(targetUserId).select('shift');
     if (!targetUser) return null;
@@ -90,6 +92,21 @@ export async function GET(req) {
       .sort({ date: -1 })
       .lean();
 
+    const now = await getTzTime();
+    for (const rec of raw) {
+      if (checkAndApplyAutoLogout(rec, now)) {
+        await Attendance.findByIdAndUpdate(rec._id, {
+          clockOut: rec.clockOut,
+          autoLoggedOut: rec.autoLoggedOut,
+          breaks: rec.breaks,
+          workProgress: rec.workProgress,
+          baseHoursWorked: rec.baseHoursWorked,
+          hoursWorked: rec.hoursWorked,
+          status: rec.status,
+        });
+      }
+    }
+
     // Recompute lateFlag/status based on actual shift start time
     // so that records created by previous buggy clock logic get corrected
     const config = await getGlobalConfig();
@@ -123,7 +140,10 @@ export async function GET(req) {
       const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
       const FIVE_HOURS  = 300;
       const THREE_HOURS = 180;
-      if (shiftFound && minutesSinceShiftStart > FIVE_HOURS) {
+      if (rec.clockOut && rec.hoursWorked < 240) {
+        rec.status = 'absent';
+        rec.lateFlag = false;
+      } else if (shiftFound && minutesSinceShiftStart > FIVE_HOURS) {
         rec.lateFlag = true;
         rec.status = 'leave';
       } else if (shiftFound && minutesSinceShiftStart > THREE_HOURS) {
@@ -152,10 +172,11 @@ export async function POST(req) {
 
     const body = await req.json();
     const targetUserId = body.userId || user._id;
-    const today = await getShiftAwareToday(targetUserId) || (() => {
-      const now = new Date();
-      return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-    })();
+    let today = await getShiftAwareToday(targetUserId);
+    if (!today) {
+      const now = await getTzTime();
+      today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    }
 
     const existing = await Attendance.findOne({ userId: targetUserId, date: today });
     if (existing) return fail('Attendance already marked for today', 409);
@@ -175,10 +196,11 @@ export async function PUT(req) {
 
     const body = await req.json();
     const targetUserId = body.userId || user._id;
-    const today = body.date || (await getShiftAwareToday(targetUserId)) || (() => {
-      const now = new Date();
-      return now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
-    })();
+    let today = body.date || (await getShiftAwareToday(targetUserId));
+    if (!today) {
+      const now = await getTzTime();
+      today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    }
 
     if (targetUserId.toString() !== user._id.toString() && !['super_admin', 'admin_full'].includes(user.role)) {
       return fail('Access denied', 403);

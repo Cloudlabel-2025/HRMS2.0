@@ -12,7 +12,7 @@ export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern',
 export const EMPLOYMENT_STATUSES = ['onboarding', 'probation', 'active', 'suspended', 'resigned', 'terminated', 'retired', 'alumni', 'rehired'];
 export const SEPARATION_TYPES = ['resignation', 'termination', 'retirement', 'contract_end', 'medical_exit', 'death', 'other'];
 export const SETTLEMENT_STATUSES = ['pending', 'in_progress', 'settled'];
-export const SELF_SERVICE_REQUEST_TYPES = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation'];
+export const SELF_SERVICE_REQUEST_TYPES = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation', 'permission'];
 export const SELF_SERVICE_REQUEST_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'];
 
 export const LIFECYCLE_ENTITY_TYPES = ['identity', 'profile', 'address', 'identifier', 'employment', 'separation'];

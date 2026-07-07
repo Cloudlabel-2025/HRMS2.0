@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Task } from '@/lib/models/Task';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getTzTime } from '@/lib/timezone';
 
 export async function GET(req) {
   try {
@@ -9,7 +10,7 @@ export async function GET(req) {
     if (error) return error;
     await connectDB();
 
-    const now = new Date();
+    const now = await getTzTime();
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 
     const tasks = await Task.find({

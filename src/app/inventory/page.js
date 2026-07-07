@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 
 const STATUS_STYLE = {
   assigned: { bg: '#dbeafe', color: '#2563eb' },
@@ -29,6 +30,14 @@ export default function InventoryPage() {
   const [assignTo, setAssignTo] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const [assetsPage, setAssetsPage] = useState(1);
+  const [stockPage, setStockPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setAssetsPage(1);
+    setStockPage(1);
+  }, [tab, search]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -173,7 +182,7 @@ export default function InventoryPage() {
                     <tbody>
                       {filtered.length === 0 ? (
                         <tr><td colSpan={7}><div className="empty-state"><i className="bi bi-box-seam" /><h6>No assets found</h6></div></td></tr>
-                      ) : filtered.map(a => (
+                      ) : filtered.slice((assetsPage - 1) * pageSize, assetsPage * pageSize).map(a => (
                         <tr key={a._id}>
                           <td style={{ fontSize: 12, fontWeight: 700, color: '#3b82f6' }}>{a.assetId}</td>
                           <td style={{ fontSize: 13, fontWeight: 600 }}>{a.name}</td>
@@ -194,6 +203,15 @@ export default function InventoryPage() {
                     </tbody>
                   </table>
                 </div>
+                {filtered.length > 0 && (
+                  <Pagination
+                    currentPage={assetsPage}
+                    totalPages={Math.ceil(filtered.length / pageSize)}
+                    onPageChange={setAssetsPage}
+                    totalItems={filtered.length}
+                    pageSize={pageSize}
+                  />
+                )}
               </div>
             </>
           )}
@@ -206,7 +224,7 @@ export default function InventoryPage() {
                   <tbody>
                     {stock.length === 0 ? (
                       <tr><td colSpan={5}><div className="empty-state"><i className="bi bi-box-seam" /><h6>No stock items</h6></div></td></tr>
-                    ) : stock.map(s => {
+                    ) : stock.slice((stockPage - 1) * pageSize, stockPage * pageSize).map(s => {
                       const low = s.stock <= s.reorderAt;
                       return (
                         <tr key={s._id}>
@@ -221,6 +239,15 @@ export default function InventoryPage() {
                   </tbody>
                 </table>
               </div>
+              {stock.length > 0 && (
+                <Pagination
+                  currentPage={stockPage}
+                  totalPages={Math.ceil(stock.length / pageSize)}
+                  onPageChange={setStockPage}
+                  totalItems={stock.length}
+                  pageSize={pageSize}
+                />
+              )}
             </div>
           )}
         </>

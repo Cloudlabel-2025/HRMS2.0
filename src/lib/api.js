@@ -27,8 +27,9 @@ async function tryRefresh() {
 
 async function request(url, options = {}, retry = true) {
   const token = getToken();
+  const isFormData = options.body instanceof FormData;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
@@ -66,8 +67,8 @@ async function request(url, options = {}, retry = true) {
 
 export const api = {
   get:    (url)        => request(url),
-  post:   (url, body)  => request(url, { method: 'POST',   body: JSON.stringify(body) }),
-  put:    (url, body)  => request(url, { method: 'PUT',    body: JSON.stringify(body) }),
-  patch:  (url, body)  => request(url, { method: 'PATCH',  body: JSON.stringify(body) }),
-  delete: (url, body)  => request(url, { method: 'DELETE', body: JSON.stringify(body) }),
+  post:   (url, body)  => request(url, { method: 'POST',   body: body instanceof FormData ? body : JSON.stringify(body) }),
+  put:    (url, body)  => request(url, { method: 'PUT',    body: body instanceof FormData ? body : JSON.stringify(body) }),
+  patch:  (url, body)  => request(url, { method: 'PATCH',  body: body instanceof FormData ? body : JSON.stringify(body) }),
+  delete: (url, body)  => request(url, { method: 'DELETE', body: body instanceof FormData ? body : JSON.stringify(body) }),
 };

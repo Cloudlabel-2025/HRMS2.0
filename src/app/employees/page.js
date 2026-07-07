@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Pagination from '@/components/Pagination';
 
 const EMPTY_FORM = {
   name: '', email: '', phone: '', department: '', designation: '', role: 'employee', shift: '', status: 'active', joinDate: '',
@@ -50,6 +51,13 @@ export default function EmployeesPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [tab, setTab]               = useState('directory');
   const [firstLogins, setFirstLogins] = useState([]);
+  const [dirPage, setDirPage] = useState(1);
+  const [firstLoginPage, setFirstLoginPage] = useState(1);
+  const pageSize = 10;
+
+  useEffect(() => {
+    setDirPage(1);
+  }, [search, filterDept, filterRole, filterStatus]);
   const [firstLoginsLoading, setFirstLoginsLoading] = useState(false);
   const [showModal, setShowModal]   = useState(false);
   const [editEmp, setEditEmp]       = useState(null);
@@ -302,7 +310,7 @@ export default function EmployeesPage() {
                   <tbody>
                     {filtered.length === 0 ? (
                       <tr><td colSpan={8}><div className="empty-state"><i className="bi bi-people" /><h6>No employees found</h6></div></td></tr>
-                    ) : filtered.map(emp => (
+                    ) : filtered.slice((dirPage - 1) * pageSize, dirPage * pageSize).map(emp => (
                       <tr key={emp._id} style={{ transition: 'background 0.15s' }}>
                         <td>
                           <Link href={`/employees/${emp._id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -360,6 +368,15 @@ export default function EmployeesPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && filtered.length > 0 && (
+              <Pagination
+                currentPage={dirPage}
+                totalPages={Math.ceil(filtered.length / pageSize)}
+                onPageChange={setDirPage}
+                totalItems={filtered.length}
+                pageSize={pageSize}
+              />
             )}
           </div>
         </>
@@ -439,7 +456,7 @@ export default function EmployeesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {firstLogins.map(emp => (
+                  {firstLogins.slice((firstLoginPage - 1) * pageSize, firstLoginPage * pageSize).map(emp => (
                     <tr key={emp._id} style={{ transition: 'background 0.15s' }}>
                       <td>
                         <Link href={`/employees/${emp._id}`} style={{ textDecoration: 'none', color: 'inherit' }}>
@@ -488,6 +505,15 @@ export default function EmployeesPage() {
                 </tbody>
               </table>
             </div>
+          )}
+          {!firstLoginsLoading && firstLogins.length > 0 && (
+            <Pagination
+              currentPage={firstLoginPage}
+              totalPages={Math.ceil(firstLogins.length / pageSize)}
+              onPageChange={setFirstLoginPage}
+              totalItems={firstLogins.length}
+              pageSize={pageSize}
+            />
           )}
         </div>
       )}
