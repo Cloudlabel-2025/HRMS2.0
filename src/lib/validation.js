@@ -72,7 +72,9 @@ export const CreateEmployeeSchema = z.object({
   address: z.string().min(1, 'Address required').max(500),
   emergencyContactName: z.string().min(1, 'Emergency contact name required').max(120),
   emergencyContactPhone: z.string().regex(/^[0-9]{10}$/, 'Emergency phone must be 10 digits'),
-  gender: z.enum(['male', 'female', 'non_binary', 'prefer_not_to_say']),
+  gender: z.enum(['male', 'female', 'transgender', 'non_binary', 'prefer_not_to_say']),
+  maritalStatus: z.enum(['single', 'married', 'divorced', 'widowed', 'separated', 'prefer_not_to_say']).default('prefer_not_to_say'),
+  employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant', 'apprentice']).default('full_time'),
   bloodGroup: z.string().min(1, 'Blood group required').max(10),
 });
 

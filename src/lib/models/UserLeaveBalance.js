@@ -1,5 +1,11 @@
 import mongoose from 'mongoose';
 
+const PeriodUsageSchema = new mongoose.Schema({
+  period:          { type: String, required: true }, // e.g., '2026-Q1', '2026-M04', '2026-H1'
+  used:            { type: Number, default: 0 },
+  cap:             { type: Number, default: 0 },
+}, { _id: false });
+
 const BalanceEntrySchema = new mongoose.Schema({
   typeId:          { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveType', required: true },
   allocated:       { type: Number, default: 0 },
@@ -7,6 +13,7 @@ const BalanceEntrySchema = new mongoose.Schema({
   pending:         { type: Number, default: 0 },
   carriedForward:  { type: Number, default: 0 },
   expiryDate:      { type: Date, default: null },
+  periodUsage:     [PeriodUsageSchema],
 }, { _id: false });
 
 const UserLeaveBalanceSchema = new mongoose.Schema({

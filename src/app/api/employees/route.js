@@ -166,7 +166,7 @@ export async function POST(req) {
         personalPhone:   validated.phone || '',
         gender:          validated.gender || 'prefer_not_to_say',
         bloodGroup:      validated.bloodGroup || '',
-        maritalStatus:   'prefer_not_to_say',
+        maritalStatus:   validated.maritalStatus || 'prefer_not_to_say',
         nationality:     'Indian',
         sourceSystem:    sourceApplicant ? 'recruitment' : 'manual',
       };
@@ -209,7 +209,7 @@ export async function POST(req) {
       const profile = await EmpProfile.create({
         identityId:       identity._id,
         employeeNumber,
-        employmentType:   'full_time',
+        employmentType:   validated.employmentType || 'full_time',
         employmentStatus: 'onboarding',
         department:       validated.department,
         designation:      validated.designation || '',

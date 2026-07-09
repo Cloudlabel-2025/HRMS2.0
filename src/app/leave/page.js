@@ -222,6 +222,28 @@ export default function LeavePage() {
             const total = b.allocated + b.carriedForward;
             const pct = total > 0 ? Math.min(Math.round(((b.used + b.pending) / total) * 100), 100) : 0;
             const color = lt?.color || '#3b82f6';
+
+            // Find matching config for period cap details
+            const cfg = balanceData.policy?.leaveTypeConfigs?.find(
+              c => c.typeId === (b.typeId?._id || b.typeId)
+            );
+            let periodText = null;
+            if (cfg && cfg.maxUsagePerPeriod > 0) {
+              const unit = cfg.usagePeriod || 'annual';
+              const now = new Date();
+              const cycleStart = new Date(balanceData.cycleStart || new Date(now.getFullYear(), 0, 1));
+              const monthsDiff = (now.getFullYear() - cycleStart.getFullYear()) * 12 + now.getMonth() - cycleStart.getMonth();
+              let periodCode = 'A0';
+              if (unit === 'monthly') periodCode = `M${monthsDiff}`;
+              else if (unit === 'quarterly') periodCode = `Q${Math.floor(monthsDiff / 3)}`;
+              else if (unit === 'half_yearly') periodCode = `H${Math.floor(monthsDiff / 6)}`;
+
+              const periodUsageEntry = b.periodUsage?.find(p => p.periodCode === periodCode);
+              const periodUsed = periodUsageEntry ? (periodUsageEntry.used + periodUsageEntry.pending) : 0;
+              const periodLeft = Math.max(0, cfg.maxUsagePerPeriod - periodUsed);
+              periodText = `${periodLeft} left of ${cfg.maxUsagePerPeriod} this ${unit.replace('_', '-')}`;
+            }
+
             return (
               <div key={b.typeId?._id || b.typeId} className="col-6 col-xl-3">
                 <div className="stat-card">
@@ -242,6 +264,11 @@ export default function LeavePage() {
                   {b.carriedForward > 0 && (
                     <div style={{ fontSize: 10, color: '#f59e0b', marginTop: 2 }}>
                       Carry fwd: +{b.carriedForward}
+                    </div>
+                  )}
+                  {periodText && (
+                    <div style={{ fontSize: 10, color: '#0ea5e9', marginTop: 4, borderTop: '1px dashed #e2e8f0', paddingTop: 4 }}>
+                      <i className="bi bi-hourglass-split me-1" />{periodText}
                     </div>
                   )}
                 </div>
@@ -456,14 +483,24 @@ export default function LeavePage() {
               <div className="modal-body">
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type</label>
-                  <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false })); }}>
-                    <option value="">— Select —</option>
-                    {leaveTypes.filter(t => t.isActive).map(t => (
-                      <option key={t._id} value={t._id}>
-                        {t.code} — {t.name}
-                      </option>
-                    ))}
-                  </select>
+                  {leaveTypes.filter(t => t.isActive && (!balanceData?.balances || balanceData.balances.some(b => (b.typeId?._id || b.typeId) === t._id))).length === 0 ? (
+                    <div className="alert alert-warning py-2 px-3 m-0" style={{ fontSize: 12 }}>
+                      <i className="bi bi-exclamation-triangle-fill me-2" />
+                      No leave types are available. This happens if you have no active leave policy assigned to your role, or if you do not meet the eligibility rules of any leave types.
+                    </div>
+                  ) : (
+                    <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false })); }}>
+                      <option value="">— Select —</option>
+                      {leaveTypes
+                        .filter(t => t.isActive && (!balanceData?.balances || balanceData.balances.some(b => (b.typeId?._id || b.typeId) === t._id)))
+                        .map(t => (
+                          <option key={t._id} value={t._id}>
+                            {t.code} — {t.name}
+                          </option>
+                        ))
+                      }
+                    </select>
+                  )}
                 </div>
                 <div className="row g-3 mb-3">
                   <div className="col-6">

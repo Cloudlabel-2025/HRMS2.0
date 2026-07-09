@@ -121,15 +121,27 @@ export default function LeavePoliciesPage() {
 
   // ── Policy CRUD ──
   const savePolicy = async () => {
-    if (!policyForm?.name?.trim()) { showToast('Policy name is required', 'error'); return; }
+    let nameVal = policyForm?.name?.trim();
+    if (!nameVal) {
+      nameVal = `Draft Policy - ${new Date().toLocaleDateString()}`;
+    }
     setSaving(true);
     try {
-      if (policyForm._id) {
-        await api.put(`/api/settings/leave-policies/${policyForm._id}`, policyForm);
-      } else {
-        await api.post('/api/settings/leave-policies', policyForm);
+      const payload = JSON.parse(JSON.stringify(policyForm));
+      payload.name = nameVal;
+      if (payload.leaveTypeConfigs) {
+        payload.leaveTypeConfigs = payload.leaveTypeConfigs.map(cfg => ({
+          ...cfg,
+          typeId: cfg.typeId && typeof cfg.typeId === 'object' ? (cfg.typeId._id || cfg.typeId) : cfg.typeId
+        }));
       }
-      showToast('Policy saved');
+
+      if (payload._id) {
+        await api.put(`/api/settings/leave-policies/${payload._id}`, payload);
+      } else {
+        await api.post('/api/settings/leave-policies', payload);
+      }
+      showToast('Policy saved successfully');
       setEditingPolicy(null);
       setPolicyForm(null);
       loadPolicies();
@@ -148,7 +160,20 @@ export default function LeavePoliciesPage() {
 
   const openPolicyEditor = (policy = null) => {
     if (policy) {
-      setPolicyForm(JSON.parse(JSON.stringify(policy)));
+      const cloned = JSON.parse(JSON.stringify(policy));
+      if (cloned.leaveTypeConfigs) {
+        cloned.leaveTypeConfigs = cloned.leaveTypeConfigs.map(cfg => ({
+          ...cfg,
+          creditSchedule:       cfg.creditSchedule || (cfg.accrualMode === 'monthly' ? 'monthly' : 'upfront'),
+          maxUsagePerPeriod:    cfg.maxUsagePerPeriod || 0,
+          usagePeriod:          cfg.usagePeriod || 'annual',
+          unusedPeriodRollover: cfg.unusedPeriodRollover || false,
+          eligibilityRules:     cfg.eligibilityRules || [],
+          useCustomWorkflow:    cfg.useCustomWorkflow || false,
+          approvalWorkflow:     cfg.approvalWorkflow || [],
+        }));
+      }
+      setPolicyForm(cloned);
     } else {
       setPolicyForm({
         name: '', description: '', isDefault: false, status: 'active',
@@ -165,6 +190,9 @@ export default function LeavePoliciesPage() {
           probationAllowed: true, probationAllocation: 0,
           accrualMode: 'upfront', prorateForNewJoiners: false, 
           noticePeriodDays: 0, requireDocsIfConsecutiveDays: 0,
+          creditSchedule: 'upfront', maxUsagePerPeriod: 0, usagePeriod: 'annual',
+          unusedPeriodRollover: false, eligibilityRules: [], useCustomWorkflow: false,
+          approvalWorkflow: [],
         })),
         approvalWorkflow: [
           { step: 1, label: 'Admin', approverRoles: ['super_admin', 'admin_full'], actionType: 'approve', required: true, escalateAfterHours: 0 },
@@ -314,11 +342,12 @@ export default function LeavePoliciesPage() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   {policyForm.leaveTypeConfigs.map((cfg, i) => {
-                    const lt = types.find(t => t._id === cfg.typeId);
-                    const isExpanded = expandedType === cfg.typeId;
+                    const typeIdStr = cfg.typeId && typeof cfg.typeId === 'object' ? cfg.typeId._id : cfg.typeId;
+                    const lt = types.find(t => t._id === typeIdStr);
+                    const isExpanded = expandedType === typeIdStr;
                     return (
-                      <div key={cfg.typeId} style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: cfg.enabled ? '#fff' : '#f8fafc' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', background: isExpanded ? '#f8fafc' : 'transparent', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none' }} onClick={() => setExpandedType(isExpanded ? null : cfg.typeId)}>
+                      <div key={typeIdStr} style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: cfg.enabled ? '#fff' : '#f8fafc' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', background: isExpanded ? '#f8fafc' : 'transparent', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none' }} onClick={() => setExpandedType(isExpanded ? null : typeIdStr)}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                             <div className="form-check form-switch m-0" onClick={e => e.stopPropagation()}>
                               <input className="form-check-input" type="checkbox" checked={cfg.enabled} style={{ width: 36, height: 18 }} onChange={e => {
@@ -339,16 +368,51 @@ export default function LeavePoliciesPage() {
                           <div style={{ padding: 20 }}>
                             <div className="row g-4">
                               <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8 }}>Basic Settings</div>
+                              {(lt?.code === 'ML' || lt?.name?.toLowerCase().includes('maternity')) && (
+                                <div className="col-12 m-0 mt-2">
+                                  <div className="alert alert-info py-2 px-3 m-0 d-flex justify-content-between align-items-center" style={{ fontSize: 12 }}>
+                                    <span><i className="bi bi-info-circle-fill me-2" />Indian law mandates a minimum of 26 weeks (182 days) of Maternity Leave.</span>
+                                    <button className="btn btn-xs btn-outline-info py-1" style={{ fontSize: 11, color: '#000' }} onClick={() => {
+                                      const u = [...policyForm.leaveTypeConfigs];
+                                      u[i] = { ...u[i], annualAllocation: 182 };
+                                      setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                    }}>Apply 182 Days</button>
+                                  </div>
+                                </div>
+                              )}
                               <div className="col-md-3">
                                 <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Annual Allocation</label>
                                 <input type="number" className="form-control form-control-sm" min={0} value={cfg.annualAllocation} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], annualAllocation: Number(e.target.value) }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
                               </div>
                               <div className="col-md-3">
-                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Accrual Mode</label>
-                                <select className="form-select form-select-sm" value={cfg.accrualMode} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], accrualMode: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
-                                  <option value="upfront">Upfront (Granted Jan 1st)</option>
-                                  <option value="monthly">Monthly Accrual</option>
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Credit Schedule</label>
+                                <select className="form-select form-select-sm" value={cfg.creditSchedule || 'upfront'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], creditSchedule: e.target.value, accrualMode: e.target.value === 'upfront' ? 'upfront' : 'monthly' }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
+                                  <option value="upfront">Upfront (Entire Year)</option>
+                                  <option value="monthly">Monthly</option>
+                                  <option value="quarterly">Quarterly</option>
+                                  <option value="half_yearly">Half-Yearly</option>
                                 </select>
+                              </div>
+                              <div className="col-md-3">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Max Usage Per Period</label>
+                                <input type="number" className="form-control form-control-sm" min={0} value={cfg.maxUsagePerPeriod || 0} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], maxUsagePerPeriod: Number(e.target.value) }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} placeholder="0 = No limit" />
+                              </div>
+                              <div className="col-md-3">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Usage Period Unit</label>
+                                <select className="form-select form-select-sm" value={cfg.usagePeriod || 'annual'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], usagePeriod: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
+                                  <option value="annual">Annual</option>
+                                  <option value="monthly">Monthly</option>
+                                  <option value="quarterly">Quarterly</option>
+                                  <option value="half_yearly">Half-Yearly</option>
+                                  <option value="calendar_year">Calendar Year</option>
+                                  <option value="financial_year">Financial Year</option>
+                                </select>
+                              </div>
+                              <div className="col-md-3 d-flex align-items-end">
+                                <div className="form-check">
+                                  <input className="form-check-input" type="checkbox" id={`rollover-${i}`} checked={cfg.unusedPeriodRollover || false} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], unusedPeriodRollover: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                                  <label className="form-check-label" htmlFor={`rollover-${i}`} style={{ fontSize: 12 }}>Rollover Unused Period Balance</label>
+                                </div>
                               </div>
                               <div className="col-md-3 d-flex align-items-end">
                                 <div className="form-check">
@@ -361,6 +425,16 @@ export default function LeavePoliciesPage() {
                                   <input className="form-check-input" type="checkbox" id={`paid-${i}`} checked={cfg.isPaid} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], isPaid: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
                                   <label className="form-check-label" htmlFor={`paid-${i}`} style={{ fontSize: 12 }}>Is Paid Leave</label>
                                 </div>
+                              </div>
+                              <div className="col-md-3">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Gender Restriction</label>
+                                <select className="form-select form-select-sm" value={cfg.genderRestriction || 'all'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], genderRestriction: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
+                                  <option value="all">All Genders</option>
+                                  <option value="female">Female Only</option>
+                                  <option value="male">Male Only</option>
+                                  <option value="maternity">Maternity (Female Only)</option>
+                                  <option value="paternity">Paternity (Male Only)</option>
+                                </select>
                               </div>
 
                               <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8, marginTop: 24 }}>Restrictions & Rules</div>
@@ -417,6 +491,173 @@ export default function LeavePoliciesPage() {
                                     </div>
                                   </div>
                                 )}
+                              </div>
+
+                              <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8, marginTop: 24 }}>Dynamic Eligibility Rules</div>
+                              <div className="col-12">
+                                <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
+                                  Specify rules that employees must satisfy to be eligible for this leave type. If no rules are defined, the leave is applicable to everyone by default.
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                                  {(cfg.eligibilityRules || []).map((rule, ri) => (
+                                    <div key={ri} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                      <select className="form-select form-select-sm" style={{ width: 200 }} value={rule.field} onChange={e => {
+                                        const u = [...policyForm.leaveTypeConfigs];
+                                        const rules = [...(u[i].eligibilityRules || [])];
+                                        rules[ri] = { ...rules[ri], field: e.target.value, value: '' };
+                                        u[i].eligibilityRules = rules;
+                                        setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                      }}>
+                                        <option value="gender">Gender</option>
+                                        <option value="maritalStatus">Marital Status</option>
+                                        <option value="employmentType">Employment Type</option>
+                                        <option value="department">Department</option>
+                                        <option value="serviceMonths">Tenure (Service Months)</option>
+                                      </select>
+
+                                      <select className="form-select form-select-sm" style={{ width: 150 }} value={rule.operator} onChange={e => {
+                                        const u = [...policyForm.leaveTypeConfigs];
+                                        const rules = [...(u[i].eligibilityRules || [])];
+                                        rules[ri] = { ...rules[ri], operator: e.target.value };
+                                        u[i].eligibilityRules = rules;
+                                        setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                      }}>
+                                        <option value="equals">Equals</option>
+                                        <option value="not_equals">Not Equals</option>
+                                        <option value="in">In (comma separated)</option>
+                                        <option value="not_in">Not In (comma separated)</option>
+                                        <option value="gte">Greater Than or Equal (GTE)</option>
+                                        <option value="lte">Less Than or Equal (LTE)</option>
+                                      </select>
+
+                                      <input type="text" className="form-control form-control-sm" placeholder="Value (e.g. married, female, full_time)" value={rule.value || ''} onChange={e => {
+                                        const u = [...policyForm.leaveTypeConfigs];
+                                        const rules = [...(u[i].eligibilityRules || [])];
+                                        rules[ri] = { ...rules[ri], value: e.target.value };
+                                        u[i].eligibilityRules = rules;
+                                        setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                      }} style={{ flex: 1 }} />
+
+                                      <button className="btn btn-sm btn-outline-danger" onClick={() => {
+                                        const u = [...policyForm.leaveTypeConfigs];
+                                        u[i].eligibilityRules = (u[i].eligibilityRules || []).filter((_, idx) => idx !== ri);
+                                        setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                      }}>
+                                        <i className="bi bi-trash" />
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                                <button className="btn btn-xs btn-outline-primary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => {
+                                  const u = [...policyForm.leaveTypeConfigs];
+                                  u[i].eligibilityRules = [...(u[i].eligibilityRules || []), { field: 'gender', operator: 'equals', value: '' }];
+                                  setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                }}>
+                                  <i className="bi bi-plus-lg me-1" /> Add Eligibility Rule
+                                </button>
+                              </div>
+
+                              <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8, marginTop: 24 }}>Custom Approval Workflow</div>
+                              <div className="col-12 d-flex flex-column gap-3">
+                                <div className="form-check form-switch m-0" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                  <input className="form-check-input" type="checkbox" id={`custom-workflow-${i}`} checked={cfg.useCustomWorkflow || false} onChange={e => {
+                                    const u = [...policyForm.leaveTypeConfigs];
+                                    u[i] = {
+                                      ...u[i],
+                                      useCustomWorkflow: e.target.checked,
+                                      approvalWorkflow: e.target.checked ? (u[i].approvalWorkflow || [{ step: 1, label: 'Manager', approverRoles: ['team_lead'], actionType: 'approve', required: true, escalateAfterHours: 0 }]) : []
+                                    };
+                                    setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                  }} style={{ width: 40, height: 20 }} />
+                                  <label className="form-check-label" htmlFor={`custom-workflow-${i}`} style={{ fontSize: 13, fontWeight: 600 }}>Use Custom Workflow for this Leave Type</label>
+                                </div>
+
+                                {cfg.useCustomWorkflow && (
+                                  <div style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                    {(cfg.approvalWorkflow || []).map((step, si) => (
+                                      <div key={si} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: 12 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                          <span style={{ fontWeight: 600, fontSize: 12 }}>Step {si + 1}</span>
+                                          <button className="btn btn-sm btn-outline-danger" style={{ padding: '2px 6px', fontSize: 11 }} onClick={() => {
+                                            const u = [...policyForm.leaveTypeConfigs];
+                                            u[i].approvalWorkflow = u[i].approvalWorkflow.filter((_, idx) => idx !== si);
+                                            setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                          }} disabled={(cfg.approvalWorkflow || []).length <= 1}>
+                                            <i className="bi bi-trash" />
+                                          </button>
+                                        </div>
+                                        <div className="row g-2">
+                                          <div className="col-md-3">
+                                            <label style={{ fontSize: 10, fontWeight: 600, color: '#475569' }}>Label</label>
+                                            <input className="form-control form-control-sm" placeholder="e.g. Dept Head" value={step.label} onChange={e => {
+                                              const u = [...policyForm.leaveTypeConfigs];
+                                              const steps = [...u[i].approvalWorkflow];
+                                              steps[si] = { ...steps[si], label: e.target.value };
+                                              u[i].approvalWorkflow = steps;
+                                              setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                            }} />
+                                          </div>
+                                          <div className="col-md-3">
+                                            <label style={{ fontSize: 10, fontWeight: 600, color: '#475569' }}>Approver Roles</label>
+                                            <div style={{ background: '#fff', border: '1px solid #dee2e6', borderRadius: 4, padding: '4px 8px', maxHeight: 80, overflowY: 'auto' }}>
+                                              {['super_admin', 'admin_full', 'team_admin', 'team_lead'].map(r => (
+                                                <div className="form-check form-check-sm mb-0" key={r}>
+                                                  <input className="form-check-input" type="checkbox" id={`cfg-step-${si}-role-${r}`} 
+                                                    checked={step.approverRoles?.includes(r)} 
+                                                    onChange={e => {
+                                                      const roles = e.target.checked ? [...(step.approverRoles || []), r] : (step.approverRoles || []).filter(x => x !== r);
+                                                      const u = [...policyForm.leaveTypeConfigs];
+                                                      const steps = [...u[i].approvalWorkflow];
+                                                      steps[si] = { ...steps[si], approverRoles: roles };
+                                                      u[i].approvalWorkflow = steps;
+                                                      setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                                    }} />
+                                                  <label className="form-check-label" htmlFor={`cfg-step-${si}-role-${r}`} style={{ fontSize: 10 }}>{r}</label>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+                                          <div className="col-md-2">
+                                            <label style={{ fontSize: 10, fontWeight: 600, color: '#475569' }}>Action</label>
+                                            <select className="form-select form-select-sm" value={step.actionType} onChange={e => {
+                                              const u = [...policyForm.leaveTypeConfigs];
+                                              const steps = [...u[i].approvalWorkflow];
+                                              steps[si] = { ...steps[si], actionType: e.target.value };
+                                              u[i].approvalWorkflow = steps;
+                                              setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                            }}>
+                                              <option value="approve">Approve</option>
+                                              <option value="review">Review</option>
+                                            </select>
+                                          </div>
+                                          <div className="col-md-2">
+                                            <label style={{ fontSize: 10, fontWeight: 600, color: '#475569' }}>Escalate (hrs)</label>
+                                            <input type="number" className="form-control form-control-sm" min={0} value={step.escalateAfterHours} onChange={e => {
+                                              const u = [...policyForm.leaveTypeConfigs];
+                                              const steps = [...u[i].approvalWorkflow];
+                                              steps[si] = { ...steps[si], escalateAfterHours: Number(e.target.value) };
+                                              u[i].approvalWorkflow = steps;
+                                              setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                            }} />
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <button className="btn btn-xs btn-outline-primary" style={{ width: 140, fontSize: 11, padding: '4px 8px' }} onClick={() => {
+                                      const u = [...policyForm.leaveTypeConfigs];
+                                      const lastStep = u[i].approvalWorkflow[u[i].approvalWorkflow.length - 1];
+                                      u[i].approvalWorkflow = [...u[i].approvalWorkflow, { step: (lastStep?.step || 0) + 1, label: '', approverRoles: [], actionType: 'approve', required: true, escalateAfterHours: 0 }];
+                                      setPolicyForm(p => ({ ...p, leaveTypeConfigs: u }));
+                                    }}>
+                                      <i className="bi bi-plus-lg me-1" /> Add Step
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="col-12" style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24, borderTop: '1px solid #e2e8f0', paddingTop: 16 }}>
+                                <button className="btn btn-primary btn-sm" onClick={savePolicy} disabled={saving}>
+                                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-check-lg me-1" />Save Policy Settings</>}
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -543,6 +784,15 @@ export default function LeavePoliciesPage() {
                 </div>
               </div>
             )}
+            
+            <div style={{ marginTop: 32, borderTop: '1px solid #e2e8f0', paddingTop: 20, display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+              <button className="btn btn-outline-secondary" onClick={() => { setEditingPolicy(null); setPolicyForm(null); }}>
+                Cancel
+              </button>
+              <button className="btn btn-primary" onClick={savePolicy} disabled={saving}>
+                {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-check-lg me-2" />Save Policy</>}
+              </button>
+            </div>
           </div>
         </div>
       </AppShell>

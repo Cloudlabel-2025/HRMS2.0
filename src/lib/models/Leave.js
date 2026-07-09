@@ -9,6 +9,8 @@ const LeaveSchema = new mongoose.Schema({
   from:   { type: String, required: true },
   to:     { type: String, required: true },
   days:   { type: Number, required: true },
+  paidDays: { type: Number, default: 0 },
+  unpaidDays: { type: Number, default: 0 },
   halfDay:{ type: Boolean, default: false },
   reason: { type: String, required: true },
   documents: [{ type: String }], // file URLs for supporting documents
@@ -49,4 +51,5 @@ const LeaveSchema = new mongoose.Schema({
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });
 
+delete mongoose.models.Leave;
 export default mongoose.models.Leave || mongoose.model('Leave', LeaveSchema);

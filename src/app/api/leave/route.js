@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Leave, Holiday, LeaveType, LeavePolicy, UserLeaveBalance, EmpProfile } from '@/lib/models/index';
+import { Leave, LeaveType, LeavePolicy, UserLeaveBalance, EmpProfile, Holiday } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -174,12 +174,28 @@ export async function POST(req) {
       return fail(`${leaveType.name} is not available under your current leave policy`, 400);
     }
 
-    // Check gender restriction
-    if (typeConfig.genderRestriction !== 'all') {
-      const userDoc = await User.findById(user._id).select('-password');
-      if (typeConfig.genderRestriction === 'maternity' && userDoc.role !== 'employee') {
-        // simplified check; real gender comes from identity module
+    // Check dynamic eligibility rules
+    const { buildEmployeeContext, evaluateEligibility } = require('@/lib/leave/eligibility');
+    const employeeContext = await buildEmployeeContext(user._id);
+
+    // Evaluate gender restrictions
+    if (typeConfig.genderRestriction && typeConfig.genderRestriction !== 'all') {
+      const userGender = (employeeContext.gender || '').toLowerCase();
+      if (typeConfig.genderRestriction === 'male' || typeConfig.genderRestriction === 'paternity') {
+        if (userGender !== 'male') {
+          return fail(`This leave type is only applicable to male employees.`, 400);
+        }
       }
+      if (typeConfig.genderRestriction === 'female' || typeConfig.genderRestriction === 'maternity') {
+        if (userGender !== 'female') {
+          return fail(`This leave type is only applicable to female employees.`, 400);
+        }
+      }
+    }
+
+    const eligibilityResult = evaluateEligibility(typeConfig.eligibilityRules, employeeContext);
+    if (!eligibilityResult.eligible) {
+      return fail(`Eligibility check failed: ${eligibilityResult.failedRule || 'You are not eligible for this leave type.'}`, 400);
     }
 
     // Check probation completion if policy requires it
@@ -190,6 +206,65 @@ export async function POST(req) {
       }
     }
 
+    // Calculate days excluding weekends/holidays if configured
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    
+    const holidayDocs = await Holiday.find({
+      date: { 
+        $gte: fromDate.toISOString().split('T')[0], 
+        $lte: toDate.toISOString().split('T')[0] 
+      }
+    });
+    const holidayDates = new Set(holidayDocs.map(h => {
+      const d = new Date(h.date);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }));
+
+    let days = 0;
+    for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+      const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+      // Check weekends
+      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+      if (isWeekend && !policy.countWeekends) {
+        continue;
+      }
+
+      // Check holidays
+      if (holidayDates.has(dateStr) && !policy.countHolidays) {
+        continue;
+      }
+
+      days += 1;
+    }
+
+    if (halfDay) {
+      days = 0.5;
+    }
+
+    if (days <= 0) {
+      return fail('Requested leave dates consist only of holidays/weekends', 400);
+    }
+
+    // Check advance notice requirement
+    if (typeConfig.noticePeriodDays > 0) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const applyFrom = new Date(from);
+      applyFrom.setHours(0, 0, 0, 0);
+      const diffDays = Math.ceil((applyFrom - today) / (1000 * 60 * 60 * 24));
+      if (diffDays < typeConfig.noticePeriodDays) {
+        return fail(`This leave type requires at least ${typeConfig.noticePeriodDays} days advance notice. You applied with ${diffDays} day(s) notice.`, 400);
+      }
+    }
+
+    // Check supporting documents requirement
+    const needsDocs = typeConfig.requiresDocuments || (typeConfig.requireDocsIfConsecutiveDays > 0 && days >= typeConfig.requireDocsIfConsecutiveDays);
+    if (needsDocs && (!documents || !Array.isArray(documents) || documents.length === 0)) {
+      return fail(`Supporting documents are required when applying for ${leaveType.name}${typeConfig.requireDocsIfConsecutiveDays > 0 ? ` for ${typeConfig.requireDocsIfConsecutiveDays} or more days` : ''}.`, 400);
+    }
     // Check max consecutive days
     if (typeConfig.maxConsecutiveDays > 0 && days > typeConfig.maxConsecutiveDays) {
       return fail(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${leaveType.name}`, 400);
@@ -222,16 +297,35 @@ export async function POST(req) {
     const balance = await getOrCreateBalance(user._id, policy);
     const balanceEntry = balance.balances.find(b => b.typeId.toString() === typeId);
     if (!balanceEntry) {
-      return fail(`No balance record found for ${leaveType.name}`, 400);
+      return fail(`No balance record found or you are not eligible for ${leaveType.name}`, 400);
     }
 
-    const available = balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending;
-    if (days > available && typeConfig.isPaid) {
-      return fail(`Insufficient ${leaveType.name} balance. Available: ${available} day(s), Requested: ${days} day(s)`, 400);
+    const { calculatePeriodAllowance } = require('@/lib/leave/accrual');
+    
+    // Calculate paid and unpaid (LOP) split if requested days exceed available/allowed quota
+    let paidDays = days;
+    let unpaidDays = 0;
+
+    if (typeConfig.isPaid) {
+      const periodAllowed = Math.max(0, calculatePeriodAllowance(typeConfig, balanceEntry, balance.cycleStart, fromDate));
+      const overallAvailable = Math.max(0, balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending);
+      const allowedPaidDays = Math.min(overallAvailable, periodAllowed);
+
+      if (days > allowedPaidDays) {
+        paidDays = allowedPaidDays;
+        unpaidDays = Number((days - allowedPaidDays).toFixed(2));
+      }
+    } else {
+      paidDays = 0;
+      unpaidDays = days;
     }
 
     // Build workflow approvals from policy
-    const workflowApprovals = (policy.approvalWorkflow || []).map(step => ({
+    const activeWorkflow = (typeConfig.useCustomWorkflow && typeConfig.approvalWorkflow && typeConfig.approvalWorkflow.length > 0)
+      ? typeConfig.approvalWorkflow
+      : (policy.approvalWorkflow || []);
+
+    const workflowApprovals = activeWorkflow.map(step => ({
       step: step.step,
       label: step.label,
       action: 'pending',
@@ -249,6 +343,8 @@ export async function POST(req) {
       from,
       to,
       days,
+      paidDays,
+      unpaidDays,
       halfDay,
       reason,
       documents,
@@ -263,11 +359,11 @@ export async function POST(req) {
     });
 
     // Update pending balance
-    balanceEntry.pending += days;
+    balanceEntry.pending += paidDays;
     await balance.save();
 
     // Notify the first step approvers
-    const firstStep = policy.approvalWorkflow?.[0];
+    const firstStep = activeWorkflow?.[0];
     if (firstStep) {
       const approvers = await User.find({ role: { $in: firstStep.approverRoles }, status: 'active' }).select('_id');
       if (approvers.length) {

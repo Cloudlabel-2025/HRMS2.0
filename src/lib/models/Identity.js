@@ -70,6 +70,7 @@ const UsrIdentitySchema = new mongoose.Schema({
 
   recordStatus:     { type: String, enum: IDENTITY_STATUSES, default: 'active', index: true },
   sourceSystem:     { type: String, enum: ['manual', 'recruitment', 'migration', 'rehire', 'import'], default: 'manual' },
+  customAttributes: { type: Map, of: mongoose.Schema.Types.Mixed, default: {} },
   notes:            { type: String, default: '' },
 }, { timestamps: true, minimize: false, collection: 'usr_identities' });
 
