@@ -86,8 +86,8 @@ export async function POST(req) {
     }
 
     // Calculate days
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    let fromDate = new Date(from);
+    let toDate = new Date(to);
     let days = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
 
     // Check date overlap
@@ -207,8 +207,8 @@ export async function POST(req) {
     }
 
     // Calculate days excluding weekends/holidays if configured
-    const fromDate = new Date(from);
-    const toDate = new Date(to);
+    fromDate = new Date(from);
+    toDate = new Date(to);
     
     const holidayDocs = await Holiday.find({
       date: { 
@@ -221,7 +221,7 @@ export async function POST(req) {
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     }));
 
-    let days = 0;
+    days = 0;
     for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
       const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
       const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
