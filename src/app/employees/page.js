@@ -14,6 +14,7 @@ const EMPTY_FORM = {
   skills: '', panNumber: '', aadhaarNumber: '', address: '',
   addressLine1: '', addressLine2: '', addressLine3: '', cityTown: '', pinCode: '',
   emergencyContactName: '', emergencyContactPhone: '', gender: '', bloodGroup: '',
+  maritalStatus: 'prefer_not_to_say', employmentType: 'full_time',
 };
 
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
@@ -168,6 +169,8 @@ export default function EmployeesPage() {
     if (!form.emergencyContactPhone?.trim()) errs.emergencyContactPhone = 'Emergency contact phone is required';
     else if (!/^[0-9]{10}$/.test(form.emergencyContactPhone.trim())) errs.emergencyContactPhone = 'Must be exactly 10 digits';
     if (!form.gender) errs.gender = 'Gender is required';
+    if (!form.maritalStatus) errs.maritalStatus = 'Marital status is required';
+    if (!form.employmentType) errs.employmentType = 'Employment type is required';
     if (!form.bloodGroup) errs.bloodGroup = 'Blood group is required';
     if (!form.shift) errs.shift = 'Shift is required';
     if (!form.joinDate) errs.joinDate = 'Join date is required';
@@ -547,9 +550,22 @@ export default function EmployeesPage() {
                     <label className="form-label">Gender *</label>
                     <select className={`form-select ${formErrs.gender ? 'is-invalid' : ''}`} value={form.gender || ''} onChange={e => { setForm(p => ({ ...p, gender: e.target.value })); clearFormErr('gender'); }}>
                       <option value="">Select</option>
-                      <option value="male">Male</option><option value="female">Female</option><option value="non_binary">Non-Binary</option><option value="prefer_not_to_say">Prefer not to say</option>
+                      <option value="male">Male</option><option value="female">Female</option><option value="transgender">Transgender</option><option value="non_binary">Non-Binary</option><option value="prefer_not_to_say">Prefer not to say</option>
                     </select>
                     <FErr f="gender" />
+                  </div>
+                  <div className="col-md-3">
+                    <label className="form-label">Marital Status *</label>
+                    <select className={`form-select ${formErrs.maritalStatus ? 'is-invalid' : ''}`} value={form.maritalStatus || ''} onChange={e => { setForm(p => ({ ...p, maritalStatus: e.target.value })); clearFormErr('maritalStatus'); }}>
+                      <option value="">Select</option>
+                      <option value="single">Single</option>
+                      <option value="married">Married</option>
+                      <option value="divorced">Divorced</option>
+                      <option value="widowed">Widowed</option>
+                      <option value="separated">Separated</option>
+                      <option value="prefer_not_to_say">Prefer not to say</option>
+                    </select>
+                    <FErr f="maritalStatus" />
                   </div>
 
                   <div className="col-12"><div className="employee-form-section">Address Details</div></div>
@@ -569,6 +585,19 @@ export default function EmployeesPage() {
 
                   <div className="col-12"><div className="employee-form-section">Work Details</div></div>
                   <div className="col-md-6"><label className="form-label">Join Date *</label><DateInput className={`form-control ${formErrs.joinDate ? 'is-invalid' : ''}`} value={form.joinDate || ''} min="2022-03-21" onChange={e => { setForm(p => ({ ...p, joinDate: e.target.value })); clearFormErr('joinDate'); }} /><FErr f="joinDate" /></div>
+                  <div className="col-md-6">
+                    <label className="form-label">Employment Type *</label>
+                    <select className={`form-select ${formErrs.employmentType ? 'is-invalid' : ''}`} value={form.employmentType || ''} onChange={e => { setForm(p => ({ ...p, employmentType: e.target.value })); clearFormErr('employmentType'); }}>
+                      <option value="">Select</option>
+                      <option value="full_time">Full Time</option>
+                      <option value="part_time">Part Time</option>
+                      <option value="contract">Contract</option>
+                      <option value="intern">Intern</option>
+                      <option value="consultant">Consultant</option>
+                      <option value="apprentice">Apprentice</option>
+                    </select>
+                    <FErr f="employmentType" />
+                  </div>
                   <div className="col-md-6"><label className="form-label">Department *</label><FErr f="department" />{showNewDept ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="Letters and spaces only" value={newDeptName} onChange={e => setNewDeptName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} /><button type="button" className="btn btn-primary btn-sm" onClick={() => { if (!newDeptName.trim()) return; setDepartments(prev => [...prev, newDeptName.trim()]); setForm(p => ({ ...p, department: newDeptName.trim() })); setNewDeptName(''); setShowNewDept(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDept(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.department || ''} onChange={e => setForm(p => ({ ...p, department: e.target.value, designation: '' }))}><option value="">Select Department</option>{departments.map(d => <option key={d}>{d}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewDept(true)}><i className="bi bi-plus-lg" /></button></div>}</div>
                   <div className="col-md-6"><label className="form-label">Designation *</label><FErr f="designation" />{showNewDesig ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="Letters and spaces only" value={newDesigName} onChange={e => setNewDesigName(e.target.value.replace(/[^A-Za-z\s]/g, ''))} /><button type="button" className="btn btn-primary btn-sm" onClick={async () => { if (!newDesigName.trim()) return; try { await api.post('/api/settings', { type: 'designations', name: newDesigName.trim(), department: form.department || '' }); await loadDesignations(); setForm(p => ({ ...p, designation: newDesigName.trim() })); } catch {} setNewDesigName(''); setShowNewDesig(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewDesig(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.designation || ''} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))}><option value="">Select Designation</option>{designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewDesig(true)}><i className="bi bi-plus-lg" /></button></div>}</div>
                   <div className="col-md-6"><label className="form-label">Shift *</label><FErr f="shift" />{showNewShift ? <div style={{ display: 'flex', gap: 8 }}><input className="form-control" placeholder="e.g. Morning (9AM-6PM)" value={newShiftName} onChange={e => setNewShiftName(e.target.value)} /><button type="button" className="btn btn-primary btn-sm" onClick={async () => { if (!newShiftName.trim()) return; try { await api.post('/api/settings', { type: 'shifts', name: newShiftName.trim(), startTime: '09:00', endTime: '18:00' }); await loadShifts(); setForm(p => ({ ...p, shift: newShiftName.trim() })); } catch {} setNewShiftName(''); setShowNewShift(false); }}><i className="bi bi-check-lg" /></button><button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setShowNewShift(false)}><i className="bi bi-x-lg" /></button></div> : <div style={{ display: 'flex', gap: 8 }}><select className="form-select" value={form.shift || ''} onChange={e => setForm(p => ({ ...p, shift: e.target.value }))}><option value="">Select Shift</option>{shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}-${s.endTime})` : ''}</option>)}</select><button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setShowNewShift(true)}><i className="bi bi-plus-lg" /></button></div>}</div>

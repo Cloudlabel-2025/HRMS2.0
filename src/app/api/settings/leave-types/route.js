@@ -19,7 +19,6 @@ const UpsertTypeSchema = z.object({
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
   if (error) return error;
-  if (!ADMIN_ROLES.includes(user.role)) return fail('Access denied', 403);
 
   await dbConnect();
   const types = await LeaveType.find().sort({ sortOrder: 1, name: 1 });

@@ -120,21 +120,34 @@ export async function PUT(req, { params }) {
           c => c.typeId.toString() === (leave.typeId?.toString() || '')
         )?.isPaid ?? true;
 
-        if (isPaid && leave.type !== 'Loss of Pay') {
+        const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
+
+        if (isPaid && leave.type !== 'Loss of Pay' && paidDays > 0) {
           const now = new Date();
           const cycleStart = new Date(now.getFullYear(), 0, 1);
           const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
           if (balance) {
             const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
             if (entry) {
+              const typeConfig = policy.leaveTypeConfigs?.find(
+                c => c.typeId.toString() === (leave.typeId?.toString() || '')
+              );
+              
               const currentAvailable = entry.allocated + entry.carriedForward - entry.used - entry.pending;
-              if (entry.pending >= leave.days) {
-                entry.pending -= leave.days;
-                entry.used += leave.days;
-              } else if (currentAvailable >= leave.days) {
-                entry.used += leave.days;
-                entry.pending = Math.max(0, entry.pending - leave.days);
+              if (entry.pending >= paidDays) {
+                entry.pending -= paidDays;
+                entry.used += paidDays;
+              } else if (currentAvailable >= paidDays) {
+                entry.used += paidDays;
+                entry.pending = Math.max(0, entry.pending - paidDays);
               }
+
+              // Update periodic usage metrics
+              if (typeConfig && typeConfig.maxUsagePerPeriod > 0) {
+                const { recordPeriodUsage } = require('@/lib/leave/accrual');
+                recordPeriodUsage(entry, typeConfig.usagePeriod, balance.cycleStart, new Date(leave.from), paidDays);
+              }
+
               await balance.save();
             }
           }
@@ -144,10 +157,8 @@ export async function PUT(req, { params }) {
           const emp = await Employee.findOne({ userId: applicantId });
           if (emp) {
             const currentBalance = emp.leaveBalance ?? 24;
-            if (currentBalance >= leave.days) {
-              emp.leaveBalance = currentBalance - leave.days;
-              await emp.save();
-            }
+            emp.leaveBalance = Math.max(0, currentBalance - paidDays);
+            await emp.save();
           }
         }
 
@@ -162,7 +173,8 @@ export async function PUT(req, { params }) {
         if (balance) {
           const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
           if (entry) {
-            entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
+            const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
+            entry.pending = Math.max(0, (entry.pending || 0) - paidDays);
             await balance.save();
           }
         }
@@ -292,10 +304,8 @@ export async function PUT(req, { params }) {
       const emp = await Employee.findOne({ userId: applicantId });
       if (emp) {
         const currentBalance = emp.leaveBalance ?? 24;
-        if (currentBalance < leave.days) {
-          return fail(`Insufficient leave balance. Available: ${currentBalance} day(s), Requested: ${leave.days} day(s)`, 400);
-        }
-        emp.leaveBalance = currentBalance - leave.days;
+        const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
+        emp.leaveBalance = Math.max(0, currentBalance - paidDays);
         await emp.save();
       }
       await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
@@ -337,18 +347,15 @@ export async function DELETE(req, { params }) {
     if (!['pending', 'approved'].includes(leave.status)) return fail('Cannot cancel an already processed leave', 400);
 
     // Restore balance
-    if (leave.status === 'approved' && leave.type !== 'Loss of Pay') {
+    const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
+    if (leave.status === 'approved' && leave.type !== 'Loss of Pay' && paidDays > 0) {
       const now = new Date();
       const cycleStart = new Date(now.getFullYear(), 0, 1);
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
       if (balance) {
         const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
         if (entry) {
-          if (leave.status === 'approved') {
-            entry.used = Math.max(0, (entry.used || 0) - leave.days);
-          } else {
-            entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
-          }
+          entry.used = Math.max(0, (entry.used || 0) - paidDays);
           await balance.save();
         }
       }
@@ -356,10 +363,10 @@ export async function DELETE(req, { params }) {
       const { Employee } = await import('@/lib/models/index');
       const emp = await Employee.findOne({ userId: leave.userId });
       if (emp) {
-        emp.leaveBalance = (emp.leaveBalance ?? 0) + leave.days;
+        emp.leaveBalance = (emp.leaveBalance ?? 0) + paidDays;
         await emp.save();
       }
-    } else if (leave.status === 'pending') {
+    } else if (leave.status === 'pending' && paidDays > 0) {
       // Restore pending
       const now = new Date();
       const cycleStart = new Date(now.getFullYear(), 0, 1);
@@ -367,7 +374,7 @@ export async function DELETE(req, { params }) {
       if (balance) {
         const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
         if (entry) {
-          entry.pending = Math.max(0, (entry.pending || 0) - leave.days);
+          entry.pending = Math.max(0, (entry.pending || 0) - paidDays);
           await balance.save();
         }
       }

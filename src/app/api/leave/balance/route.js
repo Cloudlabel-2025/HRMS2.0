@@ -34,33 +34,49 @@ export async function getOrCreateBalance(userId, policy) {
   let balance = await UserLeaveBalance.findOne({ userId, cycleStart });
   if (balance) return balance;
 
-  // Create new balances from policy
-  const balances = await Promise.all(
-    (policy.leaveTypeConfigs || [])
-      .filter(c => c.enabled)
-      .map(async (config) => {
-        let allocated = config.annualAllocation || 0;
-        if (config.accrualMode === 'monthly') {
-          // Start with 0 if accrued monthly (or 1st month's worth if we run it on Jan 1st)
-          // For now, let's start with 0 and let the monthly job add it
-          allocated = 0;
-        }
-        
-        // Proration logic for new joiners could go here if we fetch targetUser.joiningDate
-        // if (config.prorateForNewJoiners && targetUser.joiningDate) { ... }
+  const { buildEmployeeContext, evaluateEligibility } = require('@/lib/leave/eligibility');
+  const employeeContext = await buildEmployeeContext(userId);
 
-        return {
-          typeId: config.typeId,
-          allocated,
-          used: 0,
-          pending: 0,
-          carriedForward: 0,
-          expiryDate: config.carryForwardExpiryMonths
-            ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
-            : null,
-        };
-      })
-  );
+  // Create new balances from policy
+  const balances = [];
+  for (const config of policy.leaveTypeConfigs || []) {
+    if (!config.enabled) continue;
+
+    // Evaluate gender restrictions
+    if (config.genderRestriction && config.genderRestriction !== 'all') {
+      const userGender = (employeeContext.gender || '').toLowerCase();
+      if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
+        if (userGender !== 'male') continue;
+      }
+      if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
+        if (userGender !== 'female') continue;
+      }
+    }
+
+    // Evaluate eligibility rules
+    const elig = evaluateEligibility(config.eligibilityRules, employeeContext);
+    if (!elig.eligible) continue;
+
+    let allocated = config.annualAllocation || 0;
+    
+    // For periodic schedules, the initial allocation starts with the first installment
+    if (config.creditSchedule && config.creditSchedule !== 'upfront') {
+      const divisor = config.creditSchedule === 'monthly' ? 12 : config.creditSchedule === 'quarterly' ? 4 : 2;
+      allocated = Number((config.annualAllocation / divisor).toFixed(2));
+    }
+
+    balances.push({
+      typeId: config.typeId,
+      allocated,
+      used: 0,
+      pending: 0,
+      carriedForward: 0,
+      expiryDate: config.carryForwardExpiryMonths
+        ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
+        : null,
+      periodUsage: [],
+    });
+  }
 
   balance = await UserLeaveBalance.create({ userId, policyId: policy._id, cycleStart, cycleEnd, balances });
   return balance;
@@ -87,11 +103,35 @@ export async function GET(req) {
     .populate('balances.typeId', 'name code color icon')
     .lean();
 
+  const { buildEmployeeContext } = require('@/lib/leave/eligibility');
+  const employeeContext = await buildEmployeeContext(targetUserId);
+
+  const eligibleBalances = [];
+  for (const b of populated.balances || []) {
+    const typeIdStr = (b.typeId?._id || b.typeId || '').toString();
+    if (!typeIdStr) continue;
+
+    const config = policy.leaveTypeConfigs?.find(c => c.typeId.toString() === typeIdStr);
+    if (!config || !config.enabled) continue;
+
+    // Evaluate gender restrictions
+    if (config.genderRestriction && config.genderRestriction !== 'all') {
+      const userGender = (employeeContext.gender || '').toLowerCase();
+      if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
+        if (userGender !== 'male') continue;
+      }
+      if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
+        if (userGender !== 'female') continue;
+      }
+    }
+    eligibleBalances.push(b);
+  }
+
   return ok({
-    policy: { _id: policy._id, name: policy.name },
+    policy: { _id: policy._id, name: policy.name, leaveTypeConfigs: policy.leaveTypeConfigs },
     cycleStart: populated.cycleStart,
     cycleEnd: populated.cycleEnd,
-    balances: populated.balances,
+    balances: eligibleBalances,
   });
 }
 
@@ -127,20 +167,36 @@ export async function POST(req) {
 
   if (action === 'monthly-accrual') {
     const now = new Date();
-    const cycleStart = new Date(now.getFullYear(), 0, 1);
-    const allBalances = await UserLeaveBalance.find({ cycleStart });
+    const allBalances = await UserLeaveBalance.find();
     let processed = 0;
 
     for (const bal of allBalances) {
+      if (now < bal.cycleStart || now > bal.cycleEnd) continue;
+
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
+
+      const cycleStart = new Date(bal.cycleStart);
+      const monthsDiff = (now.getFullYear() - cycleStart.getFullYear()) * 12 + now.getMonth() - cycleStart.getMonth();
+
+      if (monthsDiff <= 0) continue; // Skip first month (initialized on creation)
 
       let updated = false;
       for (const entry of bal.balances) {
         const config = policy.leaveTypeConfigs.find(c => c.typeId.toString() === entry.typeId.toString());
-        if (config && config.enabled && config.accrualMode === 'monthly') {
-          const monthlyAmount = Number((config.annualAllocation / 12).toFixed(2));
-          entry.allocated = (entry.allocated || 0) + monthlyAmount;
+        if (!config || !config.enabled) continue;
+
+        let creditAmount = 0;
+        if (config.creditSchedule === 'monthly') {
+          creditAmount = Number((config.annualAllocation / 12).toFixed(2));
+        } else if (config.creditSchedule === 'quarterly' && monthsDiff % 3 === 0) {
+          creditAmount = Number((config.annualAllocation / 4).toFixed(2));
+        } else if (config.creditSchedule === 'half_yearly' && monthsDiff % 6 === 0) {
+          creditAmount = Number((config.annualAllocation / 2).toFixed(2));
+        }
+
+        if (creditAmount > 0) {
+          entry.allocated = (entry.allocated || 0) + creditAmount;
           // Cap it at annual allocation
           if (entry.allocated > config.annualAllocation) {
             entry.allocated = config.annualAllocation;
@@ -154,8 +210,8 @@ export async function POST(req) {
       }
     }
 
-    await auditLog('Monthly Accrual Processed', 'Leave', user._id, `Processed monthly accruals for ${processed} users`, 'high', req.headers.get('x-forwarded-for') || '');
-    return ok({ message: `Monthly accrual processed for ${processed} users` });
+    await auditLog('Monthly Accrual Processed', 'Leave', user._id, `Processed periodic accruals for ${processed} users`, 'high', req.headers.get('x-forwarded-for') || '');
+    return ok({ message: `Periodic accruals processed for ${processed} users` });
   }
 
   if (action === 'adjust') {

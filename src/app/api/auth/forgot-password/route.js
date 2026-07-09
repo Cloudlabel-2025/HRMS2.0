@@ -3,6 +3,7 @@ import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
 import { auditLog } from '@/lib/middleware';
 import crypto from 'crypto';
+import { sendResetPasswordEmail } from '@/lib/email';
 
 const GENERIC_RESET_MESSAGE = 'If an account with that email exists, we sent a password reset link.';
 
@@ -25,6 +26,12 @@ export async function POST(req) {
     const resetUrl = `${appUrl.replace(/\/$/, '')}/login/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
 
     await auditLog('Password Reset Requested', 'Auth', user._id, 'Password reset link generated', 'medium', req.headers.get('x-forwarded-for') || '', null, user._id);
+
+    try {
+      await sendResetPasswordEmail(user.email, user.name, resetUrl);
+    } catch (mailError) {
+      console.error('❌ Failed to send password reset email:', mailError);
+    }
 
     if (process.env.NODE_ENV !== 'production' && process.env.RETURN_RESET_LINK === 'true') {
       return ok({ message: GENERIC_RESET_MESSAGE, resetUrl });

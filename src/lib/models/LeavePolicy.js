@@ -1,5 +1,11 @@
 import mongoose from 'mongoose';
 
+const EligibilityRuleSchema = new mongoose.Schema({
+  field:    { type: String, required: true },
+  operator: { type: String, enum: ['equals', 'not_equals', 'in', 'not_in', 'gte', 'lte'], default: 'equals' },
+  value:    { type: mongoose.Schema.Types.Mixed, required: true },
+}, { _id: false });
+
 const LeaveTypeConfigSchema = new mongoose.Schema({
   typeId:               { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveType', required: true },
   enabled:              { type: Boolean, default: true },
@@ -22,6 +28,24 @@ const LeaveTypeConfigSchema = new mongoose.Schema({
   prorateForNewJoiners: { type: Boolean, default: false },
   noticePeriodDays:     { type: Number, default: 0 },
   requireDocsIfConsecutiveDays: { type: Number, default: 0 },
+
+  // New Dynamic Rules & Workflow Configs
+  eligibilityRules:     [EligibilityRuleSchema],
+  useCustomWorkflow:    { type: Boolean, default: false },
+  approvalWorkflow:     [{
+    step:               { type: Number, required: true },
+    label:              { type: String, required: true },
+    approverRoles:      [{ type: String }],
+    actionType:         { type: String, enum: ['approve', 'review'], default: 'approve' },
+    required:           { type: Boolean, default: true },
+    escalateAfterHours: { type: Number, default: 0 },
+  }],
+
+  // New Credit & Usage Configuration
+  creditSchedule:       { type: String, enum: ['upfront', 'monthly', 'quarterly', 'half_yearly'], default: 'upfront' },
+  maxUsagePerPeriod:    { type: Number, default: 0 }, // 0 means no usage limit
+  usagePeriod:          { type: String, enum: ['monthly', 'quarterly', 'half_yearly', 'annual', 'calendar_year', 'financial_year'], default: 'annual' },
+  unusedPeriodRollover: { type: Boolean, default: false },
 }, { _id: false });
 
 const WorkflowStepSchema = new mongoose.Schema({
@@ -56,14 +80,14 @@ const LeavePolicySchema = new mongoose.Schema({
   countHolidays:          { type: Boolean, default: false },
 }, { timestamps: true });
 
-LeavePolicySchema.pre('save', async function (next) {
+LeavePolicySchema.pre('save', async function () {
   if (this.isDefault) {
     await mongoose.model('LeavePolicy').updateMany(
       { _id: { $ne: this._id }, isDefault: true },
       { isDefault: false }
     );
   }
-  next();
 });
 
+delete mongoose.models.LeavePolicy;
 export default mongoose.models.LeavePolicy || mongoose.model('LeavePolicy', LeavePolicySchema);
