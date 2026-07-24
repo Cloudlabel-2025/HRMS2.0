@@ -426,6 +426,12 @@ export default function LeavePoliciesPage() {
                                   <label className="form-check-label" htmlFor={`paid-${i}`} style={{ fontSize: 12 }}>Is Paid Leave</label>
                                 </div>
                               </div>
+                              <div className="col-md-3 d-flex align-items-end">
+                                <div className="form-check">
+                                  <input className="form-check-input" type="checkbox" id={`halfday-${i}`} checked={cfg.allowHalfDay || false} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], allowHalfDay: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                                  <label className="form-check-label" htmlFor={`halfday-${i}`} style={{ fontSize: 12 }}>Allow Half Day</label>
+                                </div>
+                              </div>
                               <div className="col-md-3">
                                 <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Gender Restriction</label>
                                 <select className="form-select form-select-sm" value={cfg.genderRestriction || 'all'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], genderRestriction: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>

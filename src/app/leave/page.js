@@ -12,7 +12,7 @@ const STATUS_STYLE = {
   rejected: { bg: '#fee2e2', color: '#dc2626' },
   held:     { bg: '#ede9fe', color: '#7c3aed' },
 };
-const EMPTY_FORM = { typeId: '', from: '', to: '', reason: '', halfDay: false, documents: [] };
+const EMPTY_FORM = { typeId: '', from: '', to: '', reason: '', halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', documents: [] };
 
 function ApprovalBadge({ value, holdReason }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
@@ -118,6 +118,7 @@ export default function LeavePage() {
 
   const handleApply = async () => {
     if (!form.typeId || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
+    if (form.halfDay && !form.halfDayType) { showToast('Please select First Half or Second Half for half-day leave', 'error'); return; }
     setSaving(true);
     try {
       await api.post('/api/leave', form);
@@ -377,7 +378,11 @@ export default function LeavePage() {
                               {typeMap[l.typeId]?.code || l.type}
                             </span>
                           ) : l.type}
-                          {l.halfDay && <span className="badge ms-1" style={{ background: '#fef3c7', color: '#d97706' }}>½</span>}
+                          {l.halfDay && (
+                            <span className="badge ms-1" style={{ background: '#fef3c7', color: '#d97706' }}>
+                              ½{l.halfDayType === 'first_half' ? ' FH' : l.halfDayType === 'second_half' ? ' SH' : ''}
+                            </span>
+                          )}
                         </td>
                         <td style={{ fontSize: 13 }}>{l.from}</td>
                         <td style={{ fontSize: 13 }}>{l.to}</td>
@@ -489,7 +494,7 @@ export default function LeavePage() {
                       No leave types are available. This happens if you have no active leave policy assigned to your role, or if you do not meet the eligibility rules of any leave types.
                     </div>
                   ) : (
-                    <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false })); }}>
+                    <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '' })); }}>
                       <option value="">— Select —</option>
                       {leaveTypes
                         .filter(t => t.isActive && (!balanceData?.balances || balanceData.balances.some(b => (b.typeId?._id || b.typeId) === t._id)))
@@ -514,6 +519,81 @@ export default function LeavePage() {
                     {fieldErrs.to && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.to}</div>}
                   </div>
                 </div>
+                {(() => {
+                  const selectedTypeConfig = balanceData?.policy?.leaveTypeConfigs?.find(
+                    c => (c.typeId?._id?.toString?.() || c.typeId?.toString?.()) === form.typeId
+                  );
+                  const canHalfDay = selectedTypeConfig?.allowHalfDay === true;
+                  return form.typeId && canHalfDay && (
+                    <div className="mb-3">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                        <label className="form-label mb-0" style={{ fontSize: 13, fontWeight: 600 }}>
+                          <input
+                            type="checkbox"
+                            className="form-check-input me-2"
+                            checked={form.halfDay}
+                            onChange={e => setForm(p => ({ ...p, halfDay: e.target.checked, halfDayType: e.target.checked ? p.halfDayType : '', customStartTime: '', customEndTime: '' }))}
+                          />
+                          Half Day Leave
+                        </label>
+                        {form.halfDay && (
+                          <select
+                            className="form-select form-select-sm"
+                            style={{ width: 180, fontSize: 13 }}
+                            value={form.halfDayType}
+                            onChange={e => setForm(p => ({ ...p, halfDayType: e.target.value }))}
+                          >
+                            <option value="">— Select Half —</option>
+                            <option value="first_half">First Half (Morning)</option>
+                            <option value="second_half">Second Half (Afternoon)</option>
+                          </select>
+                        )}
+                      </div>
+                      {form.halfDay && (
+                        <div style={{ marginTop: 10, padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
+                          <div style={{ fontSize: 12, color: '#0369a1', marginBottom: 8, fontWeight: 600 }}>
+                            <i className="bi bi-clock me-1" />Custom Time (Optional)
+                          </div>
+                          <div className="row g-2" style={{ alignItems: 'center' }}>
+                            <div className="col-auto">
+                              <label style={{ fontSize: 12, color: '#64748b' }}>Start</label>
+                              <input
+                                type="time"
+                                className="form-control form-control-sm"
+                                style={{ fontSize: 12, width: 130 }}
+                                value={form.customStartTime}
+                                onChange={e => setForm(p => ({ ...p, customStartTime: e.target.value }))}
+                              />
+                            </div>
+                            <div className="col-auto" style={{ paddingTop: 18, fontSize: 12, color: '#94a3b8' }}>to</div>
+                            <div className="col-auto">
+                              <label style={{ fontSize: 12, color: '#64748b' }}>End</label>
+                              <input
+                                type="time"
+                                className="form-control form-control-sm"
+                                style={{ fontSize: 12, width: 130 }}
+                                value={form.customEndTime}
+                                onChange={e => setForm(p => ({ ...p, customEndTime: e.target.value }))}
+                              />
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+                            {form.halfDayType === 'first_half'
+                              ? 'First Half: Morning (e.g., 09:00 – 14:00)'
+                              : form.halfDayType === 'second_half'
+                                ? 'Second Half: Afternoon (e.g., 14:00 – 18:00)'
+                                : 'Select a half above to see the default time range'}
+                          </div>
+                        </div>
+                      )}
+                      {form.halfDay && !form.halfDayType && (
+                        <div style={{ color: '#ef4444', fontSize: 11, marginTop: 4 }}>
+                          <i className="bi bi-exclamation-circle-fill me-1" />Please select First Half or Second Half
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason</label>
                   <textarea className={`form-control ${fieldErrs.reason?'is-invalid':''}`} rows={3} value={form.reason} onChange={e => { setForm(p => ({ ...p, reason: e.target.value })); clearFErr('reason'); }} />

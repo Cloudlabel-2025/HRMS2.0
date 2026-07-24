@@ -23,6 +23,10 @@ const EmailSchema = z.string().email('Invalid email format').toLowerCase().trim(
 const PasswordSchema = z.string().min(8, 'Password must be at least 8 characters');
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
 
+function toDateStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // AUTH SCHEMAS
 // ────────────────────────────────────────────────────────────────────────────
@@ -300,14 +304,18 @@ export const CreateLeaveSchema = z.object({
   from: DateSchema,
   to: DateSchema,
   halfDay: z.boolean().optional().default(false),
+  halfDayType: z.enum(['first_half', 'second_half']).optional(),
   reason: z.string().min(10, 'Reason must be at least 10 characters').max(500),
   documents: z.array(z.string()).optional().default([]),
 }).strict().refine(
   (data) => new Date(data.to) >= new Date(data.from),
   { message: 'End date must be after start date', path: ['to'] }
 ).refine(
-  (data) => new Date(data.from) >= new Date(),
+  (data) => toDateStr(new Date(data.from)) >= toDateStr(new Date()),
   { message: 'Leave date cannot be in the past', path: ['from'] }
+).refine(
+  data => !data.halfDay || (data.halfDay && data.halfDayType),
+  { message: 'Please select first half or second half when applying for half-day leave', path: ['halfDayType'] }
 );
 
 export const ApproveLeaveSchema = z.object({

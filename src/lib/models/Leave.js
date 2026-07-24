@@ -12,6 +12,7 @@ const LeaveSchema = new mongoose.Schema({
   paidDays: { type: Number, default: 0 },
   unpaidDays: { type: Number, default: 0 },
   halfDay:{ type: Boolean, default: false },
+  halfDayType:{ type: String, enum: ['first_half', 'second_half'], default: null },
   reason: { type: String, required: true },
   documents: [{ type: String }], // file URLs for supporting documents
   policyId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeavePolicy', default: null },

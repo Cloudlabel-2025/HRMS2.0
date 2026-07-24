@@ -77,7 +77,7 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { typeId, from, to, halfDay, reason, documents } = validation.data;
+    const { typeId, from, to, halfDay, halfDayType, reason, documents } = validation.data;
 
     // Look up leave type
     const leaveType = await LeaveType.findById(typeId);
@@ -203,6 +203,18 @@ export async function POST(req) {
       const profile = await EmpProfile.findById(user.profileId).select('employmentStatus');
       if (profile && ['onboarding', 'probation'].includes(profile.employmentStatus)) {
         return fail('You must complete your probation before applying for leave under this policy', 400);
+      }
+    }
+
+    // Enforce half-day rules per leave type
+    if (halfDay) {
+      // Earned leaves can only be full day
+      if (leaveType && leaveType.name === 'Earned Leave') {
+        return fail('Earned leaves can only be taken as full day', 400);
+      }
+      // Policy must allow half day for this leave type
+      if (!typeConfig.allowHalfDay) {
+        return fail(`${leaveType?.name || 'This leave type'} does not support half-day leaves`, 400);
       }
     }
 
@@ -346,6 +358,7 @@ export async function POST(req) {
       paidDays,
       unpaidDays,
       halfDay,
+      halfDayType: halfDay ? halfDayType : null,
       reason,
       documents,
       policyId: policy._id,

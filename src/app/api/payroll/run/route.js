@@ -62,9 +62,10 @@ export async function POST(req) {
 
       const paidLeaveDays = approvedLeaves
         .filter(l => l.type !== 'Loss of Pay')
-        .reduce((sum, l) => sum + l.days, 0);
+        .reduce((sum, l) => sum + (l.paidDays || l.days), 0);
 
-      const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
+      const autoLopDays = approvedLeaves.reduce((sum, l) => sum + (l.unpaidDays || 0), 0);
+      const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays)) + autoLopDays;
 
       const result = calculatePayroll({
         grossLPA: structure.grossLPA,
