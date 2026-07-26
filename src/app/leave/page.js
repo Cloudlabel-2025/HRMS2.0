@@ -12,7 +12,7 @@ const STATUS_STYLE = {
   rejected: { bg: '#fee2e2', color: '#dc2626' },
   held:     { bg: '#ede9fe', color: '#7c3aed' },
 };
-const EMPTY_FORM = { typeId: '', from: '', to: '', reason: '', halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', documents: [] };
+const EMPTY_FORM = { typeCode: '', from: '', to: '', reason: '', halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', documents: [], _showTimePicker: false };
 
 function ApprovalBadge({ value, holdReason }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
@@ -28,7 +28,6 @@ function ApprovalBadge({ value, holdReason }) {
 export default function LeavePage() {
   const { user } = useAuth();
   const [leaves, setLeaves]         = useState([]);
-  const [leaveTypes, setLeaveTypes] = useState([]);
   const [employees, setEmployees]   = useState([]);
   const [balanceData, setBalanceData] = useState(null);
   const [selectedEmpId, setSelectedEmpId] = useState('');
@@ -70,16 +69,30 @@ export default function LeavePage() {
     if (!user) return;
     setLoading(true);
     Promise.all([
-      api.get('/api/settings/leave-types').then(d => setLeaveTypes(Array.isArray(d) ? d : [])).catch(() => {}),
-      api.get('/api/leave/balance').then(d => setBalanceData(d)).catch(() => {}),
+      api.get('/api/leave/balance').then(d => {
+        console.log('[LEAVE DEBUG] Balance API response:', d);
+        setBalanceData(d);
+      }).catch(e => {
+        console.error('[LEAVE DEBUG] Balance API error:', e.message);
+      }),
     ]).finally(() => setLoading(false));
   }, [user]);
 
   useEffect(() => {
     if (user && targetUserId) {
-      api.get(`/api/leave/balance?userId=${targetUserId}`).then(d => setBalanceData(d)).catch(() => {});
+      api.get(`/api/leave/balance?userId=${targetUserId}`).then(d => {
+        console.log('[LEAVE DEBUG] Balance API response (target user):', d);
+        setBalanceData(d);
+      }).catch(e => {
+        console.error('[LEAVE DEBUG] Balance API error (target user):', e.message);
+      });
     } else if (user && tab === 'my') {
-      api.get('/api/leave/balance').then(d => setBalanceData(d)).catch(() => {});
+      api.get('/api/leave/balance').then(d => {
+        console.log('[LEAVE DEBUG] Balance API response:', d);
+        setBalanceData(d);
+      }).catch(e => {
+        console.error('[LEAVE DEBUG] Balance API error:', e.message);
+      });
     }
   }, [targetUserId, tab]);
 
@@ -117,7 +130,7 @@ export default function LeavePage() {
   }, [tab]);
 
   const handleApply = async () => {
-    if (!form.typeId || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
+    if (!form.typeCode || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
     if (form.halfDay && !form.halfDayType) { showToast('Please select First Half or Second Half for half-day leave', 'error'); return; }
     setSaving(true);
     try {
@@ -171,9 +184,9 @@ export default function LeavePage() {
 
   const typeMap = useMemo(() => {
     const m = {};
-    leaveTypes.forEach(t => { m[t._id] = t; });
+    (balanceData?.policy?.leaveTypeConfigs || []).forEach(c => { m[c.code] = c; });
     return m;
-  }, [leaveTypes]);
+  }, [balanceData]);
 
   const workflowColumns = useMemo(() => {
     if (!leaves.length) return ['Admin', 'Team Admin', 'Team Lead'];
@@ -218,7 +231,7 @@ export default function LeavePage() {
       {tab === 'my' && (!isSuperAdmin || selectedEmpId) && !isSme && balanceData?.balances && (
         <div className="row g-3 mb-4">
           {balanceData.balances.map(b => {
-            const lt = typeMap[b.typeId?._id || b.typeId];
+            const lt = typeMap[b.typeCode];
             const available = b.allocated + b.carriedForward - b.used - b.pending;
             const total = b.allocated + b.carriedForward;
             const pct = total > 0 ? Math.min(Math.round(((b.used + b.pending) / total) * 100), 100) : 0;
@@ -226,7 +239,7 @@ export default function LeavePage() {
 
             // Find matching config for period cap details
             const cfg = balanceData.policy?.leaveTypeConfigs?.find(
-              c => c.typeId === (b.typeId?._id || b.typeId)
+              c => c.code === b.typeCode
             );
             let periodText = null;
             if (cfg && cfg.maxUsagePerPeriod > 0) {
@@ -246,7 +259,7 @@ export default function LeavePage() {
             }
 
             return (
-              <div key={b.typeId?._id || b.typeId} className="col-6 col-xl-3">
+              <div key={b.typeCode} className="col-6 col-xl-3">
                 <div className="stat-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>
@@ -373,9 +386,9 @@ export default function LeavePage() {
                           </td>
                         )}
                         <td style={{ fontSize: 13 }}>
-                          {l.typeId ? (
-                            <span className="badge" style={{ background: typeMap[l.typeId]?.color || '#e2e8f0', color: '#fff' }}>
-                              {typeMap[l.typeId]?.code || l.type}
+                          {l.typeCode ? (
+                            <span className="badge" style={{ background: typeMap[l.typeCode]?.color || '#e2e8f0', color: '#fff' }}>
+                              {l.typeCode}
                             </span>
                           ) : l.type}
                           {l.halfDay && (
@@ -488,19 +501,20 @@ export default function LeavePage() {
               <div className="modal-body">
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type</label>
-                  {leaveTypes.filter(t => t.isActive && (!balanceData?.balances || balanceData.balances.some(b => (b.typeId?._id || b.typeId) === t._id))).length === 0 ? (
+                  {(balanceData?.policy?.leaveTypeConfigs || []).filter(c => c.enabled && (!balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code))).length === 0 ? (
                     <div className="alert alert-warning py-2 px-3 m-0" style={{ fontSize: 12 }}>
                       <i className="bi bi-exclamation-triangle-fill me-2" />
                       No leave types are available. This happens if you have no active leave policy assigned to your role, or if you do not meet the eligibility rules of any leave types.
                     </div>
                   ) : (
-                    <select className="form-select" value={form.typeId} onChange={e => { const t = leaveTypes.find(x => x._id === e.target.value); setForm(p => ({ ...p, typeId: e.target.value, halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '' })); }}>
+                    <select className="form-select" value={form.typeCode || ''} onChange={e => setForm(p => ({ ...p, typeCode: e.target.value, halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', _showTimePicker: false }))}>
                       <option value="">— Select —</option>
-                      {leaveTypes
-                        .filter(t => t.isActive && (!balanceData?.balances || balanceData.balances.some(b => (b.typeId?._id || b.typeId) === t._id)))
-                        .map(t => (
-                          <option key={t._id} value={t._id}>
-                            {t.code} — {t.name}
+                      {(balanceData?.policy?.leaveTypeConfigs || [])
+                        .filter(c => c.enabled && (!balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code)))
+                        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+                        .map(c => (
+                          <option key={c.code} value={c.code}>
+                            {c.code} — {c.name}
                           </option>
                         ))
                       }
@@ -521,74 +535,76 @@ export default function LeavePage() {
                 </div>
                 {(() => {
                   const selectedTypeConfig = balanceData?.policy?.leaveTypeConfigs?.find(
-                    c => (c.typeId?._id?.toString?.() || c.typeId?.toString?.()) === form.typeId
+                    c => c.code === form.typeCode
                   );
                   const canHalfDay = selectedTypeConfig?.allowHalfDay === true;
-                  return form.typeId && canHalfDay && (
+                  const canFirstHalf = selectedTypeConfig?.allowFirstHalf !== false;
+                  const canSecondHalf = selectedTypeConfig?.allowSecondHalf !== false;
+
+                  if (!form.typeCode || !canHalfDay) return null;
+
+                  return (
                     <div className="mb-3">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <label className="form-label mb-0" style={{ fontSize: 13, fontWeight: 600 }}>
-                          <input
-                            type="checkbox"
-                            className="form-check-input me-2"
-                            checked={form.halfDay}
-                            onChange={e => setForm(p => ({ ...p, halfDay: e.target.checked, halfDayType: e.target.checked ? p.halfDayType : '', customStartTime: '', customEndTime: '' }))}
-                          />
-                          Half Day Leave
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Duration</label>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer', background: !form.halfDay ? '#eff6ff' : '#fff', borderColor: !form.halfDay ? '#3b82f6' : '#e2e8f0', fontSize: 13 }}>
+                          <input type="radio" name="leaveDuration" className="form-check-input" checked={!form.halfDay} onChange={() => setForm(p => ({ ...p, halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '' }))} />
+                          Full Day
                         </label>
-                        {form.halfDay && (
-                          <select
-                            className="form-select form-select-sm"
-                            style={{ width: 180, fontSize: 13 }}
-                            value={form.halfDayType}
-                            onChange={e => setForm(p => ({ ...p, halfDayType: e.target.value }))}
-                          >
-                            <option value="">— Select Half —</option>
-                            <option value="first_half">First Half (Morning)</option>
-                            <option value="second_half">Second Half (Afternoon)</option>
-                          </select>
+                        {canFirstHalf && (
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer', background: form.halfDay && form.halfDayType === 'first_half' ? '#eff6ff' : '#fff', borderColor: form.halfDay && form.halfDayType === 'first_half' ? '#3b82f6' : '#e2e8f0', fontSize: 13 }}>
+                            <input type="radio" name="leaveDuration" className="form-check-input" checked={form.halfDay && form.halfDayType === 'first_half'} onChange={() => setForm(p => ({ ...p, halfDay: true, halfDayType: 'first_half', customStartTime: '', customEndTime: '' }))} />
+                            First Half (Morning)
+                          </label>
+                        )}
+                        {canSecondHalf && (
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer', background: form.halfDay && form.halfDayType === 'second_half' ? '#eff6ff' : '#fff', borderColor: form.halfDay && form.halfDayType === 'second_half' ? '#3b82f6' : '#e2e8f0', fontSize: 13 }}>
+                            <input type="radio" name="leaveDuration" className="form-check-input" checked={form.halfDay && form.halfDayType === 'second_half'} onChange={() => setForm(p => ({ ...p, halfDay: true, halfDayType: 'second_half', customStartTime: '', customEndTime: '' }))} />
+                            Second Half (Afternoon)
+                          </label>
                         )}
                       </div>
-                      {form.halfDay && (
-                        <div style={{ marginTop: 10, padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
-                          <div style={{ fontSize: 12, color: '#0369a1', marginBottom: 8, fontWeight: 600 }}>
-                            <i className="bi bi-clock me-1" />Custom Time (Optional)
+                      {form.halfDay && form.halfDayType && (
+                        <div style={{ marginTop: 10 }}>
+                          <div
+                            onClick={() => setForm(p => ({ ...p, _showTimePicker: !p._showTimePicker }))}
+                            style={{ fontSize: 12, color: '#3b82f6', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}
+                          >
+                            <i className={`bi bi-chevron-${form._showTimePicker ? 'up' : 'down'}`} />
+                            Customize time (optional)
                           </div>
-                          <div className="row g-2" style={{ alignItems: 'center' }}>
-                            <div className="col-auto">
-                              <label style={{ fontSize: 12, color: '#64748b' }}>Start</label>
-                              <input
-                                type="time"
-                                className="form-control form-control-sm"
-                                style={{ fontSize: 12, width: 130 }}
-                                value={form.customStartTime}
-                                onChange={e => setForm(p => ({ ...p, customStartTime: e.target.value }))}
-                              />
+                          {form._showTimePicker && (
+                            <div style={{ marginTop: 8, padding: '10px 14px', background: '#f0f9ff', borderRadius: 8, border: '1px solid #bae6fd' }}>
+                              <div className="row g-2" style={{ alignItems: 'center' }}>
+                                <div className="col-auto">
+                                  <label style={{ fontSize: 12, color: '#64748b' }}>Start</label>
+                                  <input
+                                    type="time"
+                                    className="form-control form-control-sm"
+                                    style={{ fontSize: 12, width: 130 }}
+                                    value={form.customStartTime}
+                                    onChange={e => setForm(p => ({ ...p, customStartTime: e.target.value }))}
+                                  />
+                                </div>
+                                <div className="col-auto" style={{ paddingTop: 18, fontSize: 12, color: '#94a3b8' }}>to</div>
+                                <div className="col-auto">
+                                  <label style={{ fontSize: 12, color: '#64748b' }}>End</label>
+                                  <input
+                                    type="time"
+                                    className="form-control form-control-sm"
+                                    style={{ fontSize: 12, width: 130 }}
+                                    value={form.customEndTime}
+                                    onChange={e => setForm(p => ({ ...p, customEndTime: e.target.value }))}
+                                  />
+                                </div>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+                                {form.halfDayType === 'first_half'
+                                  ? 'First Half: Morning (e.g., 09:00 – 14:00)'
+                                  : 'Second Half: Afternoon (e.g., 14:00 – 18:00)'}
+                              </div>
                             </div>
-                            <div className="col-auto" style={{ paddingTop: 18, fontSize: 12, color: '#94a3b8' }}>to</div>
-                            <div className="col-auto">
-                              <label style={{ fontSize: 12, color: '#64748b' }}>End</label>
-                              <input
-                                type="time"
-                                className="form-control form-control-sm"
-                                style={{ fontSize: 12, width: 130 }}
-                                value={form.customEndTime}
-                                onChange={e => setForm(p => ({ ...p, customEndTime: e.target.value }))}
-                              />
-                            </div>
-                          </div>
-                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
-                            {form.halfDayType === 'first_half'
-                              ? 'First Half: Morning (e.g., 09:00 – 14:00)'
-                              : form.halfDayType === 'second_half'
-                                ? 'Second Half: Afternoon (e.g., 14:00 – 18:00)'
-                                : 'Select a half above to see the default time range'}
-                          </div>
-                        </div>
-                      )}
-                      {form.halfDay && !form.halfDayType && (
-                        <div style={{ color: '#ef4444', fontSize: 11, marginTop: 4 }}>
-                          <i className="bi bi-exclamation-circle-fill me-1" />Please select First Half or Second Half
+                          )}
                         </div>
                       )}
                     </div>

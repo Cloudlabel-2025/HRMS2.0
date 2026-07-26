@@ -61,7 +61,7 @@ export async function POST(req) {
       });
 
       const paidLeaveDays = approvedLeaves
-        .filter(l => l.type !== 'Loss of Pay')
+        .filter(l => l.typeCode !== 'LOP' && l.type !== 'Loss of Pay')
         .reduce((sum, l) => sum + (l.paidDays || l.days), 0);
 
       const autoLopDays = approvedLeaves.reduce((sum, l) => sum + (l.unpaidDays || 0), 0);

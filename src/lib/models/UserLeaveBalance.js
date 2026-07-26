@@ -7,7 +7,7 @@ const PeriodUsageSchema = new mongoose.Schema({
 }, { _id: false });
 
 const BalanceEntrySchema = new mongoose.Schema({
-  typeId:          { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveType', required: true },
+  typeCode:        { type: String, required: true },
   allocated:       { type: Number, default: 0 },
   used:            { type: Number, default: 0 },
   pending:         { type: Number, default: 0 },
@@ -22,6 +22,7 @@ const UserLeaveBalanceSchema = new mongoose.Schema({
   cycleStart: { type: Date, required: true },
   cycleEnd:   { type: Date, required: true },
   balances:   [BalanceEntrySchema],
+  lastAccrualMonth: { type: Number, default: -1 }, // month index (0-11) of last accrual run
 }, { timestamps: true });
 
 UserLeaveBalanceSchema.index({ userId: 1, cycleStart: -1 });

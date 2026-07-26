@@ -87,7 +87,7 @@ export async function PUT(req, { params }) {
         const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
         if (heldStep && isAdmin) {
           // Admin override — approve or reject
-          approveStep(approverStep, action, user, holdReason);
+          approveStep(heldStep, action, user, holdReason);
           // If re-approving after hold, reset held steps
           if (action === 'approved') {
             workflow.forEach(s => {
@@ -117,20 +117,20 @@ export async function PUT(req, { params }) {
       // Handle final approval — deduct balance
       if (newStatus === 'approved') {
         const isPaid = policy.leaveTypeConfigs?.find(
-          c => c.typeId.toString() === (leave.typeId?.toString() || '')
+          c => c.code === leave.typeCode
         )?.isPaid ?? true;
 
         const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
 
-        if (isPaid && leave.type !== 'Loss of Pay' && paidDays > 0) {
+        if (isPaid && paidDays > 0) {
           const now = new Date();
           const cycleStart = new Date(now.getFullYear(), 0, 1);
           const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
           if (balance) {
-            const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+            const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
             if (entry) {
               const typeConfig = policy.leaveTypeConfigs?.find(
-                c => c.typeId.toString() === (leave.typeId?.toString() || '')
+                c => c.code === leave.typeCode
               );
               
               const currentAvailable = entry.allocated + entry.carriedForward - entry.used - entry.pending;
@@ -151,15 +151,6 @@ export async function PUT(req, { params }) {
               await balance.save();
             }
           }
-
-          // Legacy balance deduction
-          const { Employee } = await import('@/lib/models/index');
-          const emp = await Employee.findOne({ userId: applicantId });
-          if (emp) {
-            const currentBalance = emp.leaveBalance ?? 24;
-            emp.leaveBalance = Math.max(0, currentBalance - paidDays);
-            await emp.save();
-          }
         }
 
         await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
@@ -171,7 +162,7 @@ export async function PUT(req, { params }) {
         const cycleStart = new Date(now.getFullYear(), 0, 1);
         const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
         if (balance) {
-          const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+          const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
           if (entry) {
             const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
             entry.pending = Math.max(0, (entry.pending || 0) - paidDays);
@@ -316,14 +307,44 @@ export async function PUT(req, { params }) {
     const newStatus = resolveStatus(leave);
     leave.status = newStatus;
 
-    if (newStatus === 'approved' && leave.type !== 'Loss of Pay') {
-      const { Employee } = await import('@/lib/models/index');
-      const emp = await Employee.findOne({ userId: applicantId });
-      if (emp) {
-        const currentBalance = emp.leaveBalance ?? 24;
-        const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
-        emp.leaveBalance = Math.max(0, currentBalance - paidDays);
-        await emp.save();
+    if (newStatus === 'approved') {
+      // Look up isPaid from policy config for this leave type
+      let isPaidLegacy = true;
+      if (policy) {
+        const tc = policy.leaveTypeConfigs?.find(c => c.code === leave.typeCode);
+        if (tc) isPaidLegacy = tc.isPaid ?? true;
+      } else if (leave.typeCode === 'LOP') {
+        isPaidLegacy = false;
+      }
+      const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
+      if (isPaidLegacy && paidDays > 0) {
+        const now = new Date();
+        const cycleStart = new Date(now.getFullYear(), 0, 1);
+        const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
+        if (balance) {
+          const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
+          if (entry) {
+            const typeConfig = policy?.leaveTypeConfigs?.find(
+              c => c.code === leave.typeCode
+            );
+
+            const currentAvailable = entry.allocated + entry.carriedForward - entry.used - entry.pending;
+            if (entry.pending >= paidDays) {
+              entry.pending -= paidDays;
+              entry.used += paidDays;
+            } else if (currentAvailable >= paidDays) {
+              entry.used += paidDays;
+              entry.pending = Math.max(0, entry.pending - paidDays);
+            }
+
+            if (typeConfig && typeConfig.maxUsagePerPeriod > 0) {
+              const { recordPeriodUsage } = require('@/lib/leave/accrual');
+              recordPeriodUsage(entry, typeConfig.usagePeriod, balance.cycleStart, new Date(leave.from), paidDays);
+            }
+
+            await balance.save();
+          }
+        }
       }
       await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
     }
@@ -358,30 +379,27 @@ export async function DELETE(req, { params }) {
     if (error) return error;
     await connectDB();
 
-    const leave = await Leave.findById(id).populate('typeId', 'name');
+    const leave = await Leave.findById(id).lean();
     if (!leave) return fail('Leave not found', 404);
     if (leave.userId.toString() !== user._id.toString()) return fail('Access denied', 403);
     if (!['pending', 'approved'].includes(leave.status)) return fail('Cannot cancel an already processed leave', 400);
 
     // Restore balance
     const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
-    if (leave.status === 'approved' && leave.type !== 'Loss of Pay' && paidDays > 0) {
+    let isPaidDelete = true;
+    if (leave.typeCode === 'LOP') {
+      isPaidDelete = false;
+    }
+    if (leave.status === 'approved' && isPaidDelete && paidDays > 0) {
       const now = new Date();
       const cycleStart = new Date(now.getFullYear(), 0, 1);
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
       if (balance) {
-        const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+        const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
         if (entry) {
           entry.used = Math.max(0, (entry.used || 0) - paidDays);
           await balance.save();
         }
-      }
-
-      const { Employee } = await import('@/lib/models/index');
-      const emp = await Employee.findOne({ userId: leave.userId });
-      if (emp) {
-        emp.leaveBalance = (emp.leaveBalance ?? 0) + paidDays;
-        await emp.save();
       }
     } else if (leave.status === 'pending' && paidDays > 0) {
       // Restore pending
@@ -389,7 +407,7 @@ export async function DELETE(req, { params }) {
       const cycleStart = new Date(now.getFullYear(), 0, 1);
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
       if (balance) {
-        const entry = balance.balances.find(b => b.typeId.toString() === (leave.typeId?.toString() || ''));
+        const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
         if (entry) {
           entry.pending = Math.max(0, (entry.pending || 0) - paidDays);
           await balance.save();

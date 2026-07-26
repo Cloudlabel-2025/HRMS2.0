@@ -70,7 +70,7 @@ export async function GET(req) {
   ]);
 
   const myLeaveBalance = isSelfRole
-    ? 12 - await Leave.countDocuments({ userId: user._id, status: 'approved', type: 'Casual Leave' })
+    ? 12 - await Leave.countDocuments({ userId: user._id, status: 'approved', typeCode: 'CL' })
     : 0;
 
   const lastPayslip = isSelfRole

@@ -7,7 +7,12 @@ const EligibilityRuleSchema = new mongoose.Schema({
 }, { _id: false });
 
 const LeaveTypeConfigSchema = new mongoose.Schema({
-  typeId:               { type: mongoose.Schema.Types.ObjectId, ref: 'LeaveType', required: true },
+  code:                 { type: String, required: true, trim: true },
+  name:                 { type: String, required: true, trim: true },
+  description:          { type: String, default: '' },
+  color:                { type: String, default: '#3b82f6' },
+  icon:                 { type: String, default: 'bi-calendar-check' },
+  sortOrder:            { type: Number, default: 0 },
   enabled:              { type: Boolean, default: true },
   annualAllocation:     { type: Number, default: 0 },
   isPaid:               { type: Boolean, default: true },
@@ -15,6 +20,8 @@ const LeaveTypeConfigSchema = new mongoose.Schema({
   minGapDays:           { type: Number, default: 0 },
   requiresDocuments:    { type: Boolean, default: false },
   allowHalfDay:         { type: Boolean, default: false },
+  allowFirstHalf:       { type: Boolean, default: true },
+  allowSecondHalf:      { type: Boolean, default: true },
   genderRestriction:    { type: String, enum: ['all', 'male', 'female', 'maternity', 'paternity'], default: 'all' },
   carryForwardAllowed:  { type: Boolean, default: false },
   carryForwardMaxDays:  { type: Number, default: 0 },

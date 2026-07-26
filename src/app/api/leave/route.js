@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Leave, LeaveType, LeavePolicy, UserLeaveBalance, EmpProfile, Holiday } from '@/lib/models/index';
+import { Leave, LeavePolicy, UserLeaveBalance, EmpProfile, Holiday } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -53,7 +53,6 @@ export async function GET(req) {
 
     const leaves = await Leave.find(query)
       .populate('userId', 'name avatar department')
-      .populate('typeId', 'name code color')
       .populate({ path: 'workflowApprovals.approvedBy', select: 'name', strictPopulate: false })
       .sort({ createdAt: -1 });
 
@@ -77,13 +76,7 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { typeId, from, to, halfDay, halfDayType, reason, documents } = validation.data;
-
-    // Look up leave type
-    const leaveType = await LeaveType.findById(typeId);
-    if (!leaveType || !leaveType.isActive) {
-      return fail('Invalid or deactivated leave type', 400);
-    }
+    const { typeCode, from, to, halfDay, halfDayType, reason, documents } = validation.data;
 
     // Calculate days
     let fromDate = new Date(from);
@@ -127,10 +120,21 @@ export async function POST(req) {
         return fail('You already have a pending leave application. Wait for it to be resolved before applying again.', 400);
       }
 
+      // Resolve policy to get type config
+      const policy = await resolvePolicyForUser(user);
+      if (!policy) {
+        return fail('No active leave policy found for your role. Contact admin.', 400);
+      }
+
+      const typeConfig = policy.leaveTypeConfigs.find(c => c.code === typeCode);
+      if (!typeConfig || !typeConfig.enabled) {
+        return fail('This leave type is not available under your current leave policy', 400);
+      }
+
       const leave = await Leave.create({
         userId: user._id,
-        type: leaveType.name,
-        typeId,
+        type: typeConfig.name,
+        typeCode,
         from,
         to,
         days,
@@ -149,13 +153,13 @@ export async function POST(req) {
         await notify(
           admins.map(a => a._id),
           'New Leave Request',
-          `${user.name} applied for ${days} day(s) of ${leaveType.name} (${from} to ${to})`,
+          `${user.name} applied for ${days} day(s) of ${typeConfig.name} (${from} to ${to})`,
           'leave',
           leave._id
         );
       }
 
-      await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${leaveType.name} (${from} to ${to})`, 'low', ip, null, user._id);
+      await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${typeConfig.name} (${from} to ${to})`, 'low', ip, null, user._id);
       return ok(leave, 201);
     }
 
@@ -163,15 +167,16 @@ export async function POST(req) {
     // Resolve policy for this user
     const policy = await resolvePolicyForUser(user);
     if (!policy) {
+      console.log('[LEAVE DEBUG] POST /api/leave — No policy found for user:', user._id, 'role:', user.role);
       return fail('No active leave policy found for your role. Contact admin.', 400);
     }
+    console.log('[LEAVE DEBUG] POST /api/leave — Policy found:', policy.name, '| leaveTypeConfigs count:', policy.leaveTypeConfigs?.length);
 
     // Find the type config in policy
-    const typeConfig = policy.leaveTypeConfigs.find(
-      c => c.typeId.toString() === typeId
-    );
+    const typeConfig = policy.leaveTypeConfigs.find(c => c.code === typeCode);
     if (!typeConfig || !typeConfig.enabled) {
-      return fail(`${leaveType.name} is not available under your current leave policy`, 400);
+      console.log('[LEAVE DEBUG] Type config not found for code:', typeCode, '| available codes:', policy.leaveTypeConfigs?.map(c => c.code));
+      return fail(`${typeConfig?.name || 'This leave type'} is not available under your current leave policy`, 400);
     }
 
     // Check dynamic eligibility rules
@@ -206,15 +211,16 @@ export async function POST(req) {
       }
     }
 
-    // Enforce half-day rules per leave type
+    // Enforce half-day rules per leave type config
     if (halfDay) {
-      // Earned leaves can only be full day
-      if (leaveType && leaveType.name === 'Earned Leave') {
-        return fail('Earned leaves can only be taken as full day', 400);
-      }
-      // Policy must allow half day for this leave type
       if (!typeConfig.allowHalfDay) {
-        return fail(`${leaveType?.name || 'This leave type'} does not support half-day leaves`, 400);
+        return fail(`${typeConfig.name} does not support half-day leaves`, 400);
+      }
+      if (halfDayType === 'first_half' && !typeConfig.allowFirstHalf) {
+        return fail('First Half is not enabled for this leave type', 400);
+      }
+      if (halfDayType === 'second_half' && !typeConfig.allowSecondHalf) {
+        return fail('Second Half is not enabled for this leave type', 400);
       }
     }
 
@@ -275,11 +281,11 @@ export async function POST(req) {
     // Check supporting documents requirement
     const needsDocs = typeConfig.requiresDocuments || (typeConfig.requireDocsIfConsecutiveDays > 0 && days >= typeConfig.requireDocsIfConsecutiveDays);
     if (needsDocs && (!documents || !Array.isArray(documents) || documents.length === 0)) {
-      return fail(`Supporting documents are required when applying for ${leaveType.name}${typeConfig.requireDocsIfConsecutiveDays > 0 ? ` for ${typeConfig.requireDocsIfConsecutiveDays} or more days` : ''}.`, 400);
+      return fail(`Supporting documents are required when applying for ${typeConfig.name}${typeConfig.requireDocsIfConsecutiveDays > 0 ? ` for ${typeConfig.requireDocsIfConsecutiveDays} or more days` : ''}.`, 400);
     }
     // Check max consecutive days
     if (typeConfig.maxConsecutiveDays > 0 && days > typeConfig.maxConsecutiveDays) {
-      return fail(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${leaveType.name}`, 400);
+      return fail(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${typeConfig.name}`, 400);
     }
 
     // Check max pending applications
@@ -300,16 +306,16 @@ export async function POST(req) {
       if (recentLeave) {
         const gap = Math.ceil((new Date(from) - new Date(recentLeave.to)) / (1000 * 60 * 60 * 24)) - 1;
         if (gap < typeConfig.minGapDays) {
-          return fail(`Minimum ${typeConfig.minGapDays} day(s) gap required between ${leaveType.name} applications`, 400);
+          return fail(`Minimum ${typeConfig.minGapDays} day(s) gap required between ${typeConfig.name} applications`, 400);
         }
       }
     }
 
     // Get / create balance and check availability
     const balance = await getOrCreateBalance(user._id, policy);
-    const balanceEntry = balance.balances.find(b => b.typeId.toString() === typeId);
+    const balanceEntry = balance.balances.find(b => b.typeCode === typeCode);
     if (!balanceEntry) {
-      return fail(`No balance record found or you are not eligible for ${leaveType.name}`, 400);
+      return fail(`No balance record found or you are not eligible for ${typeConfig.name}`, 400);
     }
 
     const { calculatePeriodAllowance } = require('@/lib/leave/accrual');
@@ -350,8 +356,8 @@ export async function POST(req) {
     // Create leave record
     const leave = await Leave.create({
       userId: user._id,
-      typeId,
-      type: leaveType.name,
+      typeCode,
+      type: typeConfig.name,
       from,
       to,
       days,
@@ -383,14 +389,14 @@ export async function POST(req) {
         await notify(
           approvers.map(a => a._id),
           'New Leave Request',
-          `${user.name} applied for ${days} day(s) of ${leaveType.name} (${from} to ${to})`,
+          `${user.name} applied for ${days} day(s) of ${typeConfig.name} (${from} to ${to})`,
           'leave',
           leave._id
         );
       }
     }
 
-    await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${leaveType.name} (${from} to ${to})`, 'low', ip, null, user._id);
+    await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${typeConfig.name} (${from} to ${to})`, 'low', ip, null, user._id);
     return ok(leave, 201);
   } catch (e) {
     return fail(e.message, 500);

@@ -13,7 +13,12 @@ async function tryRefresh() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken }),
     });
-    const json = await res.json();
+    let json;
+    try {
+      json = await res.json();
+    } catch {
+      throw new Error('Session expired');
+    }
     if (!res.ok) throw new Error('Session expired');
     setToken(json.data.token);
     return json.data.token;
@@ -55,7 +60,12 @@ async function request(url, options = {}, retry = true) {
     }
   }
 
-  const json = await res.json();
+  let json;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error(`Server error (${res.status})`);
+  }
   if (!res.ok) {
     const message = typeof json.error === 'object'
       ? JSON.stringify(json.error)

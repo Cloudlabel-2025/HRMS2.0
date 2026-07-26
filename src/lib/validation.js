@@ -300,12 +300,12 @@ export const ReviewSelfServiceRequestSchema = z.object({
 // ────────────────────────────────────────────────────────────────────────────
 
 export const CreateLeaveSchema = z.object({
-  typeId: z.string().regex(/^[0-9a-f]{24}$/, 'Invalid leave type'),
+  typeCode: z.string().min(1).max(10),
   from: DateSchema,
   to: DateSchema,
   halfDay: z.boolean().optional().default(false),
   halfDayType: z.enum(['first_half', 'second_half']).optional(),
-  reason: z.string().min(10, 'Reason must be at least 10 characters').max(500),
+  reason: z.string().min(5, 'Reason must be at least 5 characters').max(500),
   documents: z.array(z.string()).optional().default([]),
 }).strict().refine(
   (data) => new Date(data.to) >= new Date(data.from),

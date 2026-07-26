@@ -4,7 +4,7 @@ import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
-import { Payroll, SalaryStructure, Project, Task } from '@/lib/models';
+import { Payroll, SalaryStructure, Project, Task, LeavePolicy, UserLeaveBalance } from '@/lib/models';
 import { Goal, Review, Document, Announcement, Asset, AuditLog, Absence, Notification, Department, Shift, Holiday, Settings, EmpLifecycleHistory, SelfServiceRequest, Employee, AttendanceRegularization } from '@/lib/models';
 import { ok, fail } from '@/lib/jwt';
 import bcrypt from 'bcryptjs';
@@ -44,7 +44,6 @@ function randomPick(arr) {
 
 const TASK_STATUSES = ['To Do', 'In Progress', 'Completed', 'Blocked'];
 const WP_STATUSES = ['pending', 'work_in_progress', 'completed', 'task_blocked', 'stopped'];
-const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Compensatory Leave'];
 
 const TASK_TEMPLATES = [
   'AuthModule',
@@ -418,6 +417,131 @@ export async function POST(req) {
       }
     }
 
+    // ── 5b. Leave Policy (Default) ──────────────────────────────────────
+    const leavePolicy = await LeavePolicy.create({
+      name: 'Standard Leave Policy',
+      description: 'Default leave policy for all employees. Quarterly accrual for Sick, Casual, and Earned leaves.',
+      isDefault: true,
+      status: 'active',
+      effectiveFrom: new Date('2026-01-01'),
+      effectiveTo: null,
+      applicableRoles: [],
+      applicableDepartments: [],
+      applicableEmploymentTypes: [],
+      requireProbationCompletion: false,
+      genderRestriction: 'all',
+      maxPendingApplications: 3,
+      countWeekends: false,
+      countHolidays: false,
+      approvalWorkflow: [
+        { step: 1, label: 'Admin', approverRoles: ['super_admin', 'admin_full'], actionType: 'approve', required: true, escalateAfterHours: 0 },
+      ],
+      leaveTypeConfigs: [
+        {
+          code: 'SL',
+          name: 'Sick Leave',
+          description: 'Leave for medical reasons and health issues.',
+          color: '#ef4444',
+          icon: 'bi-heart-pulse',
+          sortOrder: 1,
+          enabled: true,
+          annualAllocation: 6,
+          isPaid: true,
+          maxConsecutiveDays: 0,
+          minGapDays: 0,
+          requiresDocuments: false,
+          allowHalfDay: true,
+          allowFirstHalf: true,
+          allowSecondHalf: true,
+          genderRestriction: 'all',
+          carryForwardAllowed: false,
+          carryForwardMaxDays: 0,
+          carryForwardExpiryMonths: 0,
+          encashmentAllowed: false,
+          probationAllowed: true,
+          accrualMode: 'monthly',
+          prorateForNewJoiners: true,
+          noticePeriodDays: 0,
+          requireDocsIfConsecutiveDays: 0,
+          eligibilityRules: [],
+          useCustomWorkflow: false,
+          approvalWorkflow: [],
+          creditSchedule: 'quarterly',
+          maxUsagePerPeriod: 1.5,
+          usagePeriod: 'quarterly',
+          unusedPeriodRollover: false,
+        },
+        {
+          code: 'CL',
+          name: 'Casual Leave',
+          description: 'Leave for personal work and casual purposes.',
+          color: '#3b82f6',
+          icon: 'bi-calendar-check',
+          sortOrder: 2,
+          enabled: true,
+          annualAllocation: 6,
+          isPaid: true,
+          maxConsecutiveDays: 0,
+          minGapDays: 0,
+          requiresDocuments: false,
+          allowHalfDay: true,
+          allowFirstHalf: true,
+          allowSecondHalf: true,
+          genderRestriction: 'all',
+          carryForwardAllowed: false,
+          carryForwardMaxDays: 0,
+          carryForwardExpiryMonths: 0,
+          encashmentAllowed: false,
+          probationAllowed: true,
+          accrualMode: 'monthly',
+          prorateForNewJoiners: true,
+          noticePeriodDays: 0,
+          requireDocsIfConsecutiveDays: 0,
+          eligibilityRules: [],
+          useCustomWorkflow: false,
+          approvalWorkflow: [],
+          creditSchedule: 'quarterly',
+          maxUsagePerPeriod: 1.5,
+          usagePeriod: 'quarterly',
+          unusedPeriodRollover: false,
+        },
+        {
+          code: 'EL',
+          name: 'Earned Leave',
+          description: 'Earned leave that accumulates with service. Carry forward allowed.',
+          color: '#8b5cf6',
+          icon: 'bi-award',
+          sortOrder: 3,
+          enabled: true,
+          annualAllocation: 12,
+          isPaid: true,
+          maxConsecutiveDays: 0,
+          minGapDays: 0,
+          requiresDocuments: false,
+          allowHalfDay: false,
+          allowFirstHalf: true,
+          allowSecondHalf: true,
+          genderRestriction: 'all',
+          carryForwardAllowed: true,
+          carryForwardMaxDays: 12,
+          carryForwardExpiryMonths: 3,
+          encashmentAllowed: false,
+          probationAllowed: true,
+          accrualMode: 'monthly',
+          prorateForNewJoiners: true,
+          noticePeriodDays: 0,
+          requireDocsIfConsecutiveDays: 0,
+          eligibilityRules: [],
+          useCustomWorkflow: false,
+          approvalWorkflow: [],
+          creditSchedule: 'quarterly',
+          maxUsagePerPeriod: 3,
+          usagePeriod: 'quarterly',
+          unusedPeriodRollover: false,
+        },
+      ],
+    });
+
     // ── 6. Leave Requests ───────────────────────────────────────────────
     for (const u of createdUsers) {
       // Leave 1: Approved casual leave (past)
@@ -426,6 +550,8 @@ export async function POST(req) {
       await Leave.create({
         userId: u.user._id,
         type: 'Casual Leave',
+        typeCode: 'CL',
+        policyId: leavePolicy._id,
         from: toYYYYMMDD(leaveDate1),
         to: toYYYYMMDD(leaveDate2),
         days: 2,
@@ -447,6 +573,8 @@ export async function POST(req) {
       await Leave.create({
         userId: u.user._id,
         type: 'Sick Leave',
+        typeCode: 'SL',
+        policyId: leavePolicy._id,
         from: toYYYYMMDD(sickDate),
         to: toYYYYMMDD(sickDate),
         days: 1,
@@ -459,6 +587,8 @@ export async function POST(req) {
       await Leave.create({
         userId: u.user._id,
         type: 'Earned Leave',
+        typeCode: 'EL',
+        policyId: leavePolicy._id,
         from: toYYYYMMDD(earnedDate),
         to: toYYYYMMDD(addDays(earnedDate, 2)),
         days: 3,
@@ -473,6 +603,41 @@ export async function POST(req) {
         teamAdminApproval: 'approved',
         teamAdminApprovedBy: admin._id,
         teamAdminApprovedAt: new Date(),
+      });
+    }
+
+    // ── 6b. Leave Balances ──────────────────────────────────────────────
+    for (const u of createdUsers) {
+      const now = new Date();
+      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const cycleEnd = new Date(now.getFullYear(), 11, 31);
+
+      const approvedLeaves = await Leave.find({ userId: u.user._id, status: 'approved' });
+      let slUsed = 0, clUsed = 0, elUsed = 0;
+      for (const l of approvedLeaves) {
+        if (l.typeCode === 'SL') slUsed += l.days;
+        else if (l.typeCode === 'CL') clUsed += l.days;
+        else if (l.typeCode === 'EL') elUsed += l.days;
+      }
+
+      const pendingLeaves = await Leave.find({ userId: u.user._id, status: 'pending' });
+      let slPending = 0, clPending = 0, elPending = 0;
+      for (const l of pendingLeaves) {
+        if (l.typeCode === 'SL') slPending += l.days;
+        else if (l.typeCode === 'CL') clPending += l.days;
+        else if (l.typeCode === 'EL') elPending += l.days;
+      }
+
+      await UserLeaveBalance.create({
+        userId: u.user._id,
+        policyId: leavePolicy._id,
+        cycleStart,
+        cycleEnd,
+        balances: [
+          { typeCode: 'SL', allocated: 6, used: slUsed, pending: slPending, carriedForward: 0, periodUsage: [] },
+          { typeCode: 'CL', allocated: 6, used: clUsed, pending: clPending, carriedForward: 0, periodUsage: [] },
+          { typeCode: 'EL', allocated: 12, used: elUsed, pending: elPending, carriedForward: 0, periodUsage: [] },
+        ],
       });
     }
 

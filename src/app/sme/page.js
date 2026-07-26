@@ -756,11 +756,9 @@ export default function SMEPage() {
                   <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>Leave Type</label>
                   <select className="form-select form-select-sm" value={leaveTypeFilter} onChange={e => setLeaveTypeFilter(e.target.value)} style={{ fontSize: 13 }}>
                     <option value="all">All Types</option>
-                    <option value="Sick">Sick</option>
-                    <option value="Casual">Casual</option>
-                    <option value="Annual">Annual</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Other">Other</option>
+                    {[...new Set(smeLeaves.map(l => l.typeCode).filter(Boolean))].map(tc => (
+                      <option key={tc} value={tc}>{tc}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="col-md-2">
@@ -823,7 +821,7 @@ export default function SMEPage() {
                   filtered = filtered.filter(l => (l.userId?.name || '').toLowerCase().includes(term));
                 }
 
-                if (leaveTypeFilter !== 'all') filtered = filtered.filter(l => l.type === leaveTypeFilter);
+                if (leaveTypeFilter !== 'all') filtered = filtered.filter(l => l.typeCode === leaveTypeFilter);
 
                 if (leaveFromDate) filtered = filtered.filter(l => l.from >= leaveFromDate);
                 if (leaveToDate) filtered = filtered.filter(l => l.to <= leaveToDate);
@@ -862,7 +860,7 @@ export default function SMEPage() {
                             </div>
                           </td>
                           <td style={{ padding: '12px 16px' }}>
-                            <span className="badge" style={{ background: '#0891b220', color: '#0891b2', fontSize: 10, fontWeight: 600, borderRadius: 6 }}>{lv.type}</span>
+                            <span className="badge" style={{ background: '#0891b220', color: '#0891b2', fontSize: 10, fontWeight: 600, borderRadius: 6 }}>{lv.typeCode || lv.type}</span>
                           </td>
                           <td style={{ padding: '12px 16px', color: '#64748b' }}>{lv.from}</td>
                           <td style={{ padding: '12px 16px', color: '#64748b' }}>{lv.to}</td>

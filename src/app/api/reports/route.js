@@ -68,7 +68,7 @@ export async function GET(req) {
 
       const byType = {};
       for (const l of leaves) {
-        byType[l.leaveType] = (byType[l.leaveType] || 0) + 1;
+        byType[l.typeCode || l.type] = (byType[l.typeCode || l.type] || 0) + 1;
       }
 
       const approved = leaves.filter(l => l.status === 'approved').length;
@@ -89,7 +89,7 @@ export async function GET(req) {
         columns: ['Employee', 'Department', 'Type', 'Start', 'End', 'Status'],
         rows: leaves.map(l => ({
           Employee: l.userId?.name, Department: l.userId?.department,
-          Type: l.leaveType, Start: l.startDate, End: l.endDate, Status: l.status,
+          Type: l.typeCode || l.type, Start: l.from, End: l.to, Status: l.status,
         })),
       });
     }

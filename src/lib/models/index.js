@@ -392,6 +392,5 @@ export { default as EmpLifecycleHistory } from './LifecycleHistory';
 export { default as SelfServiceRequest } from './SelfServiceRequest';
 
 // Leave Policy models
-export { default as LeaveType } from './LeaveType';
 export { default as LeavePolicy } from './LeavePolicy';
 export { default as UserLeaveBalance } from './UserLeaveBalance';

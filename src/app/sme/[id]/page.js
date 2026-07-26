@@ -33,8 +33,6 @@ function Section({ title, children }) {
   );
 }
 
-const LEAVE_TYPES = ['Casual Leave', 'Sick Leave', 'Earned Leave', 'Maternity Leave', 'Paternity Leave', 'Compensatory Leave', 'Loss of Pay'];
-
 export default function SMEProfilePage() {
   const { id } = useParams();
   const router = useRouter();
@@ -43,8 +41,9 @@ export default function SMEProfilePage() {
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
-  const [leaveForm, setLeaveForm] = useState({ type: 'Casual Leave', from: '', to: '', reason: '' });
+  const [leaveForm, setLeaveForm] = useState({ typeCode: '', from: '', to: '', reason: '' });
   const [leaveSaving, setLeaveSaving] = useState(false);
+  const [leaveBalanceData, setLeaveBalanceData] = useState(null);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -56,7 +55,7 @@ export default function SMEProfilePage() {
       await api.post('/api/leave', leaveForm);
       showToast('Leave request submitted successfully');
       setShowLeaveModal(false);
-      setLeaveForm({ type: 'Casual Leave', from: '', to: '', reason: '' });
+      setLeaveForm({ typeCode: '', from: '', to: '', reason: '' });
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -73,6 +72,12 @@ export default function SMEProfilePage() {
       .catch(e => { showToast(e.message, 'error'); setTimeout(() => router.push('/sme'), 2000); })
       .finally(() => setLoading(false));
   }, [id, router]);
+
+  useEffect(() => {
+    if (user?.role === 'sme' && sme?.userId === user?._id) {
+      api.get('/api/leave/balance').then(d => setLeaveBalanceData(d)).catch(() => {});
+    }
+  }, [user, sme]);
 
   if (user && user.role !== 'super_admin' && user.role !== 'sme') return (
     <AppShell title="SME Profile">
@@ -167,8 +172,15 @@ export default function SMEProfilePage() {
                 <div className="row g-3">
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type</label>
-                    <select className="form-select" value={leaveForm.type} onChange={e => setLeaveForm(p => ({ ...p, type: e.target.value }))}>
-                      {LEAVE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    <select className="form-select" value={leaveForm.typeCode} onChange={e => setLeaveForm(p => ({ ...p, typeCode: e.target.value }))}>
+                      <option value="">— Select —</option>
+                      {(leaveBalanceData?.policy?.leaveTypeConfigs || [])
+                        .filter(c => c.enabled)
+                        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+                        .map(c => (
+                          <option key={c.code} value={c.code}>{c.code} — {c.name}</option>
+                        ))
+                      }
                     </select>
                   </div>
                   <div className="col-md-6">

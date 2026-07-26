@@ -5,7 +5,6 @@ import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 
 const TABS = [
-  { key: 'types',    label: 'Leave Types',    icon: 'bi-tags' },
   { key: 'policies', label: 'Policies',       icon: 'bi-file-earmark-text' },
   { key: 'balances', label: 'Balances',       icon: 'bi-pie-chart' },
 ];
@@ -18,8 +17,7 @@ function Label({ text, color }) {
 
 export default function LeavePoliciesPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('types');
-  const [types, setTypes] = useState([]);
+  const [tab, setTab] = useState('policies');
   const [policies, setPolicies] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [balances, setBalances] = useState(null);
@@ -36,6 +34,7 @@ export default function LeavePoliciesPage() {
   const [editorTab, setEditorTab] = useState('general');
   const [expandedType, setExpandedType] = useState(null);
   const [adjModal, setAdjModal] = useState(null);
+  const [seeding, setSeeding] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -44,11 +43,18 @@ export default function LeavePoliciesPage() {
 
   const isAdmin = ADMIN_ROLES.includes(user?.role);
 
-  const loadTypes = async () => {
+  const seedPolicy = async () => {
+    if (!confirm('This will create a default leave policy (SL, CL, EL) and initialize balances for all active employees. Continue?')) return;
+    setSeeding(true);
     try {
-      const data = await api.get('/api/settings/leave-types');
-      setTypes(Array.isArray(data) ? data : []);
-    } catch (e) { showToast(e.message, 'error'); }
+      const res = await api.post('/api/seed/leave-policy', {});
+      showToast(res?.message || 'Default leave policy seeded successfully');
+      await loadPolicies();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSeeding(false);
+    }
   };
 
   const loadPolicies = async () => {
@@ -78,7 +84,7 @@ export default function LeavePoliciesPage() {
   useEffect(() => {
     if (!user || !isAdmin) return;
     setLoading(true);
-    Promise.all([loadTypes(), loadPolicies(), loadEmployees()]).finally(() => setLoading(false));
+    Promise.all([loadPolicies(), loadEmployees()]).finally(() => setLoading(false));
   }, [user]);
 
   useEffect(() => {
@@ -94,31 +100,6 @@ export default function LeavePoliciesPage() {
     );
   }
 
-  // ── Leave Type CRUD ──
-  const saveType = async (body) => {
-    setSaving(true);
-    try {
-      if (body._id) {
-        await api.put('/api/settings/leave-types', body);
-      } else {
-        await api.post('/api/settings/leave-types', body);
-      }
-      showToast('Leave type saved');
-      setShowModal(null);
-      loadTypes();
-    } catch (e) { showToast(e.message, 'error'); }
-    finally { setSaving(false); }
-  };
-
-  const deleteType = async (id) => {
-    if (!confirm('Deactivate this leave type? Existing leave records will be preserved.')) return;
-    try {
-      await api.delete('/api/settings/leave-types', { id });
-      showToast('Leave type deactivated');
-      loadTypes();
-    } catch (e) { showToast(e.message, 'error'); }
-  };
-
   // ── Policy CRUD ──
   const savePolicy = async () => {
     let nameVal = policyForm?.name?.trim();
@@ -129,12 +110,7 @@ export default function LeavePoliciesPage() {
     try {
       const payload = JSON.parse(JSON.stringify(policyForm));
       payload.name = nameVal;
-      if (payload.leaveTypeConfigs) {
-        payload.leaveTypeConfigs = payload.leaveTypeConfigs.map(cfg => ({
-          ...cfg,
-          typeId: cfg.typeId && typeof cfg.typeId === 'object' ? (cfg.typeId._id || cfg.typeId) : cfg.typeId
-        }));
-      }
+      // no typeId mapping needed — configs use embedded code/name
 
       if (payload._id) {
         await api.put(`/api/settings/leave-policies/${payload._id}`, payload);
@@ -154,6 +130,15 @@ export default function LeavePoliciesPage() {
     try {
       await api.delete(`/api/settings/leave-policies/${id}`);
       showToast('Policy archived');
+      loadPolicies();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const deletePolicy = async (id, name) => {
+    if (!confirm(`Permanently delete "${name}"? This action cannot be undone.`)) return;
+    try {
+      await api.delete(`/api/settings/leave-policies/${id}?hard=true`);
+      showToast('Policy deleted');
       loadPolicies();
     } catch (e) { showToast(e.message, 'error'); }
   };
@@ -181,19 +166,7 @@ export default function LeavePoliciesPage() {
         effectiveTo: null,
         applicableRoles: [], applicableDepartments: [], applicableEmploymentTypes: [],
         requireProbationCompletion: false, genderRestriction: 'all',
-        leaveTypeConfigs: types.filter(t => t.isActive).map(t => ({
-          typeId: t._id, enabled: true, annualAllocation: 0, isPaid: true,
-          maxConsecutiveDays: 0, minGapDays: 0, requiresDocuments: false,
-          allowHalfDay: false, genderRestriction: 'all',
-          carryForwardAllowed: false, carryForwardMaxDays: 0, carryForwardExpiryMonths: 0,
-          encashmentAllowed: false, encashmentMaxDays: 0, encashmentRatePercent: 100,
-          probationAllowed: true, probationAllocation: 0,
-          accrualMode: 'upfront', prorateForNewJoiners: false, 
-          noticePeriodDays: 0, requireDocsIfConsecutiveDays: 0,
-          creditSchedule: 'upfront', maxUsagePerPeriod: 0, usagePeriod: 'annual',
-          unusedPeriodRollover: false, eligibilityRules: [], useCustomWorkflow: false,
-          approvalWorkflow: [],
-        })),
+        leaveTypeConfigs: [],
         approvalWorkflow: [
           { step: 1, label: 'Admin', approverRoles: ['super_admin', 'admin_full'], actionType: 'approve', required: true, escalateAfterHours: 0 },
         ],
@@ -341,13 +314,34 @@ export default function LeavePoliciesPage() {
                   Configure leave quotas and rules. Click a leave type to expand its advanced settings.
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button className="btn btn-sm btn-outline-primary" onClick={() => {
+                      const existing = policyForm.leaveTypeConfigs.length;
+                      const newCfg = {
+                        code: '', name: '', description: '', color: '#3b82f6', icon: 'bi-calendar-check', sortOrder: existing,
+                        enabled: true, annualAllocation: 0, isPaid: true,
+                        maxConsecutiveDays: 0, minGapDays: 0, requiresDocuments: false,
+                        allowHalfDay: false, allowFirstHalf: true, allowSecondHalf: true,
+                        genderRestriction: 'all',
+                        carryForwardAllowed: false, carryForwardMaxDays: 0, carryForwardExpiryMonths: 0,
+                        encashmentAllowed: false, encashmentMaxDays: 0, encashmentRatePercent: 100,
+                        probationAllowed: true, probationAllocation: 0,
+                        accrualMode: 'upfront', prorateForNewJoiners: false,
+                        noticePeriodDays: 0, requireDocsIfConsecutiveDays: 0,
+                        creditSchedule: 'upfront', maxUsagePerPeriod: 0, usagePeriod: 'annual',
+                        unusedPeriodRollover: false, eligibilityRules: [], useCustomWorkflow: false,
+                        approvalWorkflow: [],
+                      };
+                      setPolicyForm(p => ({ ...p, leaveTypeConfigs: [...p.leaveTypeConfigs, newCfg] }));
+                    }}>
+                      <i className="bi bi-plus-lg me-1" />Add Leave Type
+                    </button>
+                  </div>
                   {policyForm.leaveTypeConfigs.map((cfg, i) => {
-                    const typeIdStr = cfg.typeId && typeof cfg.typeId === 'object' ? cfg.typeId._id : cfg.typeId;
-                    const lt = types.find(t => t._id === typeIdStr);
-                    const isExpanded = expandedType === typeIdStr;
+                    const isExpanded = expandedType === i;
                     return (
-                      <div key={typeIdStr} style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: cfg.enabled ? '#fff' : '#f8fafc' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', background: isExpanded ? '#f8fafc' : 'transparent', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none' }} onClick={() => setExpandedType(isExpanded ? null : typeIdStr)}>
+                      <div key={i} style={{ border: '1px solid #e2e8f0', borderRadius: 8, overflow: 'hidden', background: cfg.enabled ? '#fff' : '#f8fafc' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', background: isExpanded ? '#f8fafc' : 'transparent', borderBottom: isExpanded ? '1px solid #e2e8f0' : 'none' }} onClick={() => setExpandedType(isExpanded ? null : i)}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                             <div className="form-check form-switch m-0" onClick={e => e.stopPropagation()}>
                               <input className="form-check-input" type="checkbox" checked={cfg.enabled} style={{ width: 36, height: 18 }} onChange={e => {
@@ -356,10 +350,10 @@ export default function LeavePoliciesPage() {
                                 setPolicyForm(p => ({ ...p, leaveTypeConfigs: updated }));
                               }} />
                             </div>
-                            <span className="badge" style={{ background: lt?.color || '#e2e8f0', color: '#fff', fontSize: 13 }}>
-                              <i className={`${lt?.icon || 'bi-calendar'} me-1`} />{lt?.code}
+                            <span className="badge" style={{ background: cfg.color || '#e2e8f0', color: '#fff', fontSize: 13 }}>
+                              <i className={`${cfg.icon || 'bi-calendar'} me-1`} />{cfg.code || '?'}
                             </span>
-                            <span style={{ fontWeight: 600, color: cfg.enabled ? '#0f172a' : '#94a3b8' }}>{lt?.name}</span>
+                            <span style={{ fontWeight: 600, color: cfg.enabled ? '#0f172a' : '#94a3b8' }}>{cfg.name || 'Unnamed Type'}</span>
                             {cfg.enabled && <span style={{ fontSize: 13, color: '#64748b' }}>— {cfg.annualAllocation} days/yr ({cfg.accrualMode})</span>}
                           </div>
                           <i className={`bi bi-chevron-${isExpanded ? 'up' : 'down'}`} style={{ color: '#94a3b8' }} />
@@ -367,8 +361,37 @@ export default function LeavePoliciesPage() {
                         {isExpanded && cfg.enabled && (
                           <div style={{ padding: 20 }}>
                             <div className="row g-4">
+                              <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8 }}>Leave Type Identity</div>
+                              <div className="col-md-3">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Code *</label>
+                                <input className="form-control form-control-sm" placeholder="e.g. CL" value={cfg.code || ''} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], code: e.target.value.toUpperCase() }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                              </div>
+                              <div className="col-md-3">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Name *</label>
+                                <input className="form-control form-control-sm" placeholder="e.g. Casual Leave" value={cfg.name || ''} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], name: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                              </div>
+                              <div className="col-md-2">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Color</label>
+                                <input type="color" className="form-control form-control-color" value={cfg.color || '#3b82f6'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], color: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                              </div>
+                              <div className="col-md-2">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Icon</label>
+                                <select className="form-select form-select-sm" value={cfg.icon || 'bi-calendar-check'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], icon: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
+                                  <option value="bi-calendar-check">Calendar Check</option>
+                                  <option value="bi-sun">Sun</option>
+                                  <option value="bi-heart">Heart</option>
+                                  <option value="bi-emoji-frown">Sick</option>
+                                  <option value="bi-baby">Baby</option>
+                                  <option value="bi-person">Person</option>
+                                  <option value="bi-cash">Cash</option>
+                                </select>
+                              </div>
+                              <div className="col-md-2">
+                                <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Sort Order</label>
+                                <input type="number" className="form-control form-control-sm" min={0} value={cfg.sortOrder ?? 0} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], sortOrder: Number(e.target.value) }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                              </div>
                               <div className="col-12" style={{ fontWeight: 600, fontSize: 14, color: '#1e293b', borderBottom: '1px solid #e2e8f0', paddingBottom: 8 }}>Basic Settings</div>
-                              {(lt?.code === 'ML' || lt?.name?.toLowerCase().includes('maternity')) && (
+                              {(cfg.code === 'ML' || cfg.name?.toLowerCase().includes('maternity')) && (
                                 <div className="col-12 m-0 mt-2">
                                   <div className="alert alert-info py-2 px-3 m-0 d-flex justify-content-between align-items-center" style={{ fontSize: 12 }}>
                                     <span><i className="bi bi-info-circle-fill me-2" />Indian law mandates a minimum of 26 weeks (182 days) of Maternity Leave.</span>
@@ -431,6 +454,18 @@ export default function LeavePoliciesPage() {
                                   <input className="form-check-input" type="checkbox" id={`halfday-${i}`} checked={cfg.allowHalfDay || false} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], allowHalfDay: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
                                   <label className="form-check-label" htmlFor={`halfday-${i}`} style={{ fontSize: 12 }}>Allow Half Day</label>
                                 </div>
+                                {cfg.allowHalfDay && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 24 }}>
+                                    <div className="form-check">
+                                      <input className="form-check-input" type="checkbox" id={`firsthalf-${i}`} checked={cfg.allowFirstHalf !== false} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], allowFirstHalf: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                                      <label className="form-check-label" htmlFor={`firsthalf-${i}`} style={{ fontSize: 11 }}>Allow First Half (Morning)</label>
+                                    </div>
+                                    <div className="form-check">
+                                      <input className="form-check-input" type="checkbox" id={`secondhalf-${i}`} checked={cfg.allowSecondHalf !== false} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], allowSecondHalf: e.target.checked }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }} />
+                                      <label className="form-check-label" htmlFor={`secondhalf-${i}`} style={{ fontSize: 11 }}>Allow Second Half (Afternoon)</label>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                               <div className="col-md-3">
                                 <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Gender Restriction</label>
@@ -828,56 +863,6 @@ export default function LeavePoliciesPage() {
         ))}
       </div>
 
-      {/* ── LEAVE TYPES TAB ── */}
-      {tab === 'types' && (
-        <div className="card p-4">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-            <div className="section-title" style={{ margin: 0 }}>Leave Types</div>
-            <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', code: '', color: '#3b82f6', icon: 'bi-calendar-check', description: '', sortOrder: types.length, isActive: true }); setShowModal('type'); }}>
-              <i className="bi bi-plus-lg me-1" />Add Type
-            </button>
-          </div>
-          {loading ? (
-            <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
-          ) : types.length === 0 ? (
-            <div className="empty-state"><i className="bi bi-tags" /><h6>No leave types defined</h6></div>
-          ) : (
-            <div className="table-responsive">
-              <table className="table mb-0">
-                <thead>
-                  <tr><th>Order</th><th>Code</th><th>Name</th><th>Color</th><th>Status</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                  {types.map(t => (
-                    <tr key={t._id}>
-                      <td style={{ fontSize: 13 }}>{t.sortOrder}</td>
-                      <td><span className="badge" style={{ background: t.color, color: '#fff' }}>{t.code}</span></td>
-                      <td style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</td>
-                      <td>
-                        <input type="color" value={t.color || '#3b82f6'} disabled style={{ width: 30, height: 24, padding: 0, border: 'none', cursor: 'default' }} />
-                      </td>
-                      <td>
-                        <span className="badge" style={{ background: t.isActive ? '#dcfce7' : '#fee2e2', color: t.isActive ? '#16a34a' : '#dc2626' }}>
-                          {t.isActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }}
-                            onClick={() => { setModalForm({ ...t }); setShowModal('type'); }}>Edit</button>
-                          <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '2px 8px' }}
-                            onClick={() => deleteType(t._id)}>{t.isActive ? 'Deactivate' : 'Activate'}</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* ── POLICIES TAB ── */}
       {tab === 'policies' && (
         <div className="card p-4">
@@ -890,7 +875,19 @@ export default function LeavePoliciesPage() {
           {loading ? (
             <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
           ) : policies.length === 0 ? (
-            <div className="empty-state"><i className="bi bi-file-earmark-text" /><h6>No policies created yet</h6></div>
+            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <i className="bi bi-file-earmark-text" style={{ fontSize: 40, color: '#cbd5e1', marginBottom: 12 }} />
+              <h6 style={{ color: '#475569', marginBottom: 6 }}>No policies created yet</h6>
+              <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16 }}>Create a policy manually or seed a default one with Sick, Casual, and Earned leave types.</p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+                <button className="btn btn-outline-primary btn-sm" onClick={() => openPolicyEditor()}>
+                  <i className="bi bi-plus-lg me-1" />Create Manually
+                </button>
+                <button className="btn btn-primary btn-sm" onClick={seedPolicy} disabled={seeding}>
+                  {seeding ? <><span className="spinner-border spinner-border-sm me-2" />Seeding...</> : <><i className="bi bi-magic me-1" />Seed Default Policy</>}
+                </button>
+              </div>
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {policies.map(p => (
@@ -921,8 +918,11 @@ export default function LeavePoliciesPage() {
                       <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => openPolicyEditor(p)}>
                         <i className="bi bi-pencil me-1" />Edit
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => archivePolicy(p._id)} disabled={p.status === 'archived'}>
+                      <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => archivePolicy(p._id)} disabled={p.status === 'archived'}>
                         <i className="bi bi-archive me-1" />Archive
+                      </button>
+                      <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => deletePolicy(p._id, p.name)}>
+                        <i className="bi bi-trash me-1" />Delete
                       </button>
                     </div>
                   </div>
@@ -954,20 +954,24 @@ export default function LeavePoliciesPage() {
               </div>
               <div className="row g-3">
                 {balances.balances?.map(b => {
+                  const typeConfig = balances.policy?.leaveTypeConfigs?.find(c => c.code === b.typeCode);
+                  const displayName = typeConfig?.name || b.typeCode || 'Unknown';
+                  const displayColor = typeConfig?.color || '#3b82f6';
+                  const displayIcon = typeConfig?.icon || 'bi-calendar3';
                   const available = b.allocated + b.carriedForward - b.used - b.pending;
                   const pct = b.allocated > 0 ? Math.min(Math.round(((b.used + b.pending) / b.allocated) * 100), 100) : 0;
                   return (
-                    <div key={b.typeId?._id || b.typeId} className="col-md-4 col-xl-3">
+                    <div key={b.typeCode} className="col-md-4 col-xl-3">
                       <div className="stat-card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                           <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>
-                            <span className="badge me-1" style={{ background: b.typeId?.color || '#e2e8f0', color: '#fff' }}>{b.typeId?.code || '?'}</span>
-                            {b.typeId?.name || 'Unknown'}
+                            <span className="badge me-1" style={{ background: displayColor, color: '#fff' }}><i className={`bi ${displayIcon}`} /></span>
+                            {displayName}
                           </span>
                           <span style={{ fontSize: 12, fontWeight: 700, color: available > 0 ? '#16a34a' : '#dc2626' }}>{available} left</span>
                         </div>
                         <div className="progress mb-2" style={{ height: 6 }}>
-                          <div className="progress-bar" style={{ width: `${pct}%`, background: b.typeId?.color || '#3b82f6' }} />
+                          <div className="progress-bar" style={{ width: `${pct}%`, background: displayColor }} />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8' }}>
                           <span>Used: {b.used}</span>
@@ -980,7 +984,7 @@ export default function LeavePoliciesPage() {
                         )}
                         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end' }}>
                           <button className="btn btn-sm" style={{ fontSize: 11, background: '#f1f5f9', color: '#475569', padding: '2px 8px' }} 
-                            onClick={() => setAdjModal({ empId: selectedEmpId, typeId: b.typeId?._id || b.typeId, name: b.typeId?.name, allocated: b.allocated })}>
+                            onClick={() => setAdjModal({ empId: selectedEmpId, typeCode: b.typeCode, name: displayName, allocated: b.allocated })}>
                             <i className="bi bi-sliders me-1" />Adjust
                           </button>
                         </div>
@@ -1050,76 +1054,6 @@ export default function LeavePoliciesPage() {
         </div>
       )}
 
-      {/* ── LEAVE TYPE MODAL ── */}
-      {showModal === 'type' && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">{modalForm._id ? 'Edit' : 'Add'} Leave Type</h5>
-                <button className="btn-close" onClick={() => setShowModal(null)} />
-              </div>
-              <div className="modal-body">
-                <div className="row g-3">
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Name *</label>
-                    <input className="form-control" value={modalForm.name || ''} onChange={e => setModalForm(p => ({ ...p, name: e.target.value }))} />
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Code *</label>
-                    <input className="form-control" placeholder="e.g. CL" value={modalForm.code || ''} onChange={e => setModalForm(p => ({ ...p, code: e.target.value.toUpperCase() }))} />
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Color</label>
-                    <input type="color" className="form-control form-control-color" value={modalForm.color || '#3b82f6'} onChange={e => setModalForm(p => ({ ...p, color: e.target.value }))} />
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Icon</label>
-                    <select className="form-select" value={modalForm.icon || 'bi-calendar-check'} onChange={e => setModalForm(p => ({ ...p, icon: e.target.value }))}>
-                      <option value="bi-calendar-check">Calendar Check</option>
-                      <option value="bi-sun">Sun</option>
-                      <option value="bi-heart">Heart</option>
-                      <option value="bi-emoji-frown">Sick</option>
-                      <option value="bi-baby">Baby</option>
-                      <option value="bi-person">Person</option>
-                      <option value="bi-cash">Cash</option>
-                    </select>
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Sort Order</label>
-                    <input type="number" className="form-control" min={0} value={modalForm.sortOrder ?? 0} onChange={e => setModalForm(p => ({ ...p, sortOrder: Number(e.target.value) }))} />
-                  </div>
-                  <div className="col-6 d-flex align-items-end" style={{ paddingBottom: 12 }}>
-                    <div className="form-check">
-                      <input className="form-check-input" type="checkbox" checked={modalForm.isActive ?? true} id="isActive" onChange={e => setModalForm(p => ({ ...p, isActive: e.target.checked }))} />
-                      <label className="form-check-label" htmlFor="isActive" style={{ fontSize: 13 }}>Active</label>
-                    </div>
-                  </div>
-                  <div className="col-12">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description</label>
-                    <textarea className="form-control" rows={2} value={modalForm.description || ''} onChange={e => setModalForm(p => ({ ...p, description: e.target.value }))} />
-                  </div>
-                  <div className="col-12">
-                    <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12, display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: '#64748b' }}>Preview:</span>
-                      <span className="badge" style={{ background: modalForm.color || '#3b82f6', color: '#fff', fontSize: 13, padding: '6px 12px' }}>
-                        <i className={`${modalForm.icon || 'bi-calendar-check'} me-1`} />{modalForm.code || 'CL'} — {modalForm.name || 'Leave Type'}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => saveType(modalForm)} disabled={saving}>
-                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ── MANUAL ADJUSTMENT MODAL ── */}
       {adjModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
@@ -1151,7 +1085,7 @@ export default function LeavePoliciesPage() {
                   try {
                     await api.post('/api/leave/balance/adjust', {
                       userId: adjModal.empId,
-                      typeId: adjModal.typeId,
+                      typeCode: adjModal.typeCode,
                       days,
                       reason
                     });

@@ -1,6 +1,7 @@
 import dbConnect from '@/lib/db';
-import { UserLeaveBalance, LeavePolicy, LeaveType } from '@/lib/models/index';
+import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
 import User from '@/lib/models/User';
+import EmpProfile from '@/lib/models/EmploymentProfile';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 
@@ -9,19 +10,88 @@ const ADMIN_ROLES = ['super_admin', 'admin_full'];
 /** Resolve the applicable policy for a user (role override → default) */
 export async function resolvePolicyForUser(userDoc) {
   await dbConnect();
-  const rolePolicy = await LeavePolicy.findOne({
-    status: 'active',
-    applicableRoles: userDoc.role,
-    $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
-  }).sort({ createdAt: -1 });
-  if (rolePolicy) return rolePolicy;
+  const now = new Date();
 
-  const defaultPolicy = await LeavePolicy.findOne({
-    status: 'active',
-    isDefault: true,
-    $or: [{ effectiveTo: null }, { effectiveTo: { $gte: new Date() } }],
+  console.log('[LEAVE DEBUG] Resolving policy for user:', userDoc._id, 'role:', userDoc.role);
+
+  // Look up employment type from profile
+  let employmentType = '';
+  if (userDoc.profileId) {
+    const profile = await EmpProfile.findById(userDoc.profileId).select('employmentType');
+    employmentType = profile?.employmentType || '';
+  }
+
+  const userDepartment = userDoc.department || '';
+  console.log('[LEAVE DEBUG] User department:', JSON.stringify(userDepartment), '| employmentType:', JSON.stringify(employmentType));
+
+  // Try role-specific policy first
+  const rolePolicy = await LeavePolicy.findOne({
+    $and: [
+      { status: 'active' },
+      { $or: [{ applicableRoles: { $size: 0 } }, { applicableRoles: userDoc.role }] },
+      { $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }] },
+      { effectiveFrom: { $lte: now } },
+      { $or: [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: userDepartment }] },
+      { $or: [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }] },
+    ],
   }).sort({ createdAt: -1 });
-  return defaultPolicy;
+
+  if (rolePolicy) {
+    console.log('[LEAVE DEBUG] Found role-specific policy:', rolePolicy.name, '| isDefault:', rolePolicy.isDefault);
+    return rolePolicy;
+  }
+
+  console.log('[LEAVE DEBUG] No role-specific policy found. Checking each condition individually...');
+
+  // Debug: find ALL active policies and check each condition
+  const allPolicies = await LeavePolicy.find({ status: 'active' }).sort({ createdAt: -1 });
+  console.log('[LEAVE DEBUG] Total active policies:', allPolicies.length);
+
+  for (const p of allPolicies) {
+    console.log(`[LEAVE DEBUG] Checking policy: "${p.name}" (isDefault: ${p.isDefault})`);
+    console.log(`  applicableRoles: ${JSON.stringify(p.applicableRoles)} — includes "${userDoc.role}"? ${p.applicableRoles.includes(userDoc.role)}`);
+    console.log(`  effectiveFrom: ${p.effectiveFrom} — <= now (${now})? ${p.effectiveFrom <= now}`);
+    console.log(`  effectiveTo: ${p.effectiveTo} — null or >= now? ${p.effectiveTo === null || p.effectiveTo >= now}`);
+    console.log(`  applicableDepartments: ${JSON.stringify(p.applicableDepartments)} — empty? ${p.applicableDepartments.length === 0} — includes "${userDepartment}"? ${p.applicableDepartments.includes(userDepartment)}`);
+    console.log(`  applicableEmploymentTypes: ${JSON.stringify(p.applicableEmploymentTypes)} — empty? ${p.applicableEmploymentTypes.length === 0} — includes "${employmentType}"? ${p.applicableEmploymentTypes.includes(employmentType)}`);
+    console.log(`  isDefault: ${p.isDefault}`);
+  }
+
+  // Try default policy
+  const defaultPolicy = await LeavePolicy.findOne({
+    $and: [
+      { status: 'active' },
+      { isDefault: true },
+      { $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }] },
+      { effectiveFrom: { $lte: now } },
+      { $or: [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: userDepartment }] },
+      { $or: [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }] },
+    ],
+  }).sort({ createdAt: -1 });
+
+  if (defaultPolicy) {
+    console.log('[LEAVE DEBUG] Found default policy:', defaultPolicy.name);
+    return defaultPolicy;
+  }
+
+  console.log('[LEAVE DEBUG] NO POLICY FOUND for this user');
+  return null;
+}
+
+/** Check if a user is eligible for a given leave type config */
+function isEligibleForType(config, employeeContext) {
+  if (config.genderRestriction && config.genderRestriction !== 'all') {
+    const userGender = (employeeContext.gender || '').toLowerCase();
+    if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
+      if (userGender !== 'male') return false;
+    }
+    if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
+      if (userGender !== 'female') return false;
+    }
+  }
+  const { evaluateEligibility } = require('@/lib/leave/eligibility');
+  const elig = evaluateEligibility(config.eligibilityRules, employeeContext);
+  return elig.eligible;
 }
 
 /** Get or create a user's balance for the current cycle */
@@ -31,31 +101,53 @@ export async function getOrCreateBalance(userId, policy) {
   const cycleStart = new Date(now.getFullYear(), 0, 1);
   const cycleEnd = new Date(now.getFullYear(), 11, 31);
 
-  let balance = await UserLeaveBalance.findOne({ userId, cycleStart });
-  if (balance) return balance;
-
-  const { buildEmployeeContext, evaluateEligibility } = require('@/lib/leave/eligibility');
+  const { buildEmployeeContext } = require('@/lib/leave/eligibility');
   const employeeContext = await buildEmployeeContext(userId);
+
+  let balance = await UserLeaveBalance.findOne({ userId, cycleStart });
+  if (balance) {
+    // Sanitize: remove stale entries that lack typeCode (from pre-merge records)
+    const staleCount = balance.balances.filter(b => !b.typeCode).length;
+    if (staleCount > 0) {
+      balance.balances = balance.balances.filter(b => b.typeCode);
+      await balance.save();
+    }
+
+    // Sync: add balance entries for any new leave types added to the policy
+    const existingCodes = new Set(balance.balances.map(b => b.typeCode));
+    let changed = false;
+    for (const config of policy.leaveTypeConfigs || []) {
+      if (!config.code || !config.enabled || existingCodes.has(config.code)) continue;
+      if (!isEligibleForType(config, employeeContext)) continue;
+
+      let allocated = 0;
+      if (config.creditSchedule === 'upfront' || !config.creditSchedule) {
+        allocated = config.annualAllocation || 0;
+      }
+      // For monthly/quarterly/half_yearly, start at 0 and let accrual handle it
+
+      balance.balances.push({
+        typeCode: config.code,
+        allocated,
+        used: 0,
+        pending: 0,
+        carriedForward: 0,
+        expiryDate: config.carryForwardExpiryMonths
+          ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
+          : null,
+        periodUsage: [],
+      });
+      changed = true;
+    }
+    if (changed) await balance.save();
+    return balance;
+  }
 
   // Create new balances from policy
   const balances = [];
   for (const config of policy.leaveTypeConfigs || []) {
-    if (!config.enabled) continue;
-
-    // Evaluate gender restrictions
-    if (config.genderRestriction && config.genderRestriction !== 'all') {
-      const userGender = (employeeContext.gender || '').toLowerCase();
-      if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
-        if (userGender !== 'male') continue;
-      }
-      if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
-        if (userGender !== 'female') continue;
-      }
-    }
-
-    // Evaluate eligibility rules
-    const elig = evaluateEligibility(config.eligibilityRules, employeeContext);
-    if (!elig.eligible) continue;
+    if (!config.code || !config.enabled) continue;
+    if (!isEligibleForType(config, employeeContext)) continue;
 
     let allocated = config.annualAllocation || 0;
     
@@ -66,7 +158,7 @@ export async function getOrCreateBalance(userId, policy) {
     }
 
     balances.push({
-      typeId: config.typeId,
+      typeCode: config.code,
       allocated,
       used: 0,
       pending: 0,
@@ -83,56 +175,83 @@ export async function getOrCreateBalance(userId, policy) {
 }
 
 export async function GET(req) {
-  const { user, error } = await requireAuth(req);
-  if (error) return error;
+  try {
+    const { user, error } = await requireAuth(req);
+    if (error) return error;
 
-  const userIdParam = new URL(req.url).searchParams.get('userId');
-  const targetUserId = userIdParam && ADMIN_ROLES.includes(user.role) ? userIdParam : user._id;
+    const userIdParam = new URL(req.url).searchParams.get('userId');
+    const targetUserId = userIdParam && ADMIN_ROLES.includes(user.role) ? userIdParam : user._id;
 
-  await dbConnect();
-  const targetUser = await User.findById(targetUserId).select('-password');
-  if (!targetUser) return fail('User not found', 404);
+    await dbConnect();
+    const targetUser = await User.findById(targetUserId).select('-password');
+    if (!targetUser) return fail('User not found', 404);
 
-  const policy = await resolvePolicyForUser(targetUser);
-  if (!policy) return fail('No active leave policy found for this user', 400);
-
-  const balance = await getOrCreateBalance(targetUserId, policy);
-
-  // Populate type details
-  const populated = await UserLeaveBalance.findById(balance._id)
-    .populate('balances.typeId', 'name code color icon')
-    .lean();
-
-  const { buildEmployeeContext } = require('@/lib/leave/eligibility');
-  const employeeContext = await buildEmployeeContext(targetUserId);
-
-  const eligibleBalances = [];
-  for (const b of populated.balances || []) {
-    const typeIdStr = (b.typeId?._id || b.typeId || '').toString();
-    if (!typeIdStr) continue;
-
-    const config = policy.leaveTypeConfigs?.find(c => c.typeId.toString() === typeIdStr);
-    if (!config || !config.enabled) continue;
-
-    // Evaluate gender restrictions
-    if (config.genderRestriction && config.genderRestriction !== 'all') {
-      const userGender = (employeeContext.gender || '').toLowerCase();
-      if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
-        if (userGender !== 'male') continue;
+    const policy = await resolvePolicyForUser(targetUser);
+    if (!policy) {
+      // Diagnostic: surface why no policy matched
+      let employmentType = '';
+      if (targetUser.profileId) {
+        const profile = await EmpProfile.findById(targetUser.profileId).select('employmentType');
+        employmentType = profile?.employmentType || '';
       }
-      if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
-        if (userGender !== 'female') continue;
-      }
+      const userDepartment = targetUser.department || '';
+      const now = new Date();
+      const allPolicies = await LeavePolicy.find({ status: 'active' }).sort({ createdAt: -1 });
+      const diagnostics = allPolicies.map(p => ({
+        name: p.name,
+        isDefault: p.isDefault,
+        roleMatch: p.applicableRoles?.includes(targetUser.role) ?? false,
+        deptMatch: !p.applicableDepartments?.length || p.applicableDepartments.includes(userDepartment),
+        empTypeMatch: !p.applicableEmploymentTypes?.length || p.applicableEmploymentTypes.includes(employmentType),
+        effectiveFrom: p.effectiveFrom,
+        effectiveTo: p.effectiveTo,
+        effectiveFromOk: p.effectiveFrom <= now,
+        effectiveToOk: !p.effectiveTo || p.effectiveTo >= now,
+      }));
+      console.error('[LEAVE DEBUG] No policy found. User:', { role: targetUser.role, department: userDepartment, employmentType, profileId: targetUser.profileId });
+      console.error('[LEAVE DEBUG] Policy diagnostics:', JSON.stringify(diagnostics, null, 2));
+      return fail(`No active leave policy found. User role=${targetUser.role}, dept="${userDepartment}", empType="${employmentType}", activePolicies=${allPolicies.length}. Check server logs for [LEAVE DEBUG] details.`, 400);
     }
-    eligibleBalances.push(b);
-  }
 
-  return ok({
-    policy: { _id: policy._id, name: policy.name, leaveTypeConfigs: policy.leaveTypeConfigs },
-    cycleStart: populated.cycleStart,
-    cycleEnd: populated.cycleEnd,
-    balances: eligibleBalances,
-  });
+    const balance = await getOrCreateBalance(targetUserId, policy);
+
+    // Populate type details
+    const populated = await UserLeaveBalance.findById(balance._id).lean();
+
+    const { buildEmployeeContext } = require('@/lib/leave/eligibility');
+    const employeeContext = await buildEmployeeContext(targetUserId);
+
+    const eligibleBalances = [];
+    for (const b of populated.balances || []) {
+      const typeCodeStr = b.typeCode || '';
+      if (!typeCodeStr) continue;
+
+      const config = policy.leaveTypeConfigs?.find(c => c.code === typeCodeStr);
+      if (!config || !config.enabled) continue;
+
+      // Evaluate gender restrictions
+      if (config.genderRestriction && config.genderRestriction !== 'all') {
+        const userGender = (employeeContext.gender || '').toLowerCase();
+        if (config.genderRestriction === 'male' || config.genderRestriction === 'paternity') {
+          if (userGender !== 'male') continue;
+        }
+        if (config.genderRestriction === 'female' || config.genderRestriction === 'maternity') {
+          if (userGender !== 'female') continue;
+        }
+      }
+      eligibleBalances.push(b);
+    }
+
+    return ok({
+      policy: { _id: policy._id, name: policy.name, leaveTypeConfigs: policy.leaveTypeConfigs },
+      cycleStart: populated.cycleStart,
+      cycleEnd: populated.cycleEnd,
+      balances: eligibleBalances,
+    });
+  } catch (e) {
+    console.error('[LEAVE DEBUG] GET /api/leave/balance error:', e);
+    return fail(e.message || 'Internal server error', 500);
+  }
 }
 
 export async function POST(req) {
@@ -158,8 +277,7 @@ export async function POST(req) {
     await UserLeaveBalance.deleteOne({ userId, cycleStart });
 
     const balance = await getOrCreateBalance(userId, policy);
-    const populated = await UserLeaveBalance.findById(balance._id)
-      .populate('balances.typeId', 'name code color icon').lean();
+    const populated = await UserLeaveBalance.findById(balance._id).lean();
 
     await auditLog('Leave Balance Recalculated', 'Leave', user._id, `Recalculated leave balance for user ${userId}`, 'medium', req.headers.get('x-forwarded-for') || '', null, userId);
     return ok({ message: 'Balance recalculated', balance: populated });
@@ -167,11 +285,15 @@ export async function POST(req) {
 
   if (action === 'monthly-accrual') {
     const now = new Date();
+    const currentMonth = now.getMonth();
     const allBalances = await UserLeaveBalance.find();
     let processed = 0;
 
     for (const bal of allBalances) {
       if (now < bal.cycleStart || now > bal.cycleEnd) continue;
+
+      // Idempotency: skip if already accrued this month
+      if (bal.lastAccrualMonth === currentMonth) continue;
 
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
@@ -183,7 +305,7 @@ export async function POST(req) {
 
       let updated = false;
       for (const entry of bal.balances) {
-        const config = policy.leaveTypeConfigs.find(c => c.typeId.toString() === entry.typeId.toString());
+        const config = policy.leaveTypeConfigs.find(c => c.code === entry.typeCode);
         if (!config || !config.enabled) continue;
 
         let creditAmount = 0;
@@ -205,6 +327,7 @@ export async function POST(req) {
         }
       }
       if (updated) {
+        bal.lastAccrualMonth = currentMonth;
         await bal.save();
         processed++;
       }
@@ -216,15 +339,15 @@ export async function POST(req) {
 
   if (action === 'adjust') {
     // Legacy adjust handler - but frontend now uses /api/leave/balance/adjust
-    if (!userId || !adjustments?.typeId || adjustments.used === undefined) {
-      return fail('userId, typeId, and used are required', 400);
+    if (!userId || !adjustments?.typeCode || adjustments.used === undefined) {
+      return fail('userId, typeCode, and used are required', 400);
     }
     const now = new Date();
     const cycleStart = new Date(now.getFullYear(), 0, 1);
     const balance = await UserLeaveBalance.findOne({ userId, cycleStart });
     if (!balance) return fail('No balance record found for this user', 404);
 
-    const entry = balance.balances.find(b => b.typeId.toString() === adjustments.typeId);
+    const entry = balance.balances.find(b => b.typeCode === adjustments.typeCode);
     if (!entry) return fail('Leave type not found in balance', 400);
 
     if (adjustments.used !== undefined) entry.used = adjustments.used;
@@ -244,8 +367,7 @@ export async function POST(req) {
     const nextCycleStart = new Date(now.getFullYear() + 1, 0, 1);
     const nextCycleEnd = new Date(now.getFullYear() + 1, 11, 31);
 
-    const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart })
-      .populate('balances.typeId', 'name code');
+    const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart });
 
     let processed = 0;
     for (const bal of allBalances) {
@@ -255,7 +377,7 @@ export async function POST(req) {
       const nextBalances = [];
       for (const entry of bal.balances) {
         const config = policy.leaveTypeConfigs.find(
-          c => c.typeId.toString() === entry.typeId.toString()
+          c => c.code === entry.typeCode
         );
         if (!config || !config.enabled || !config.carryForwardAllowed) continue;
 
@@ -268,7 +390,7 @@ export async function POST(req) {
         }
 
         nextBalances.push({
-          typeId: entry.typeId,
+          typeCode: entry.typeCode,
           allocated: config.annualAllocation || 0,
           used: 0,
           pending: 0,

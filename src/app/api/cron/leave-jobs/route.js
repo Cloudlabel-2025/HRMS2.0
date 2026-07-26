@@ -16,21 +16,39 @@ export async function POST(req) {
   if (action === 'monthly-accrual') {
     const now = new Date();
     const cycleStart = new Date(now.getFullYear(), 0, 1);
+    const currentMonth = now.getMonth();
     const allBalances = await UserLeaveBalance.find({ cycleStart });
     let processed = 0;
 
     for (const bal of allBalances) {
+      if (now < bal.cycleStart || now > bal.cycleEnd) continue;
+
+      // Idempotency: skip if already accrued this month
+      if (bal.lastAccrualMonth === currentMonth) continue;
+
+      const cycleStartForDiff = new Date(bal.cycleStart);
+      const monthsDiff = (now.getFullYear() - cycleStartForDiff.getFullYear()) * 12 + now.getMonth() - cycleStartForDiff.getMonth();
+      if (monthsDiff <= 0) continue; // Skip first month (initialized on creation)
+
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
 
       let updated = false;
       for (const entry of bal.balances) {
-        const typeStr = (entry.typeId?._id || entry.typeId).toString();
-        const config = policy.leaveTypeConfigs.find(c => c.typeId.toString() === typeStr);
-        
-        if (config && config.enabled && config.accrualMode === 'monthly') {
-          const monthlyAmount = Number((config.annualAllocation / 12).toFixed(2));
-          entry.allocated = (entry.allocated || 0) + monthlyAmount;
+        const config = policy.leaveTypeConfigs.find(c => c.code === entry.typeCode);
+        if (!config || !config.enabled) continue;
+
+        let creditAmount = 0;
+        if (config.creditSchedule === 'monthly') {
+          creditAmount = Number((config.annualAllocation / 12).toFixed(2));
+        } else if (config.creditSchedule === 'quarterly' && monthsDiff % 3 === 0) {
+          creditAmount = Number((config.annualAllocation / 4).toFixed(2));
+        } else if (config.creditSchedule === 'half_yearly' && monthsDiff % 6 === 0) {
+          creditAmount = Number((config.annualAllocation / 2).toFixed(2));
+        }
+
+        if (creditAmount > 0) {
+          entry.allocated = (entry.allocated || 0) + creditAmount;
           if (entry.allocated > config.annualAllocation) {
             entry.allocated = config.annualAllocation;
           }
@@ -38,6 +56,7 @@ export async function POST(req) {
         }
       }
       if (updated) {
+        bal.lastAccrualMonth = currentMonth;
         await bal.save();
         processed++;
       }
@@ -60,8 +79,8 @@ export async function POST(req) {
 
       const nextBalances = [];
       for (const entry of bal.balances) {
-        const typeStr = (entry.typeId?._id || entry.typeId).toString();
-        const config = policy.leaveTypeConfigs.find(c => c.typeId.toString() === typeStr);
+        const typeStr = entry.typeCode;
+        const config = policy.leaveTypeConfigs.find(c => c.code === typeStr);
         
         if (!config || !config.enabled || !config.carryForwardAllowed) continue;
 
@@ -74,7 +93,7 @@ export async function POST(req) {
         }
 
         nextBalances.push({
-          typeId: entry.typeId,
+          typeCode: entry.typeCode,
           allocated: config.annualAllocation || 0,
           used: 0,
           pending: 0,
