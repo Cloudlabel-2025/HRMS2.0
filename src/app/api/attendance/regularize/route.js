@@ -1,10 +1,12 @@
 import { connectDB } from '@/lib/db';
-import { AttendanceRegularization, Notification } from '@/lib/models/index';
+import { AttendanceRegularization, Notification, Shift } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
+import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { getShiftConfig, calculateHoursWorked, calculateBreakDeduction } from '@/lib/attendance-constants';
 
 export async function GET(req) {
   try {
@@ -222,35 +224,20 @@ export async function PUT(req) {
       attendance.workProgress = workProgress;
 
       // Recalculate hours worked
-      const BREAK_ALLOWANCE_MINS = 30;
-      const LUNCH_ALLOWANCE_MINS = 60;
-      
-      const toMinutes = (timeStr) => {
-        if (!timeStr) return 0;
-        const [h, m] = timeStr.split(':').map(Number);
-        return h * 60 + m;
-      };
-      
-      const diffMins = (start, end) => {
-        if (!start || !end) return 0;
-        const s = toMinutes(start), e = toMinutes(end);
-        return e > s ? e - s : 0;
-      };
+      const empUser = await User.findById(reg.userId).select('shift').lean();
+      const regShiftDoc = await Shift.findOne({ name: empUser?.shift || 'Morning (9AM-6PM)' }).lean();
+      const config = await getGlobalConfig();
+      const regCfg = getShiftConfig(regShiftDoc, config);
 
       if (attendance.clockIn && attendance.clockOut) {
-        const base = diffMins(attendance.clockIn, attendance.clockOut);
+        const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+        const base = Math.max(0, toMins(attendance.clockOut) - toMins(attendance.clockIn));
         attendance.baseHoursWorked = base;
 
-        // Calculate break deductions
-        const breakOver = breaks.filter(b => b.type === 'break' && b.end)
-          .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - BREAK_ALLOWANCE_MINS), 0);
-        const lunchOver = breaks.filter(b => b.type === 'lunch' && b.end)
-          .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - LUNCH_ALLOWANCE_MINS), 0);
-        
-        attendance.breakDeduction = breakOver + lunchOver;
-        const finalHours = Math.min(480, Math.max(0, base - attendance.breakDeduction));
-        attendance.hoursWorked = finalHours;
-        if (finalHours < 240) {
+        attendance.breakDeduction = calculateBreakDeduction(breaks, regCfg.breaks);
+        const { hoursWorked } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
+        attendance.hoursWorked = hoursWorked;
+        if (hoursWorked < regCfg.absentThreshold) {
           attendance.status = 'absent';
         } else {
           attendance.status = 'present';

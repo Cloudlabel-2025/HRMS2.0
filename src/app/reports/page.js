@@ -88,10 +88,6 @@ export default function ReportsPage() {
 
       <div className="page-header">
         <div><h4>Reports & Analytics</h4><p>Generate, filter, and export reports across all modules</p></div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline-secondary"><i className="bi bi-file-earmark-excel me-2" />Export Excel</button>
-          <button className="btn btn-outline-danger"><i className="bi bi-file-earmark-pdf me-2" />Export PDF</button>
-        </div>
       </div>
 
       {/* Report type selector */}

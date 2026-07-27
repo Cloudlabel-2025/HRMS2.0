@@ -29,6 +29,12 @@ const AttendanceSchema = new mongoose.Schema({
   lateLogoutReason: { type: String, default: '' },
   lateLogoutReasonProvidedAt: { type: Date, default: null },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
+  earlyLogin: { type: Boolean, default: false },
+  leaveOverride: {
+    status:     { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+  },
 }, { timestamps: true });
 
 AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });

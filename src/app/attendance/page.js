@@ -6,8 +6,9 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import { getAttendanceDate } from '@/lib/attendance-date';
+import { formatMins } from '@/lib/format';
 import Pagination from '@/components/Pagination';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -21,9 +22,14 @@ const STATUS_STYLE = {
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Break = 30 min allowance, Lunch = 60 min allowance
-const BREAK_ALLOWANCE_MINS = 30;
-const LUNCH_ALLOWANCE_MINS = 60;
+const getBreakAllowance = (type, shiftConfig) => {
+  const rule = shiftConfig?.breaks?.find(b => b.type === type);
+  return rule?.maxDuration ?? (type === 'lunch' ? 60 : 30);
+};
+const getBreakMaxCount = (type, shiftConfig) => {
+  const rule = shiftConfig?.breaks?.find(b => b.type === type);
+  return rule?.maxCount ?? 1;
+};
 const WORK_STATUSES = [
   { value: 'pending', label: 'Pending' },
   { value: 'work_in_progress', label: 'Work in Progress' },
@@ -79,8 +85,8 @@ export default function AttendancePage() {
   const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
   const [breakLoading, setBreakLoading] = useState(false);
 
-  // Shift definitions (for shift-aware attendance date)
   const [shifts, setShifts] = useState([]);
+  const [shiftConfig, setShiftConfig] = useState(null);
 
   // Progress tab states
   const [progressSearch, setProgressSearch] = useState('');
@@ -140,28 +146,85 @@ export default function AttendancePage() {
       }
 
       if (format === 'excel') {
-        const wb = XLSX.utils.book_new();
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'HRMS';
+        wb.created = new Date();
+
         for (const { emp, records } of allData) {
-          const headerData = [
-            [`Employee: ${emp.name || '—'}`],
-            [`Role: ${emp.role || '—'}`, `Department: ${emp.department || '—'}`, `Period: ${teamMonth}`],
-            [],
-          ];
-          const rows = records.map(r => [
-            r.date,
-            DAYS[new Date(r.date + 'T00:00:00').getDay()],
-            STATUS_STYLE[r.status]?.label || r.status,
-            r.clockIn || '—',
-            r.clockOut || '—',
-            r.hoursWorked ? formatMins(r.hoursWorked) : '—',
-          ]);
-          const wsData = [...headerData, ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked'], ...rows];
-          const ws = XLSX.utils.aoa_to_sheet(wsData);
-          ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 13 }];
+          const sorted = [...records].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+          const headers = ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked'];
+          const colCount = headers.length;
           const sheetName = (emp.name || 'Employee').slice(0, 31);
-          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          const ws = wb.addWorksheet(sheetName);
+
+          const thinBorder = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
+          const centerAlign = { horizontal: 'center', vertical: 'middle' };
+
+          // Row 1: Employee name — merged, bold, font 14
+          ws.mergeCells(1, 1, 1, colCount);
+          const nameCell = ws.getCell(1, 1);
+          nameCell.value = `Employee: ${emp.name || '—'}`;
+          nameCell.font = { bold: true, size: 14 };
+          nameCell.alignment = centerAlign;
+
+          // Row 2: Role | Department | Period — merged, font 10
+          ws.mergeCells(2, 1, 2, colCount);
+          const infoCell = ws.getCell(2, 1);
+          infoCell.value = `Role: ${emp.role || '—'}  |  Department: ${emp.department || '—'}  |  Period: ${teamMonth}`;
+          infoCell.font = { size: 10 };
+          infoCell.alignment = centerAlign;
+
+          // Row 3: empty spacer
+          // Row 4: Column headers
+          const headerRow = ws.getRow(4);
+          headers.forEach((h, i) => {
+            const cell = headerRow.getCell(i + 1);
+            cell.value = h;
+            cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
+            cell.alignment = centerAlign;
+            cell.border = thinBorder;
+          });
+
+          // Row 5+: Data rows
+          sorted.forEach((r, idx) => {
+            const row = ws.getRow(5 + idx);
+            const values = [
+              r.date,
+              DAYS[new Date(r.date + 'T00:00:00').getDay()],
+              STATUS_STYLE[r.status]?.label || r.status,
+              r.clockIn || '—',
+              r.clockOut || '—',
+              r.hoursWorked ? formatMins(r.hoursWorked) : '—',
+            ];
+            values.forEach((v, ci) => {
+              const cell = row.getCell(ci + 1);
+              cell.value = v;
+              cell.alignment = centerAlign;
+              cell.border = thinBorder;
+            });
+          });
+
+          // Auto-fit column widths: max string length + padding of 4
+          const dataRows = sorted.length;
+          for (let ci = 0; ci < colCount; ci++) {
+            let maxLen = headers[ci].length;
+            for (let ri = 0; ri < dataRows; ri++) {
+              const cellVal = ws.getRow(5 + ri).getCell(ci + 1).value;
+              if (cellVal != null) maxLen = Math.max(maxLen, String(cellVal).length);
+            }
+            ws.getColumn(ci + 1).width = maxLen + 4;
+          }
         }
-        XLSX.writeFile(wb, `attendance_report_${teamMonth}.xlsx`);
+
+        const buffer = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `attendance_report_${teamMonth}.xlsx`;
+        a.click();
+        URL.revokeObjectURL(url);
       } else {
         const doc = new jsPDF('l', 'mm', 'a4');
         let isFirst = true;
@@ -234,14 +297,25 @@ export default function AttendancePage() {
       const calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
       const yest = new Date(now); yest.setDate(yest.getDate() - 1);
       const calYesterday = yest.getFullYear() + '-' + String(yest.getMonth()+1).padStart(2,'0') + '-' + String(yest.getDate()).padStart(2,'0');
+      
       const [r1, r2] = await Promise.all([
         api.get('/api/attendance?scope=team&date=' + calToday),
         api.get('/api/attendance?scope=team&date=' + calYesterday),
       ]);
+      
       const merged = {};
       for (const r of [...(Array.isArray(r1) ? r1 : []), ...(Array.isArray(r2) ? r2 : [])]) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
-        if (uid) merged[uid] = r;
+        if (!uid) continue;
+        
+        const empShift = shifts.find(s => s.name === r.userId?.shift);
+        let key = uid;
+        if (empShift?.startTime && empShift?.endTime) {
+          const shiftAwareDate = getAttendanceDate(now, empShift.startTime, empShift.endTime);
+          if (r.date !== shiftAwareDate) continue;
+        }
+        
+        merged[key] = r;
       }
       setTeamToday(Object.values(merged));
     } catch { setTeamToday([]); }
@@ -294,6 +368,11 @@ export default function AttendancePage() {
   useEffect(() => {
     if (!user) return;
     api.get('/api/settings?type=shifts').then(d => setShifts(Array.isArray(d) ? d : [])).catch(() => {});
+    api.get('/api/settings?type=shifts').then(d => {
+      const allShifts = Array.isArray(d) ? d : [];
+      const matched = allShifts.find(s => s.name === user?.shift);
+      setShiftConfig(matched || null);
+    }).catch(() => {});
     Promise.all([
       loadTodayRecord(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
@@ -434,7 +513,7 @@ export default function AttendancePage() {
     getBreaks(type).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
 
   const overMins = (type) => {
-    const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+    const allowance = getBreakAllowance(type, shiftConfig);
     return Math.max(0, totalBreakMins(type) - allowance);
   };
 
@@ -449,9 +528,8 @@ export default function AttendancePage() {
 
       if (!active) {
         // Start break/lunch
-        // Limit to 1 break and 1 lunch per day
-        if (getBreaks(type).length > 0) {
-          showToast(`You have already taken your ${type === 'break' ? 'break' : 'lunch break'} for today. Only 1 is allowed.`, 'error');
+        if (getBreaks(type).length >= getBreakMaxCount(type, shiftConfig)) {
+          showToast(`You have already taken the maximum ${getBreakMaxCount(type, shiftConfig)} ${type === 'break' ? 'break(s)' : 'lunch(es)'} for today.`, 'error');
           setBreakLoading(false);
           return;
         }
@@ -468,7 +546,7 @@ export default function AttendancePage() {
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
         if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
         const elapsed = diffMins(active.start, now);
-        const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+        const allowance = getBreakAllowance(type, shiftConfig);
         const over = Math.max(0, elapsed - allowance);
         if (over > 0) {
           showToast(`${type === 'break' ? 'Break' : 'Lunch'} ended — exceeded by ${over} min(s). Working hours reduced.`, 'error');
@@ -480,9 +558,9 @@ export default function AttendancePage() {
       // Recalculate deduction: total over-time for all break types
       const allBreaks = updatedBreaks;
       const breakOver = allBreaks.filter(b => b.type === 'break' && b.end)
-        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - BREAK_ALLOWANCE_MINS), 0);
+        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - getBreakAllowance('break', shiftConfig)), 0);
       const lunchOver = allBreaks.filter(b => b.type === 'lunch' && b.end)
-        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - LUNCH_ALLOWANCE_MINS), 0);
+        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - getBreakAllowance('lunch', shiftConfig)), 0);
       const totalDeduction = breakOver + lunchOver;
 
       // Recalculate effective hours (base hoursWorked minus deductions)
@@ -577,10 +655,16 @@ export default function AttendancePage() {
     } catch (e) { showToast(e.message, 'error'); }
   };
 
+  const handleOverrideAction = async (attendanceId, action) => {
+    try {
+      await api.put('/api/attendance', { attendanceId, action });
+      showToast(action === 'approve_override' ? 'Override approved' : 'Override rejected');
+      loadTeamToday();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
   const clockedIn  = !!todayRecord?.clockIn;
   const clockedOut = !!todayRecord?.clockOut;
-
-  const formatMins = (mins) => { if (!mins) return '--'; return Math.floor(mins / 60) + 'h ' + (mins % 60) + 'm'; };
 
   const tabs = ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])];
   const tabLabels = { today: 'Today', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
@@ -588,7 +672,7 @@ export default function AttendancePage() {
   // Break/Lunch UI helpers
   const renderBreakLunchPanel = (type) => {
     const label     = type === 'break' ? 'Break' : 'Lunch';
-    const allowance = type === 'break' ? BREAK_ALLOWANCE_MINS : LUNCH_ALLOWANCE_MINS;
+    const allowance = getBreakAllowance(type, shiftConfig);
     const color     = type === 'break' ? '#f59e0b' : '#8b5cf6';
     const bgColor   = type === 'break' ? '#fffbeb' : '#f5f3ff';
     const icon      = type === 'break' ? 'bi-cup-hot' : 'bi-egg-fried';
@@ -1005,7 +1089,22 @@ export default function AttendancePage() {
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
+                                {row.leaveOverride?.status === 'pending' && (
+                                  <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
+                                )}
                               </div>
+                              {row.leaveOverride?.status === 'pending' && isAdmin && (
+                                <div className="mt-1">
+                                  <button className="btn btn-sm btn-success me-1" style={{ fontSize: 11 }}
+                                    onClick={() => handleOverrideAction(row._id, 'approve_override')}>
+                                    <i className="bi bi-check-lg" />
+                                  </button>
+                                  <button className="btn btn-sm btn-danger" style={{ fontSize: 11 }}
+                                    onClick={() => handleOverrideAction(row._id, 'reject_override')}>
+                                    <i className="bi bi-x-lg" />
+                                  </button>
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -1045,6 +1144,11 @@ export default function AttendancePage() {
                           </div>
                         ))}
                       </div>
+                      {todayRecord?.earlyLogin && (
+                        <span className="badge bg-info ms-2" style={{ fontSize: 11 }}>
+                          <i className="bi bi-clock-history me-1" />Early Logged In
+                        </span>
+                      )}
                       {(todayRecord.breakDeduction > 0) && (
                         <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
                           <i className="bi bi-dash-circle" />
@@ -1070,23 +1174,28 @@ export default function AttendancePage() {
                 <div className="col-lg-6">
                   <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
                     <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                      {[
-                        { key: 'break', label: 'Break', icon: 'bi-cup-hot',    color: '#f59e0b' },
-                        { key: 'lunch', label: 'Lunch', icon: 'bi-egg-fried', color: '#8b5cf6' },
-                      ].map(bt => (
-                        <button key={bt.key} onClick={() => setBreakTab(bt.key)}
+                      {(shiftConfig?.breaks || [
+                        { type: 'break', maxDuration: 30, maxCount: 1 },
+                        { type: 'lunch', maxDuration: 60, maxCount: 1 },
+                      ]).map(rule => ({
+                        ...rule,
+                        label: rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break'),
+                        icon: rule.type === 'lunch' ? 'bi-cup-hot' : 'bi-clock',
+                        color: rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b',
+                      })).map(bt => (
+                        <button key={bt.type} onClick={() => setBreakTab(bt.type)}
                           style={{
                             flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                             background: 'transparent',
-                            color: breakTab === bt.key ? bt.color : '#94a3b8',
-                            borderBottom: breakTab === bt.key ? `3px solid ${bt.color}` : '3px solid transparent',
+                            color: breakTab === bt.type ? bt.color : '#94a3b8',
+                            borderBottom: breakTab === bt.type ? `3px solid ${bt.color}` : '3px solid transparent',
                             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                             transition: 'all 0.15s',
                           }}>
                           <i className={`bi ${bt.icon}`} style={{ fontSize: 14 }} />{bt.label}
-                          {overMins(bt.key) > 0 && (
+                          {overMins(bt.type) > 0 && (
                             <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
-                              −{overMins(bt.key)}m
+                              −{overMins(bt.type)}m
                             </span>
                           )}
                         </button>
@@ -1115,7 +1224,7 @@ export default function AttendancePage() {
               <select className="form-select" style={{ fontSize: 13, maxWidth: 300 }} value={showAllEmployees ? 'all' : selectedUserId} onChange={e => { const val = e.target.value; if (val === 'all') { setShowAllEmployees(true); setSelectedUserId(''); } else if (val === '') { setShowAllEmployees(false); setSelectedUserId(''); } else { setShowAllEmployees(false); setSelectedUserId(val); setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); } }}>
                 <option value="">— Select Employee —</option>
                 <option value="all">All Employees</option>
-                {employees.map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
+                {employees.filter(e => e.role !== 'super_admin').map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
               </select>
             </div>
           ) : null}
@@ -1156,7 +1265,7 @@ export default function AttendancePage() {
               <div style={{ padding: '12px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <i className="bi bi-people" style={{ color: '#3b82f6', fontSize: 14 }} />
-                  <span style={{ fontWeight: 750, fontSize: 13.5 }}>All Employees ({employees.length})</span>
+                  <span style={{ fontWeight: 750, fontSize: 13.5 }}>All Employees ({employees.filter(e => e.role !== 'super_admin').length})</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 12, color: '#64748b' }}>Click an employee to view their attendance</span>
@@ -1174,7 +1283,7 @@ export default function AttendancePage() {
               </div>
               <div style={{ padding: '12px 18px' }}>
                 <div className="row g-2">
-                  {employees.map(emp => (
+                  {employees.filter(e => e.role !== 'super_admin').map(emp => (
                     <div key={emp.userId} className="col-6 col-md-4 col-lg-3">
                       <div
                         className="card"
@@ -1266,6 +1375,8 @@ export default function AttendancePage() {
                   formatMins={formatMins}
                   STATUS_STYLE={STATUS_STYLE}
                   DAYS={DAYS}
+                  isAdmin={isAdmin}
+                  handleOverrideAction={handleOverrideAction}
                 />
               </>
             );
@@ -1721,7 +1832,7 @@ export default function AttendancePage() {
 }
 
 // ── Team Attendance View (used inside the Team tab) ──────────────────────
-function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_STYLE, DAYS }) {
+function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_STYLE, DAYS, isAdmin, handleOverrideAction }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [recordsPage, setRecordsPage] = useState(1);
@@ -1776,7 +1887,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
       <div className="card d-none d-md-block">
         <div className="table-responsive">
           <table className="table mb-0">
-            <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th></tr></thead>
+            <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
             <tbody>
               {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
                 const d = new Date(row.date + 'T00:00:00');
@@ -1789,6 +1900,23 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
                     <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
                     <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                    <td>
+                      {row.leaveOverride?.status === 'pending' && (
+                        <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
+                      )}
+                      {row.leaveOverride?.status === 'pending' && isAdmin && (
+                        <div className="mt-1">
+                          <button className="btn btn-sm btn-success me-1" style={{ fontSize: 11 }}
+                            onClick={() => handleOverrideAction(row._id, 'approve_override')}>
+                            <i className="bi bi-check-lg" />
+                          </button>
+                          <button className="btn btn-sm btn-danger" style={{ fontSize: 11 }}
+                            onClick={() => handleOverrideAction(row._id, 'reject_override')}>
+                            <i className="bi bi-x-lg" />
+                          </button>
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 );
               })}

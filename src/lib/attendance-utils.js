@@ -1,13 +1,35 @@
-export function checkAndApplyAutoLogout(record, now = new Date()) {
+import { getShiftConfig, calculateHoursWorked, calculateBreakDeduction } from './attendance-constants';
+import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
+import { Holiday, Employee } from './models/index';
+import User from './models/User';
+import Attendance from './models/Attendance';
+import { Leave } from './models/index';
+import { notify } from './notify';
+import { connectDB } from './db';
+
+export function toMinutes(timeStr) {
+  if (!timeStr) return 0;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + m;
+}
+
+export function diffMins(start, end) {
+  if (!start || !end) return 0;
+  const s = toMinutes(start), e = toMinutes(end);
+  return e > s ? e - s : 0;
+}
+
+export function checkAndApplyAutoLogout(record, now = new Date(), cfg) {
   if (!record.clockIn || record.clockOut) return false;
 
-  const [ih, im] = record.clockIn.split(':').map(Number);
-  // Parse clockIn time on the record's date
-  const recordDate = new Date(record.date + 'T' + record.clockIn + ':00');
+  const shiftCfg = cfg || { hardCapHours: 600, expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
 
-  // If elapsed time is greater than or equal to 10 hours (600 minutes)
-  if (now - recordDate >= 10 * 60 * 60 * 1000) {
-    const clockOutMinutes = ih * 60 + im + 600; // 10 hours = 600 minutes
+  const [ih, im] = record.clockIn.split(':').map(Number);
+  const recordDate = new Date(record.date + 'T' + record.clockIn + ':00');
+  const hardCapMs = shiftCfg.hardCapHours * 60 * 1000;
+
+  if (now - recordDate >= hardCapMs) {
+    const clockOutMinutes = ih * 60 + im + shiftCfg.hardCapHours;
     const oh = Math.floor(clockOutMinutes / 60) % 24;
     const om = clockOutMinutes % 60;
     const clockOutTime = String(oh).padStart(2, '0') + ':' + String(om).padStart(2, '0');
@@ -15,7 +37,6 @@ export function checkAndApplyAutoLogout(record, now = new Date()) {
     record.clockOut = clockOutTime;
     record.autoLoggedOut = true;
 
-    // Close open breaks
     if (record.breaks) {
       record.breaks = record.breaks.map(b => {
         if (b.start && !b.end) {
@@ -25,7 +46,6 @@ export function checkAndApplyAutoLogout(record, now = new Date()) {
       });
     }
 
-    // Close open workProgress
     if (record.workProgress) {
       record.workProgress = record.workProgress.map(w => {
         if (w.startTime && !w.endTime) {
@@ -43,36 +63,13 @@ export function checkAndApplyAutoLogout(record, now = new Date()) {
       });
     }
 
-    // Calculate base, deduction and final hours worked
-    const base = 600; // 10 hours
-    record.baseHoursWorked = base;
+    const deduction = calculateBreakDeduction(record.breaks, shiftCfg.breaks);
+    const { baseHours, hoursWorked } = calculateHoursWorked(shiftCfg.hardCapHours, deduction, shiftCfg);
+    record.baseHoursWorked = baseHours;
+    record.breakDeduction = deduction;
+    record.hoursWorked = hoursWorked;
 
-    const toMinutes = (timeStr) => {
-      if (!timeStr) return 0;
-      const [h, m] = timeStr.split(':').map(Number);
-      return h * 60 + m;
-    };
-    
-    const diffMins = (start, end) => {
-      if (!start || !end) return 0;
-      const s = toMinutes(start), e = toMinutes(end);
-      return e > s ? e - s : 0;
-    };
-
-    const BREAK_ALLOWANCE_MINS = 30;
-    const LUNCH_ALLOWANCE_MINS = 60;
-
-    const breaks = record.breaks || [];
-    const breakOver = breaks.filter(b => b.type === 'break' && b.end)
-      .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - BREAK_ALLOWANCE_MINS), 0);
-    const lunchOver = breaks.filter(b => b.type === 'lunch' && b.end)
-      .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - LUNCH_ALLOWANCE_MINS), 0);
-
-    record.breakDeduction = breakOver + lunchOver;
-    const finalHours = Math.min(480, Math.max(0, base - record.breakDeduction)); // Capped at 8 hours (480 mins)
-    record.hoursWorked = finalHours;
-
-    if (finalHours < 240) {
+    if (hoursWorked < shiftCfg.absentThreshold) {
       record.status = 'absent';
     } else {
       record.status = 'present';
@@ -81,4 +78,70 @@ export function checkAndApplyAutoLogout(record, now = new Date()) {
     return true;
   }
   return false;
+}
+
+export async function markAbsentEmployees(dateStr) {
+  await connectDB();
+
+  const config = await getGlobalConfig();
+  const holidays = await Holiday.find({ date: dateStr }).lean();
+
+  if (!isWorkingDay(dateStr, config, holidays)) return 0;
+
+  const employees = await Employee.find({ status: 'active' })
+    .populate('userId', 'name teamLeadId teamAdminId role')
+    .lean();
+
+  const activeEmployees = employees.filter(e => e.userId?.role && e.userId.role !== 'super_admin');
+
+  if (activeEmployees.length === 0) return 0;
+
+  const userIds = activeEmployees.map(e => e.userId?._id).filter(Boolean);
+
+  const existingRecords = await Attendance.find({ userId: { $in: userIds }, date: dateStr }).select('userId').lean();
+  const attendedIds = new Set(existingRecords.map(r => r.userId.toString()));
+
+  const onLeave = await Leave.find({
+    userId: { $in: userIds },
+    status: 'approved',
+    from: { $lte: dateStr },
+    to: { $gte: dateStr },
+  }).select('userId').lean();
+  const onLeaveIds = new Set(onLeave.map(l => l.userId.toString()));
+
+  let count = 0;
+
+  for (const emp of activeEmployees) {
+    const uid = emp.userId?._id?.toString();
+    if (!uid) continue;
+    if (attendedIds.has(uid)) continue;
+    if (onLeaveIds.has(uid)) continue;
+
+    await Attendance.findOneAndUpdate(
+      { userId: uid, date: dateStr },
+      { $set: { userId: uid, date: dateStr, status: 'absent' } },
+      { upsert: true, new: true }
+    );
+
+    const recipients = [];
+    if (emp.userId?.teamLeadId) recipients.push(emp.userId.teamLeadId);
+    if (emp.userId?.teamAdminId) recipients.push(emp.userId.teamAdminId);
+
+    const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+    recipients.push(...admins.map(a => a._id));
+
+    const uniqueRecipients = [...new Set(recipients.map(String))];
+    if (uniqueRecipients.length > 0) {
+      await notify(
+        uniqueRecipients,
+        'Absence Alert',
+        `${emp.name || 'Employee'} did not clock in on ${dateStr}.`,
+        'attendance'
+      );
+    }
+
+    count++;
+  }
+
+  return count;
 }

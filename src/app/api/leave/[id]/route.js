@@ -1,9 +1,11 @@
 import { connectDB } from '@/lib/db';
-import { Leave, LeavePolicy, UserLeaveBalance } from '@/lib/models/index';
+import { Leave, LeavePolicy, UserLeaveBalance, Holiday } from '@/lib/models/index';
+import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { notify } from '@/lib/notify';
+import { isWorkingDay, getGlobalConfig } from '@/lib/payroll-cycle';
 import { z } from 'zod';
 
 const ActionSchema = z.object({
@@ -193,6 +195,34 @@ export async function PUT(req, { params }) {
 
       await leave.save();
 
+      // Create attendance records for each working day of the leave
+      if (newStatus === 'approved') {
+        try {
+          const config = await getGlobalConfig();
+          const fromDate = new Date(leave.from + 'T00:00:00');
+          const toDate = new Date(leave.to + 'T00:00:00');
+          const holidays = await Holiday.find({
+            date: { $gte: leave.from, $lte: leave.to }
+          }).lean();
+
+          for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+            const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            if (!isWorkingDay(dateStr, config, holidays)) continue;
+
+            const existing = await Attendance.findOne({ userId: leave.userId, date: dateStr });
+            if (existing) continue;
+
+            await Attendance.findOneAndUpdate(
+              { userId: leave.userId, date: dateStr },
+              { $set: { userId: leave.userId, date: dateStr, status: 'leave' } },
+              { upsert: true, new: true }
+            );
+          }
+        } catch (e) {
+          console.error('Failed to create leave attendance records:', e);
+        }
+      }
+
       await auditLog(
         `Leave ${action}`,
         'Leave',
@@ -354,6 +384,34 @@ export async function PUT(req, { params }) {
     }
 
     await leave.save();
+
+    // Create attendance records for each working day of the leave
+    if (newStatus === 'approved') {
+      try {
+        const config = await getGlobalConfig();
+        const fromDate = new Date(leave.from + 'T00:00:00');
+        const toDate = new Date(leave.to + 'T00:00:00');
+        const holidays = await Holiday.find({
+          date: { $gte: leave.from, $lte: leave.to }
+        }).lean();
+
+        for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+          const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+          if (!isWorkingDay(dateStr, config, holidays)) continue;
+
+          const existing = await Attendance.findOne({ userId: leave.userId, date: dateStr });
+          if (existing) continue;
+
+          await Attendance.findOneAndUpdate(
+            { userId: leave.userId, date: dateStr },
+            { $set: { userId: leave.userId, date: dateStr, status: 'leave' } },
+            { upsert: true, new: true }
+          );
+        }
+      } catch (e) {
+        console.error('Failed to create leave attendance records:', e);
+      }
+    }
 
     await auditLog(
       `Leave ${action}`,

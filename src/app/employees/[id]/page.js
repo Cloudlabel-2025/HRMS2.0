@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import { formatMins } from '@/lib/format';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -32,10 +33,6 @@ const STATUS_STYLE = {
   holiday: { bg: '#f1f5f9', color: '#64748b' },
 };
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-function formatMins(mins) {
-  if (!mins) return '--';
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;

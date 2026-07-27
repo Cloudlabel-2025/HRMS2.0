@@ -21,7 +21,7 @@ export async function GET(req) {
     const dept  = searchParams.get('dept') || '';
 
     const userQuery = dept ? { department: dept } : {};
-    const users = await User.find(userQuery).select('_id name department');
+    const users = await User.find({ ...userQuery, role: { $ne: 'super_admin' } }).select('_id name department');
     const userIds = users.map(u => u._id);
 
     if (type === 'attendance') {
@@ -32,22 +32,25 @@ export async function GET(req) {
       for (const r of records) {
         const id = r.userId?._id?.toString();
         if (!id) continue;
-        if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0 };
+        if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0, leave: 0 };
         if (r.status === 'present') byUser[id].present++;
         else if (r.status === 'late') byUser[id].late++;
+        else if (r.status === 'leave') byUser[id].leave++;
         else byUser[id].absent++;
       }
 
       const rows = Object.values(byUser);
       const totalPresent = rows.reduce((s, r) => s + r.present, 0);
       const totalLate    = rows.reduce((s, r) => s + r.late, 0);
+      const totalLeave   = rows.reduce((s, r) => s + r.leave, 0);
 
       return ok({
         summary: [
           { label: 'Total Employees', value: rows.length, color: '#3b82f6' },
           { label: 'Total Present Days', value: totalPresent, color: '#10b981' },
           { label: 'Total Late Days', value: totalLate, color: '#f59e0b' },
-          { label: 'Avg Present/Employee', value: rows.length ? (totalPresent / rows.length).toFixed(1) : 0, color: '#8b5cf6' },
+          { label: 'Total Leave Days', value: totalLeave, color: '#8b5cf6' },
+          { label: 'Avg Present/Employee', value: rows.length ? (totalPresent / rows.length).toFixed(1) : 0, color: '#06b6d4' },
         ],
         chart: {
           type: 'bar', title: 'Attendance by Employee',
@@ -55,10 +58,11 @@ export async function GET(req) {
           datasets: [
             { label: 'Present', data: rows.map(r => r.present), backgroundColor: '#10b981' },
             { label: 'Late',    data: rows.map(r => r.late),    backgroundColor: '#f59e0b' },
+            { label: 'Leave',   data: rows.map(r => r.leave),   backgroundColor: '#8b5cf6' },
           ],
         },
-        columns: ['name', 'dept', 'present', 'late', 'absent'],
-        rows: rows.map(r => ({ name: r.name, dept: r.dept, present: r.present, late: r.late, absent: r.absent })),
+        columns: ['name', 'dept', 'present', 'late', 'leave', 'absent'],
+        rows: rows.map(r => ({ name: r.name, dept: r.dept, present: r.present, late: r.late, leave: r.leave, absent: r.absent })),
       });
     }
 

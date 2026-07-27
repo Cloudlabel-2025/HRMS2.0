@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import { formatMins } from '@/lib/format';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a' },
@@ -24,11 +25,6 @@ const WP_STATUS_STYLE = {
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function formatMins(mins) {
-  if (!mins) return '--';
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
-}
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);

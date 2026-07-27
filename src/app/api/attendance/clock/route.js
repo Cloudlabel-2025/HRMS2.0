@@ -1,5 +1,6 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
+import User from '@/lib/models/User';
 import { Leave, Shift, Absence, SelfServiceRequest } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -8,6 +9,8 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
+import { getShiftConfig, calculateHoursWorked, determineStatus, calculateBreakDeduction } from '@/lib/attendance-constants';
+import { notify } from '@/lib/notify';
 
 export async function POST(req) {
   try {
@@ -62,25 +65,23 @@ export async function POST(req) {
         from: { $lte: today },
         to:   { $gte: today },
       });
-      if (onLeave) {
-        auditLog('Clock In Blocked', 'Attendance', user._id, `On approved ${onLeave.type} (${onLeave.from} to ${onLeave.to})`, 'low', ip, null, user._id);
-        return fail(`You are on approved ${onLeave.type} today (${onLeave.from} to ${onLeave.to}). Clock-in is not allowed.`, 400);
+      let isOnLeave = false;
+      if (onLeave && user.role !== 'super_admin') {
+        isOnLeave = true;
+        auditLog('Clock In (Leave Day)', 'Attendance', user._id, `On approved ${onLeave.type} (${onLeave.from} to ${onLeave.to})`, 'medium', ip, null, user._id);
       }
 
       const config = await getGlobalConfig();
-      const LATE_THRESHOLD_MINUTES = Number(config.lateThreshold) || 15;
+      const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
+      const cfg = getShiftConfig(shiftDoc, config);
 
-      // Determine shift start time from the user's assigned shift
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
-      try {
-        const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
-        if (shiftDoc?.startTime) {
-          const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
-          shiftHour = sh; shiftMin = sm;
-          shiftFound = true;
-        }
-      } catch (e) { /* fall through to parser */ }
+      if (shiftDoc?.startTime) {
+        const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+        shiftHour = sh; shiftMin = sm;
+        shiftFound = true;
+      }
       if (!shiftFound) {
         const parsed = parseShiftStartTime(user.shift);
         if (parsed) {
@@ -133,7 +134,7 @@ export async function POST(req) {
         if (earlyDiffMins < -720) earlyDiffMins += 1440;
         if (earlyDiffMins > 720) earlyDiffMins -= 1440;
 
-        if (earlyDiffMins < -120) {
+        if (earlyDiffMins < -cfg.earlyWindow) {
           const reqReason = body.reason || '';
           if (!reqReason.trim()) {
             auditLog('Clock In Blocked', 'Attendance', user._id, `Early login by ${Math.abs(earlyDiffMins)} mins without reason`, 'low', ip, null, user._id);
@@ -148,22 +149,13 @@ export async function POST(req) {
 
       const [h, m] = timeStr.split(':').map(Number);
       const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
-      const FIVE_HOURS  = 300;
-      const THREE_HOURS = 180;
       let lateFlag = false;
       let status = 'present';
 
       if (shiftFound) {
-        if (minutesSinceShiftStart > FIVE_HOURS) {
-          status = 'leave';
-          lateFlag = true;
-        } else if (minutesSinceShiftStart > THREE_HOURS) {
-          status = 'half_day';
-          lateFlag = true;
-        } else if (minutesSinceShiftStart > LATE_THRESHOLD_MINUTES) {
-          status = 'late';
-          lateFlag = true;
-        }
+        const result = determineStatus(minutesSinceShiftStart, cfg);
+        status = result.status;
+        lateFlag = result.lateFlag;
       }
 
       // Create absence record for half-day or full-day leave due to late clock-in
@@ -182,6 +174,8 @@ export async function POST(req) {
         );
       }
 
+      const isEarlyLogin = shiftFound && shiftHour * 60 + shiftMin > (h * 60 + m);
+
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },
         {
@@ -189,6 +183,7 @@ export async function POST(req) {
             clockIn: timeStr,
             status,
             lateFlag,
+            earlyLogin: isEarlyLogin,
             note: body.reason ? `Early login reason: ${body.reason}` : '',
           },
           $setOnInsert: {
@@ -209,6 +204,27 @@ export async function POST(req) {
         { upsert: true, new: true }
       );
 
+      if (isOnLeave && record) {
+        record.leaveOverride = { status: 'pending' };
+        await record.save();
+
+        const recipients = [];
+        if (user.teamLeadId) recipients.push(user.teamLeadId);
+        if (user.teamAdminId) recipients.push(user.teamAdminId);
+        const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+        recipients.push(...admins.map(a => a._id));
+        if (recipients.length) {
+          await notify(
+            [...new Set(recipients.map(String))],
+            'Leave Day Clock-In',
+            `${user.name || 'Employee'} clocked in on approved ${onLeave.type} day (${onLeave.from} to ${onLeave.to}). Please review and approve or reject.`,
+            'attendance',
+            record._id
+          );
+        }
+        auditLog('Clock In (Leave Day)', 'Attendance', user._id, `Clocked in on approved ${onLeave.type} day`, 'medium', ip, null, user._id);
+      }
+
       await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}`, 'low', ip, null, user._id);
 
     } else if (action === 'out') {
@@ -221,6 +237,10 @@ export async function POST(req) {
         return fail('Already clocked out today', 400);
       }
 
+      const outConfig = await getGlobalConfig();
+      const outShiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
+      const outCfg = getShiftConfig(outShiftDoc, outConfig);
+
       const [ih, im] = record.clockIn.split(':').map(Number);
       const [oh, om] = timeStr.split(':').map(Number);
       let elapsedMins = (oh * 60 + om) - (ih * 60 + im);
@@ -230,20 +250,19 @@ export async function POST(req) {
       let isAutoLogout = false;
       let finalMinutes = elapsedMins;
 
-      if (elapsedMins >= 600) {
-        // Exceeds 10 hours, adjust clockout to exactly 10 hours after clockIn
-        const clockOutMinutes = ih * 60 + im + 600;
+      if (elapsedMins >= outCfg.hardCapHours) {
+        const clockOutMinutes = ih * 60 + im + outCfg.hardCapHours;
         const foh = Math.floor(clockOutMinutes / 60) % 24;
         const fom = clockOutMinutes % 60;
         finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
         isAutoLogout = true;
-        finalMinutes = 600;
+        finalMinutes = outCfg.hardCapHours;
       }
 
       const deduction = record.breakDeduction || 0;
-      const finalHours = Math.min(480, Math.max(0, finalMinutes - deduction)); // Cap at 8 hours (480 mins)
+      const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, outCfg);
       let status = record.status;
-      if (finalHours < 240) {
+      if (hoursWorked < outCfg.absentThreshold) {
         status = 'absent';
       }
 
@@ -251,8 +270,8 @@ export async function POST(req) {
         { userId: user._id, date: today },
         {
           clockOut: finalClockOut,
-          hoursWorked: finalHours,
-          baseHoursWorked: record.baseHoursWorked || finalMinutes,
+          hoursWorked,
+          baseHoursWorked: record.baseHoursWorked || baseHours,
           autoLoggedOut: isAutoLogout,
           status,
           workProgress: (record.workProgress || []).map(row => (
@@ -267,7 +286,7 @@ export async function POST(req) {
         { new: true }
       );
 
-      await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${finalClockOut}, Hours worked: ${Math.floor(finalHours/60)}h ${finalHours%60}m${isAutoLogout ? ' (Auto Clock Out)' : ''}`, 'low', ip, null, user._id);
+      await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${finalClockOut}, Hours worked: ${Math.floor(hoursWorked/60)}h ${hoursWorked%60}m${isAutoLogout ? ' (Auto Clock Out)' : ''}`, 'low', ip, null, user._id);
 
     } else {
       return fail('Invalid action. Use "in" or "out"', 400);

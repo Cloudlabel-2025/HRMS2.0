@@ -20,6 +20,7 @@
     "chart.js": "^4.5.1",
     "cloudinary": "^2.10.0",
     "docx": "^9.7.1",
+    "exceljs": "^4.4.0",
     "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
@@ -31,7 +32,6 @@
     "react-bootstrap": "^2.10.10",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "19.2.4",
-    "xlsx": "^0.18.5",
     "zod": "^3.22.4"
   },
   "devDependencies": {

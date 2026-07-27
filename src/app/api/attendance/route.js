@@ -8,6 +8,8 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
+import { getShiftConfig, determineStatus, calculateHoursWorked } from '@/lib/attendance-constants';
+import { notify } from '@/lib/notify';
 
 async function getShiftAwareToday(targetUserId) {
   const now = await getTzTime();
@@ -24,11 +26,11 @@ async function getShiftAwareToday(targetUserId) {
 async function getTeamUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
   if (user.role === 'team_lead') {
-    const members = await User.find({ department: user.department, status: 'active' }).select('_id');
+    const members = await User.find({ department: user.department, status: 'active', role: { $ne: 'super_admin' } }).select('_id');
     return members.map(m => m._id);
   }
   if (user.role === 'team_admin') {
-    const members = await User.find({ department: user.department, role: { $ne: 'team_lead' }, status: 'active' }).select('_id');
+    const members = await User.find({ department: user.department, role: { $nin: ['super_admin', 'team_lead'] }, status: 'active' }).select('_id');
     return members.map(m => m._id);
   }
   return [user._id];
@@ -110,7 +112,6 @@ export async function GET(req) {
     // Recompute lateFlag/status based on actual shift start time
     // so that records created by previous buggy clock logic get corrected
     const config = await getGlobalConfig();
-    const LATE_THRESHOLD_MINUTES = Number(config.lateThreshold) || 15;
 
     const shiftNames = [...new Set(raw.filter(r => r.clockIn).map(r => r.userId?.shift || 'Morning (9AM-6PM)'))];
     const shiftDocs = shiftNames.length ? await Shift.find({ name: { $in: shiftNames } }).lean() : [];
@@ -121,6 +122,8 @@ export async function GET(req) {
       if (!rec.clockIn) continue;
       const shiftName = rec.userId?.shift || 'Morning (9AM-6PM)';
       const shiftDoc = shiftMap[shiftName];
+      const cfg = getShiftConfig(shiftDoc, config);
+
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
       if (shiftDoc?.startTime) {
@@ -138,23 +141,14 @@ export async function GET(req) {
       }
       const [h, m] = rec.clockIn.split(':').map(Number);
       const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
-      const FIVE_HOURS  = 300;
-      const THREE_HOURS = 180;
-      if (rec.clockOut && rec.hoursWorked < 240) {
+
+      if (rec.clockOut && rec.hoursWorked < cfg.absentThreshold) {
         rec.status = 'absent';
         rec.lateFlag = false;
-      } else if (shiftFound && minutesSinceShiftStart > FIVE_HOURS) {
-        rec.lateFlag = true;
-        rec.status = 'leave';
-      } else if (shiftFound && minutesSinceShiftStart > THREE_HOURS) {
-        rec.lateFlag = true;
-        rec.status = 'half_day';
-      } else if (shiftFound && minutesSinceShiftStart > LATE_THRESHOLD_MINUTES) {
-        rec.lateFlag = true;
-        rec.status = 'late';
-      } else {
-        rec.lateFlag = false;
-        rec.status = 'present';
+      } else if (shiftFound) {
+        const result = determineStatus(minutesSinceShiftStart, cfg);
+        rec.status = result.status;
+        rec.lateFlag = result.lateFlag;
       }
     }
 
@@ -195,6 +189,52 @@ export async function PUT(req) {
     await connectDB();
 
     const body = await req.json();
+
+    // Handle leave override approval/rejection
+    if (body.action === 'approve_override' || body.action === 'reject_override') {
+      if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role)) {
+        return fail('Access denied', 403);
+      }
+      if (!body.attendanceId) return fail('attendanceId is required', 400);
+
+      const record = await Attendance.findById(body.attendanceId);
+      if (!record) return fail('Attendance record not found', 404);
+      if (record.leaveOverride?.status !== 'pending') return fail('No pending override for this record', 400);
+
+      if (body.action === 'approve_override') {
+        record.leaveOverride = {
+          status: 'approved',
+          approvedBy: user._id,
+          approvedAt: new Date(),
+        };
+        record.status = 'present';
+        await record.save();
+
+        await notify(record.userId, 'Attendance Approved',
+          `Your clock-in on ${record.date} (leave day) has been approved by ${user.name}.`, 'attendance', record._id);
+
+        return ok(record);
+      } else {
+        record.leaveOverride = {
+          status: 'rejected',
+          approvedBy: user._id,
+          approvedAt: new Date(),
+        };
+        record.status = 'leave';
+        record.clockIn = null;
+        record.clockOut = null;
+        record.hoursWorked = 0;
+        record.baseHoursWorked = 0;
+        record.earlyLogin = false;
+        await record.save();
+
+        await notify(record.userId, 'Attendance Rejected',
+          `Your clock-in on ${record.date} (leave day) has been rejected by ${user.name}. Status reverted to leave.`, 'attendance', record._id);
+
+        return ok(record);
+      }
+    }
+
     const targetUserId = body.userId || user._id;
     let today = body.date || (await getShiftAwareToday(targetUserId));
     if (!today) {

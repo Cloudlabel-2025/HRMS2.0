@@ -312,6 +312,18 @@ const ShiftSchema = new mongoose.Schema({
   startTime: { type: String, required: true },
   endTime:   { type: String, required: true },
   days:      [{ type: String }],
+  expectedHours:    { type: Number, default: 480 },
+  hardCapHours:     { type: Number, default: 600 },
+  absentThreshold:  { type: Number, default: 240 },
+  lateThreshold:    { type: Number, default: 15 },
+  earlyLoginWindow: { type: Number, default: 120 },
+  breaks: [{
+    name:        { type: String, default: 'Break' },
+    type:        { type: String, enum: ['break', 'lunch'], required: true },
+    maxDuration: { type: Number, required: true },
+    maxCount:    { type: Number, default: 1 },
+  }],
+  autoLogoutAfterShiftEnd: { type: Number, default: 360 },
 }, { timestamps: true });
 
 const HolidaySchema = new mongoose.Schema({

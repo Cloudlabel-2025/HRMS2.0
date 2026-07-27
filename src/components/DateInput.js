@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useSettings } from '@/lib/settings';
 
 function toISO(value) {
@@ -94,6 +94,7 @@ export default function DateInput({ value, onChange, min, max, className = 'form
   const [draft, setDraft] = useState('');
   const [focused, setFocused] = useState(false);
   const [error, setError] = useState('');
+  const hiddenNode = useRef(null);
 
   useEffect(() => {
     if (!value && draft) setDraft('');
@@ -139,21 +140,11 @@ export default function DateInput({ value, onChange, min, max, className = 'form
   }, []);
 
   const openPicker = useCallback(() => {
-    const hidden = document.createElement('input');
-    hidden.type = 'date';
+    const hidden = hiddenNode.current;
+    if (!hidden) return;
     hidden.value = toISO(value) || '';
-    if (min) hidden.min = min;
-    if (max) hidden.max = max;
-    hidden.style.cssText = 'position:fixed;top:50%;left:50;opacity:0;pointer-events:none;z-index:9999';
-    document.body.appendChild(hidden);
     hidden.showPicker?.();
-    hidden.addEventListener('change', () => {
-      setDraft('');
-      setError('');
-      onChange({ target: { value: hidden.value } });
-      document.body.removeChild(hidden);
-    });
-  }, [value, min, max, onChange]);
+  }, [value]);
 
   const hasError = !!error;
   const displayValue = draft || display(value, fmt);
@@ -184,6 +175,9 @@ export default function DateInput({ value, onChange, min, max, className = 'form
           style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'none', cursor: 'pointer', padding: 0, lineHeight: 1 }}>
           <i className="bi bi-calendar3" style={{ color: '#64748b', fontSize: 14 }} />
         </button>
+        <input ref={hiddenNode} type="date" tabIndex={-1} min={min} max={max}
+          style={{ position: 'absolute', left: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none', border: 'none', padding: 0 }}
+          onChange={(e) => { setDraft(''); setError(''); onChange({ target: { value: e.target.value } }); }} />
       </div>
       {showHintText && !hasError && (
         <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>{hint}</div>

@@ -18,7 +18,7 @@ const ADMIN_ROLES = ['super_admin', 'admin_full'];
 
 const FIELD_ALLOWLIST = {
   departments:  ['name', 'head', 'members'],
-  shifts:       ['name', 'startTime', 'endTime', 'days'],
+  shifts:       ['name', 'startTime', 'endTime', 'days', 'expectedHours', 'hardCapHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd'],
   holidays:     ['name', 'date', 'type'],
   config:       ['key', 'value'],
   roles:        ['name', 'description'],
@@ -57,6 +57,40 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
     if (data.name !== undefined) data.name = data.name.trim();
     if (data.days !== undefined && !Array.isArray(data.days))
       return { error: fail('Shift days must be an array', 400) };
+    if (data.expectedHours !== undefined) {
+      data.expectedHours = Number(data.expectedHours);
+      if (isNaN(data.expectedHours) || data.expectedHours < 0) return { error: fail('Expected hours must be a positive number', 400) };
+    }
+    if (data.hardCapHours !== undefined) {
+      data.hardCapHours = Number(data.hardCapHours);
+      if (isNaN(data.hardCapHours) || data.hardCapHours < 0) return { error: fail('Hard cap hours must be a positive number', 400) };
+      if (data.expectedHours !== undefined && data.hardCapHours < data.expectedHours)
+        return { error: fail('Hard cap must be >= expected hours', 400) };
+    }
+    if (data.absentThreshold !== undefined) {
+      data.absentThreshold = Number(data.absentThreshold);
+      if (isNaN(data.absentThreshold) || data.absentThreshold < 0) return { error: fail('Absent threshold must be a positive number', 400) };
+    }
+    if (data.lateThreshold !== undefined) {
+      data.lateThreshold = Number(data.lateThreshold);
+      if (isNaN(data.lateThreshold) || data.lateThreshold < 0) return { error: fail('Late threshold must be a positive number', 400) };
+    }
+    if (data.earlyLoginWindow !== undefined) {
+      data.earlyLoginWindow = Number(data.earlyLoginWindow);
+      if (isNaN(data.earlyLoginWindow) || data.earlyLoginWindow < 0) return { error: fail('Early login window must be a positive number', 400) };
+    }
+    if (data.autoLogoutAfterShiftEnd !== undefined) {
+      data.autoLogoutAfterShiftEnd = Number(data.autoLogoutAfterShiftEnd);
+      if (isNaN(data.autoLogoutAfterShiftEnd) || data.autoLogoutAfterShiftEnd < 0) return { error: fail('Auto-logout must be a positive number', 400) };
+    }
+    if (data.breaks !== undefined) {
+      if (!Array.isArray(data.breaks)) return { error: fail('Breaks must be an array', 400) };
+      for (const b of data.breaks) {
+        if (!['break', 'lunch'].includes(b.type)) return { error: fail('Break type must be break or lunch', 400) };
+        const dur = Number(b.maxDuration);
+        if (isNaN(dur) || dur <= 0) return { error: fail('Break maxDuration must be a positive number', 400) };
+      }
+    }
   }
 
   if (type === 'holidays') {

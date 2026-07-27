@@ -32,7 +32,11 @@ export async function GET(req) {
     const isCurrentMonth = !month || month === today.slice(0, 7);
 
     if (isCurrentMonth && ['super_admin', 'admin_full'].includes(user.role)) {
-      const activeEmployees = await Employee.find({ status: 'active' }).select('userId name department').lean();
+      const activeEmployees = await Employee.find({ status: 'active' })
+        .populate({ path: 'userId', match: { role: { $ne: 'super_admin' } }, select: '_id name role' })
+        .select('userId name department')
+        .lean();
+      const filtered = activeEmployees.filter(e => e.userId);
       const todayAttendance = await Attendance.find({ date: today }).select('userId status').lean();
       const todayAbsenceDates = new Set(withPattern.filter(a => a.date === today).map(a => a.userId?._id?.toString()));
       const attendedIds = new Set(todayAttendance.map(a => a.userId.toString()));
@@ -44,8 +48,8 @@ export async function GET(req) {
       }).select('userId').lean();
       const onLeaveIds = new Set(todayLeaves.map(l => l.userId.toString()));
 
-      for (const emp of activeEmployees) {
-        const uid = emp.userId?.toString();
+      for (const emp of filtered) {
+        const uid = emp.userId?._id?.toString();
         if (!uid) continue;
         // Skip if they already have an Absence record for today
         if (todayAbsenceDates.has(uid)) continue;

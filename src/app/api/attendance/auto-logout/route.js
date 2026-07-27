@@ -6,8 +6,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
-
-const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -58,7 +57,8 @@ export async function POST(req) {
 
       const effectiveNowMinutes = nowMinutes < effectiveEndMinutes ? nowMinutes + 24 * 60 : nowMinutes;
 
-      if (effectiveNowMinutes < effectiveEndMinutes + 300) continue; // 300 min = 5 hours
+      const shiftCfg = getShiftConfig(shift, {});
+      if (effectiveNowMinutes < effectiveEndMinutes + shiftCfg.autoLogoutBuffer) continue;
 
       // Resolve attendance date for this shift at the current time
       let attendanceToday;
@@ -79,7 +79,7 @@ export async function POST(req) {
       }
 
       // Find users with this shift name who haven't clocked out
-      const users = await User.find({ shift: shift.name, status: 'active' }).lean();
+      const users = await User.find({ shift: shift.name, status: 'active', role: { $ne: 'super_admin' } }).lean();
       const userIds = users.map(u => u._id);
 
       if (userIds.length === 0) continue;
@@ -104,18 +104,19 @@ export async function POST(req) {
         let finalClockOut = nowTimeStr;
         let finalMinutes = elapsedMins;
 
-        if (elapsedMins >= 600) {
-          const clockOutMinutes = ih * 60 + im + 600;
+        const recordShiftCfg = getShiftConfig(shift, {});
+        if (elapsedMins >= recordShiftCfg.hardCapHours) {
+          const clockOutMinutes = ih * 60 + im + recordShiftCfg.hardCapHours;
           const foh = Math.floor(clockOutMinutes / 60) % 24;
           const fom = clockOutMinutes % 60;
           finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
-          finalMinutes = 600;
+          finalMinutes = recordShiftCfg.hardCapHours;
         }
 
         const deduction = record.breakDeduction || 0;
-        const finalHours = Math.min(480, Math.max(0, finalMinutes - deduction));
+        const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
         let status = record.status;
-        if (finalHours < 240) {
+        if (hoursWorked < recordShiftCfg.absentThreshold) {
           status = 'absent';
         } else {
           status = 'present';
@@ -126,8 +127,8 @@ export async function POST(req) {
           {
             $set: {
               clockOut: finalClockOut,
-              hoursWorked: finalHours,
-              baseHoursWorked: record.baseHoursWorked || finalMinutes,
+              hoursWorked,
+              baseHoursWorked: record.baseHoursWorked || baseHours,
               autoLoggedOut: true,
               status,
               workProgress: (record.workProgress || []).map(row => (
@@ -150,6 +151,11 @@ export async function POST(req) {
         });
       }
     }
+
+    try {
+      const { markAbsentEmployees } = await import('@/lib/attendance-utils');
+      await markAbsentEmployees(todayStr);
+    } catch (e) { console.error('markAbsentEmployees failed:', e); }
 
     return ok({
       message: `Auto-logout completed. ${autoLoggedOut.length} employee(s) were auto-logged out.`,
