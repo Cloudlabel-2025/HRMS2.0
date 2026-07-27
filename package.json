@@ -21,6 +21,8 @@
     "cloudinary": "^2.10.0",
     "docx": "^9.7.1",
     "jsonwebtoken": "^9.0.3",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "mongoose": "^9.6.3",
     "next": "16.2.6",
     "nodemailer": "^9.0.3",
@@ -29,6 +31,7 @@
     "react-bootstrap": "^2.10.10",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "19.2.4",
+    "xlsx": "^0.18.5",
     "zod": "^3.22.4"
   },
   "devDependencies": {

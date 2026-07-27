@@ -7,6 +7,9 @@ import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import Pagination from '@/components/Pagination';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present' },
@@ -103,6 +106,100 @@ export default function AttendancePage() {
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
+  const buildDateQuery = (uid) => {
+    let q = `?scope=team${uid ? '&userId=' + uid : ''}&month=${teamMonth}`;
+    if (teamFromDate) q += `&fromDate=${teamFromDate}`;
+    if (teamToDate) q += `&toDate=${teamToDate}`;
+    return q;
+  };
+
+  const fetchEmployeeAttendance = async (empUserId) => {
+    const q = buildDateQuery(empUserId);
+    const records = await api.get('/api/attendance' + q);
+    return Array.isArray(records) ? records : [];
+  };
+
+  const handleDownload = async (format) => {
+    setDownloadLoading(true);
+    try {
+      let targets;
+      if (showAllEmployees && !selectedUserId) {
+        targets = employees;
+      } else if (selectedUserId) {
+        targets = employees.filter(e => e.userId === selectedUserId);
+      } else {
+        targets = [{ userId: user?._id, name: user?.name, role: user?.role, department: user?.department }];
+      }
+
+      if (targets.length === 0) { showToast('No employee data to download', 'error'); return; }
+
+      const allData = [];
+      for (const emp of targets) {
+        const records = await fetchEmployeeAttendance(emp.userId);
+        allData.push({ emp, records });
+      }
+
+      if (format === 'excel') {
+        const wb = XLSX.utils.book_new();
+        for (const { emp, records } of allData) {
+          const headerData = [
+            [`Employee: ${emp.name || '—'}`],
+            [`Role: ${emp.role || '—'}`, `Department: ${emp.department || '—'}`, `Period: ${teamMonth}`],
+            [],
+          ];
+          const rows = records.map(r => [
+            r.date,
+            DAYS[new Date(r.date + 'T00:00:00').getDay()],
+            STATUS_STYLE[r.status]?.label || r.status,
+            r.clockIn || '—',
+            r.clockOut || '—',
+            r.hoursWorked ? formatMins(r.hoursWorked) : '—',
+          ]);
+          const wsData = [...headerData, ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked'], ...rows];
+          const ws = XLSX.utils.aoa_to_sheet(wsData);
+          ws['!cols'] = [{ wch: 12 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 13 }];
+          const sheetName = (emp.name || 'Employee').slice(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        }
+        XLSX.writeFile(wb, `attendance_report_${teamMonth}.xlsx`);
+      } else {
+        const doc = new jsPDF('l', 'mm', 'a4');
+        let isFirst = true;
+        for (const { emp, records } of allData) {
+          if (!isFirst) doc.addPage();
+          isFirst = false;
+
+          doc.setFontSize(14);
+          doc.setFont(undefined, 'bold');
+          doc.text(`Attendance Report — ${emp.name || 'Employee'}`, 14, 15);
+          doc.setFontSize(10);
+          doc.setFont(undefined, 'normal');
+          doc.text(`Role: ${emp.role || '—'}   |   Department: ${emp.department || '—'}   |   Period: ${teamMonth}`, 14, 22);
+
+          const rows = records.map(r => [
+            r.date,
+            DAYS[new Date(r.date + 'T00:00:00').getDay()],
+            STATUS_STYLE[r.status]?.label || r.status,
+            r.clockIn || '—',
+            r.clockOut || '—',
+            r.hoursWorked ? formatMins(r.hoursWorked) : '—',
+          ]);
+
+          autoTable(doc, {
+            startY: 28,
+            head: [['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked']],
+            body: rows,
+            styles: { fontSize: 9 },
+            headStyles: { fillColor: [59, 130, 246] },
+          });
+        }
+        doc.save(`attendance_report_${teamMonth}.pdf`);
+      }
+      showToast('Downloaded successfully');
+    } catch (e) { showToast('Download failed: ' + e.message, 'error'); }
+    finally { setDownloadLoading(false); }
+  };
+
   const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
   const isSuperAdmin = user?.role === 'super_admin';
   const today   = (() => {
@@ -121,6 +218,8 @@ export default function AttendancePage() {
   const [teamMonth, setTeamMonth] = useState(month);
   const [teamFromDate, setTeamFromDate] = useState('');
   const [teamToDate, setTeamToDate] = useState('');
+  const [showAllEmployees, setShowAllEmployees] = useState(false);
+  const [downloadLoading, setDownloadLoading] = useState(false);
 
   const loadTodayRecord = async () => {
     try {
@@ -1013,8 +1112,9 @@ export default function AttendancePage() {
           {/* Employee selector (only for admins; non-admins see their own data) */}
           {isAdmin ? (
             <div className="mb-3">
-              <select className="form-select" style={{ fontSize: 13, maxWidth: 300 }} value={selectedUserId} onChange={e => { setSelectedUserId(e.target.value); setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); }}>
+              <select className="form-select" style={{ fontSize: 13, maxWidth: 300 }} value={showAllEmployees ? 'all' : selectedUserId} onChange={e => { const val = e.target.value; if (val === 'all') { setShowAllEmployees(true); setSelectedUserId(''); } else if (val === '') { setShowAllEmployees(false); setSelectedUserId(''); } else { setShowAllEmployees(false); setSelectedUserId(val); setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); } }}>
                 <option value="">— Select Employee —</option>
+                <option value="all">All Employees</option>
                 {employees.map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
               </select>
             </div>
@@ -1041,7 +1141,8 @@ export default function AttendancePage() {
                    <DateInput className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} />
                 </div>
                 <div className="col-md-3">
-                  <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); }}>
+                  <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>&nbsp;</label>
+                  <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); setShowAllEmployees(false); setSelectedUserId(''); }}>
                     <i className="bi bi-arrow-counterclockwise me-1" />Reset
                   </button>
                 </div>
@@ -1049,10 +1150,67 @@ export default function AttendancePage() {
             </div>
           </div>
 
+          {/* All Employees list panel */}
+          {isAdmin && showAllEmployees && !selectedUserId && (
+            <div className="card mb-3" style={{ borderRadius: 12 }}>
+              <div style={{ padding: '12px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <i className="bi bi-people" style={{ color: '#3b82f6', fontSize: 14 }} />
+                  <span style={{ fontWeight: 750, fontSize: 13.5 }}>All Employees ({employees.length})</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: '#64748b' }}>Click an employee to view their attendance</span>
+                  <div className="dropdown">
+                    <button className="btn btn-sm btn-outline-success dropdown-toggle" style={{ fontSize: 12 }} disabled={downloadLoading} data-bs-toggle="dropdown">
+                      {downloadLoading ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-download me-1" />}
+                      Download
+                    </button>
+                    <ul className="dropdown-menu dropdown-menu-end" style={{ fontSize: 13 }}>
+                      <li><button className="dropdown-item" onClick={() => handleDownload('excel')}><i className="bi bi-file-earmark-excel me-2 text-success" />Excel (.xlsx)</button></li>
+                      <li><button className="dropdown-item" onClick={() => handleDownload('pdf')}><i className="bi bi-file-earmark-pdf me-2 text-danger" />PDF (.pdf)</button></li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <div style={{ padding: '12px 18px' }}>
+                <div className="row g-2">
+                  {employees.map(emp => (
+                    <div key={emp.userId} className="col-6 col-md-4 col-lg-3">
+                      <div
+                        className="card"
+                        style={{
+                          cursor: 'pointer',
+                          transition: 'all 0.15s',
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 10,
+                          padding: '10px 12px',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#3b82f6'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(59,130,246,0.15)'; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = 'none'; }}
+                        onClick={() => { setSelectedUserId(emp.userId); setShowAllEmployees(false); }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+                            {emp.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.name}</div>
+                            <div style={{ fontSize: 11, color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{emp.department || 'No Dept'}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Data */}
           {(() => {
             const uid = isAdmin ? selectedUserId : user?._id;
             if (!uid) {
+              if (showAllEmployees && isAdmin) return null;
               return (
                 <div className="card"><div className="empty-state"><i className="bi bi-person" /><p>Select an employee to view attendance</p></div></div>
               );
@@ -1063,15 +1221,54 @@ export default function AttendancePage() {
             if (teamFromDate) query += `&fromDate=${teamFromDate}`;
             if (teamToDate) query += `&toDate=${teamToDate}`;
 
-            return <TeamAttendanceView
-              query={query}
-              uid={uid}
-              month={teamMonth}
-              formatDate={formatDate}
-              formatMins={formatMins}
-              STATUS_STYLE={STATUS_STYLE}
-              DAYS={DAYS}
-            />;
+            return (
+              <>
+                {isAdmin && selectedUserId && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
+                    <button
+                      className="btn btn-link btn-sm p-0"
+                      style={{ fontSize: 13, textDecoration: 'none' }}
+                      onClick={() => { setSelectedUserId(''); setShowAllEmployees(true); }}
+                    >
+                      <i className="bi bi-arrow-left me-1" />Back to All Employees
+                    </button>
+                    <div className="dropdown">
+                      <button className="btn btn-sm btn-outline-success dropdown-toggle" style={{ fontSize: 12 }} disabled={downloadLoading} data-bs-toggle="dropdown">
+                        {downloadLoading ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-download me-1" />}
+                        Download
+                      </button>
+                      <ul className="dropdown-menu" style={{ fontSize: 13 }}>
+                        <li><button className="dropdown-item" onClick={() => handleDownload('excel')}><i className="bi bi-file-earmark-excel me-2 text-success" />Excel (.xlsx)</button></li>
+                        <li><button className="dropdown-item" onClick={() => handleDownload('pdf')}><i className="bi bi-file-earmark-pdf me-2 text-danger" />PDF (.pdf)</button></li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+                {!isAdmin && (
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                    <div className="dropdown">
+                      <button className="btn btn-sm btn-outline-success dropdown-toggle" style={{ fontSize: 12 }} disabled={downloadLoading} data-bs-toggle="dropdown">
+                        {downloadLoading ? <span className="spinner-border spinner-border-sm me-1" /> : <i className="bi bi-download me-1" />}
+                        Download
+                      </button>
+                      <ul className="dropdown-menu dropdown-menu-end" style={{ fontSize: 13 }}>
+                        <li><button className="dropdown-item" onClick={() => handleDownload('excel')}><i className="bi bi-file-earmark-excel me-2 text-success" />Excel (.xlsx)</button></li>
+                        <li><button className="dropdown-item" onClick={() => handleDownload('pdf')}><i className="bi bi-file-earmark-pdf me-2 text-danger" />PDF (.pdf)</button></li>
+                      </ul>
+                    </div>
+                  </div>
+                )}
+                <TeamAttendanceView
+                  query={query}
+                  uid={uid}
+                  month={teamMonth}
+                  formatDate={formatDate}
+                  formatMins={formatMins}
+                  STATUS_STYLE={STATUS_STYLE}
+                  DAYS={DAYS}
+                />
+              </>
+            );
           })()}
         </div>
       )}
