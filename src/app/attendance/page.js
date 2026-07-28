@@ -73,6 +73,7 @@ export default function AttendancePage() {
   const [todayPage, setTodayPage]       = useState(1);
   const [regPage, setRegPage]           = useState(1);
   const [progressEmpPage, setProgressEmpPage] = useState(1);
+  const [deleteConfirmIdx, setDeleteConfirmIdx] = useState(null);
   const pageSize = 10;
 
   useEffect(() => {
@@ -263,7 +264,8 @@ export default function AttendancePage() {
     finally { setDownloadLoading(false); }
   };
 
-  const isAdmin = ['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role);
+  const canReview = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
+  const isAdmin = canReview;
   const isSuperAdmin = user?.role === 'super_admin';
   const today   = (() => {
     const d = new Date();
@@ -377,7 +379,7 @@ export default function AttendancePage() {
       loadTodayRecord(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
-      loadRegRequests(isAdmin ? 'approvals' : 'my'),
+      loadRegRequests(canReview ? 'approvals' : 'my'),
       api.get('/api/attendance/available-tasks').then(tasks => {
         setAvailableTasks(Array.isArray(tasks) ? tasks : []);
       }).catch(() => {}),
@@ -506,6 +508,26 @@ export default function AttendancePage() {
     try {
       await persistTodayRecord({ workProgress: rows });
       showToast('Task ended at ' + now);
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+
+  const deleteWorkRow = async (dbIdx) => {
+    const rows = [...(todayRecord?.workProgress || [])];
+    const deletedRow = rows[dbIdx];
+    if (!deletedRow) return;
+    const isRunning = deletedRow.startTime && !deletedRow.endTime;
+
+    rows.splice(dbIdx, 1);
+
+    if (isRunning && dbIdx > 0) {
+      const prevIdx = dbIdx - 1;
+      rows[prevIdx] = { ...rows[prevIdx], endTime: null, status: 'work_in_progress' };
+    }
+
+    try {
+      await persistTodayRecord({ workProgress: rows });
+      setDeleteConfirmIdx(null);
+      showToast('Task deleted');
     } catch (e) { showToast(e.message, 'error'); }
   };
 
@@ -826,6 +848,7 @@ export default function AttendancePage() {
                   <th style={{ minWidth: 160 }}>Status</th>
                   <th style={{ minWidth: 190 }}>Remarks</th>
                   <th style={{ minWidth: 190 }}>Feedback</th>
+                  <th style={{ width: 80 }}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -955,6 +978,28 @@ export default function AttendancePage() {
                             onBlur={() => saveWorkProgress()}
                             style={{ fontSize: 12 }}
                           />
+                        )}
+                      </td>
+                      <td>
+                        {isVirtual ? null : row.type === 'break' || row.type === 'lunch' ? null : (
+                          row.dbIdx === 0 && row.type === 'task' ? (
+                            <i className="bi bi-lock-fill" style={{ color: '#94a3b8', fontSize: 14 }} title="First task cannot be deleted" />
+                          ) : deleteConfirmIdx === row.dbIdx ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              {row.startTime && !row.endTime && (
+                                <span style={{ fontSize: 10, color: '#ef4444', marginBottom: 2 }}>Previous task will resume</span>
+                              )}
+                              <span style={{ fontSize: 11, color: '#64748b', marginBottom: 2 }}>Delete?</span>
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                <button className="btn btn-sm btn-danger" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => deleteWorkRow(row.dbIdx)}>Yes</button>
+                                <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => setDeleteConfirmIdx(null)}>No</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '3px 6px' }} onClick={() => setDeleteConfirmIdx(row.dbIdx)} title="Delete task">
+                              <i className="bi bi-trash" />
+                            </button>
+                          )
                         )}
                       </td>
                     </tr>
@@ -1388,8 +1433,8 @@ export default function AttendancePage() {
       {tab === 'regularize' && (
         <>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{isAdmin ? 'Pending Regularization Requests' : 'My Regularization Requests'}</span>
-            {!isAdmin && (
+            <span style={{ fontWeight: 700, fontSize: 14 }}>{canReview ? 'Pending Regularization Requests' : 'My Regularization Requests'}</span>
+            {!canReview && (
               <button className="btn btn-primary btn-sm" onClick={() => setShowRegModal(true)}>
                 <i className="bi bi-plus-lg me-1" />New Request
               </button>
@@ -1404,15 +1449,15 @@ export default function AttendancePage() {
                   <table className="table mb-0">
                     <thead>
                       <tr>
-                        {isAdmin && <th>Employee</th>}
+                        {canReview && <th>Employee</th>}
                         <th>Date</th><th>Req. In</th><th>Req. Out</th><th>Req. Break</th><th>Req. Lunch</th><th>Reason</th><th>Status</th>
-                        {isAdmin && <th>Actions</th>}
+                        {canReview && <th>Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
                       {regRequests.slice((regPage - 1) * pageSize, regPage * pageSize).map(r => (
                         <tr key={r._id}>
-                          {isAdmin && (
+                          {canReview && (
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10, fontWeight: 700 }}>{r.userId?.avatar}</div>
@@ -1435,7 +1480,7 @@ export default function AttendancePage() {
                           </td>
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
                           <td><span className={'badge status-' + r.status}>{r.status}</span></td>
-                          {isAdmin && (
+                          {canReview && (
                             <td>
                               {r.status === 'pending' && (
                                 <div style={{ display: 'flex', gap: 4 }}>
@@ -1456,7 +1501,7 @@ export default function AttendancePage() {
                   <div key={r._id} className="card p-3">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                       <div>
-                        {isAdmin && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
+                        {canReview && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
                         <div style={{ fontSize: 13, color: '#64748b' }}>{formatDate(r.date)}</div>
                       </div>
                       <span className={'badge status-' + r.status}>{r.status}</span>
@@ -1467,8 +1512,8 @@ export default function AttendancePage() {
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedBreakStart || r.requestedBreakEnd ? `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}` : '—'}</div></div>
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedLunchStart || r.requestedLunchEnd ? `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}` : '—'}</div></div>
                     </div>
-                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: isAdmin && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
-                    {isAdmin && r.status === 'pending' && (
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
+                    {canReview && r.status === 'pending' && (
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button className="btn btn-sm btn-success flex-fill" onClick={() => reviewRegularization(r._id, 'approved')}>Approve</button>
                         <button className="btn btn-sm btn-danger  flex-fill" onClick={() => reviewRegularization(r._id, 'rejected')}>Reject</button>
@@ -1738,7 +1783,8 @@ export default function AttendancePage() {
                           <th style={{ width: 110 }}>End Time</th>
                           <th style={{ minWidth: 160 }}>Status</th>
                           <th style={{ minWidth: 190 }}>Remarks</th>
-                          <th style={{ minWidth: 190 }}>Feedback</th>
+                  <th style={{ minWidth: 190 }}>Feedback</th>
+                  <th style={{ width: 80 }}>Action</th>
                         </tr>
                       </thead>
                       <tbody>

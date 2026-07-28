@@ -134,7 +134,9 @@ export default function LeavePage() {
     if (form.halfDay && !form.halfDayType) { showToast('Please select First Half or Second Half for half-day leave', 'error'); return; }
     setSaving(true);
     try {
-      await api.post('/api/leave', form);
+      const { customStartTime, customEndTime, _showTimePicker, ...payload } = form;
+      if (!payload.halfDay) delete payload.halfDayType;
+      await api.post('/api/leave', payload);
       showToast('Leave application submitted');
       setShowModal(false);
       setForm(EMPTY_FORM);

@@ -22,14 +22,20 @@ export async function GET(req) {
       if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role)) {
         return fail('Access denied', 403);
       }
-      if (user.role === 'team_lead') {
-        const members = await User.find({ teamLeadId: user._id }).select('_id');
-        query = { userId: { $in: members.map(m => m._id) }, status: 'pending' };
-      } else if (user.role === 'team_admin') {
-        const members = await User.find({ teamAdminId: user._id }).select('_id');
-        query = { userId: { $in: members.map(m => m._id) }, status: 'pending' };
-      } else {
+      if (user.role === 'super_admin') {
         query = { status: 'pending' };
+      } else if (user.role === 'admin_full') {
+        const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
+        const excludeIds = excludeUsers.map(u => u._id);
+        query = { userId: { $nin: excludeIds }, status: 'pending' };
+      } else if (user.role === 'team_lead') {
+        const directReports = await User.find({ teamLeadId: user._id }).select('_id');
+        const teamAdmins = await User.find({ role: 'team_admin', teamLeadId: user._id }).select('_id');
+        const combinedIds = [...new Set([...directReports.map(m => m._id), ...teamAdmins.map(m => m._id)])];
+        query = { userId: { $in: combinedIds } };
+      } else if (user.role === 'team_admin') {
+        const members = await User.find({ teamAdminId: user._id, role: { $ne: 'team_lead' } }).select('_id');
+        query = { userId: { $in: members.map(m => m._id) } };
       }
     } else {
       query = { userId: user._id };
@@ -70,6 +76,16 @@ export async function POST(req) {
       requestedLunchEnd,
       reason
     } = validation.data;
+
+    const existingPending = await AttendanceRegularization.findOne({ userId: user._id, date: validation.data.date, status: 'pending' });
+    if (existingPending) {
+      return fail('You already have a pending regularization request for this date', 400);
+    }
+
+    const countToday = await AttendanceRegularization.countDocuments({ userId: user._id, date: validation.data.date });
+    if (countToday >= 4) {
+      return fail('Maximum 4 regularization requests allowed per day', 400);
+    }
 
     const request = await AttendanceRegularization.create({
       userId: user._id,
@@ -138,6 +154,27 @@ export async function PUT(req) {
 
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
+
+    // Role-based scope verification
+    if (user.role === 'admin_full') {
+      const requester = await User.findById(reg.userId).select('role').lean();
+      if (!requester || requester.role === 'admin_full' || reg.userId.toString() === user._id.toString()) {
+        return fail('Access denied', 403);
+      }
+    } else if (user.role === 'team_lead') {
+      const directReports = await User.find({ teamLeadId: user._id }).select('_id');
+      const teamAdmins = await User.find({ role: 'team_admin', teamLeadId: user._id }).select('_id');
+      const allowedIds = [...directReports.map(m => m._id.toString()), ...teamAdmins.map(m => m._id.toString())];
+      if (!allowedIds.includes(reg.userId.toString())) {
+        return fail('Access denied', 403);
+      }
+    } else if (user.role === 'team_admin') {
+      const members = await User.find({ teamAdminId: user._id, role: { $ne: 'team_lead' } }).select('_id');
+      const allowedIds = members.map(m => m._id.toString());
+      if (!allowedIds.includes(reg.userId.toString())) {
+        return fail('Access denied', 403);
+      }
+    }
 
     if (reg.status !== 'pending') {
       auditLog(`Regularization Review Attempted`, 'Attendance', user._id, `Attempted to ${action} already-processed request (status: ${reg.status})`, 'low', req.headers.get('x-forwarded-for') || '', null, reg.userId);
