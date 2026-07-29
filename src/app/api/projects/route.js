@@ -2,11 +2,13 @@ import { connectDB } from '@/lib/db';
 import { Project } from '@/lib/models/Task';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { hasAccess } from '@/lib/rbac';
 
 export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
+    if (!hasAccess(user.role, 'projects')) return fail('Access denied', 403);
     await connectDB();
     const projects = await Project.find()
       .populate('team', 'name avatar')
@@ -31,7 +33,7 @@ export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (!['super_admin','admin_full','team_admin','team_lead'].includes(user.role)) return fail('Access denied', 403);
+    if (!hasAccess(user.role, 'projects')) return fail('Access denied', 403);
     await connectDB();
     const body = await req.json();
     if (!body.name || !body.description || !body.startDate || !body.endDate) return fail('Name, description, start date, and end date are required', 400);

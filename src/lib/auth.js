@@ -171,3 +171,15 @@ const MODULE_ACCESS = {
 export function hasAccess(role, module) {
   return !!(MODULE_ACCESS[module]?.[role]);
 }
+
+/** Client-side helper: can the given user view employees in targetDepartment? */
+export function canAccessDepartment(user, targetDepartment) {
+  if (!user) return false;
+  if (['super_admin', 'admin_full', 'recruiter'].includes(user.role)) return true;
+  // Only team_lead and team_admin get cross-department visibility
+  if (!['team_lead', 'team_admin'].includes(user.role)) {
+    return user.department === targetDepartment;
+  }
+  const visible = user.visibleDepartments || [];
+  return user.department === targetDepartment || visible.includes(targetDepartment);
+}

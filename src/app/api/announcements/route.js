@@ -3,6 +3,7 @@ import { Announcement } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getAccessibleDepartments } from '@/lib/rbac';
 
 export async function GET(req) {
   try {
@@ -20,11 +21,12 @@ export async function GET(req) {
       }
       if (user.teamLeadId) teamIds.push(user.teamLeadId);
       if (user.teamAdminId) teamIds.push(user.teamAdminId);
+      const accessibleDepts = await getAccessibleDepartments(user);
       query = {
         $or: [
           { audience: 'Company-wide' },
-          ...(user.department ? [{ departments: user.department }] : []),
-          ...(user.department ? [{ audience: user.department }] : []),
+          ...(accessibleDepts ? [{ departments: { $in: accessibleDepts } }] : []),
+          ...(accessibleDepts ? [{ audience: { $in: accessibleDepts } }] : []),
           ...(teamIds.length > 0 ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
         ],
       };

@@ -1,13 +1,16 @@
-function toMinutes(timeStr) {
-  if (!timeStr) return 0;
+export function toMinutes(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return null;
   const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
   return h * 60 + m;
 }
 
-function diffMins(start, end) {
-  if (!start || !end) return 0;
-  const s = toMinutes(start), e = toMinutes(end);
-  return e > s ? e - s : 0;
+export function diffMins(start, end) {
+  const s = toMinutes(start);
+  const e = toMinutes(end);
+  if (s === null || e === null) return 0;
+  if (e >= s) return e - s;
+  return e + (24 * 60) - s; // overnight crossover
 }
 
 export function getShiftConfig(shiftDoc, globalConfig) {
@@ -15,6 +18,7 @@ export function getShiftConfig(shiftDoc, globalConfig) {
     expectedHours:    shiftDoc?.expectedHours ?? 480,
     hardCapHours:     shiftDoc?.hardCapHours ?? 600,
     absentThreshold:  shiftDoc?.absentThreshold ?? 240,
+    halfDayThreshold: shiftDoc?.halfDayThreshold ?? 180,
     lateThreshold:    shiftDoc?.lateThreshold ?? (Number(globalConfig?.lateThreshold) || 15),
     earlyWindow:      shiftDoc?.earlyLoginWindow ?? 120,
     autoLogoutBuffer: shiftDoc?.autoLogoutAfterShiftEnd ?? 360,
@@ -32,8 +36,10 @@ export function calculateHoursWorked(elapsedMins, breakDeduction, cfg) {
 }
 
 export function determineStatus(minutesSinceShiftStart, cfg) {
-  if (minutesSinceShiftStart > 300) return { status: 'leave', lateFlag: true };
-  if (minutesSinceShiftStart > 180) return { status: 'half_day', lateFlag: true };
+  const halfDayThreshold = cfg.halfDayThreshold ?? 180;
+  const absentThreshold = cfg.absentThreshold ?? 240;
+  if (minutesSinceShiftStart > absentThreshold) return { status: 'absent', lateFlag: true };
+  if (minutesSinceShiftStart > halfDayThreshold) return { status: 'half_day', lateFlag: true };
   if (minutesSinceShiftStart > cfg.lateThreshold) return { status: 'late', lateFlag: true };
   return { status: 'present', lateFlag: false };
 }
@@ -47,4 +53,9 @@ export function calculateBreakDeduction(breaks, shiftBreaks) {
     deduction += Math.max(0, duration - allowance);
   }
   return deduction;
+}
+
+export function getBreakAllowance(type, shiftConfig) {
+  const rule = shiftConfig?.breaks?.find(b => b.type === type);
+  return rule?.maxDuration ?? (type === 'lunch' ? 60 : 30);
 }

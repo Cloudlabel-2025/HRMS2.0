@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import TimeInput from '@/components/TimeInput';
 
 const NOTIFICATION_RULES = [
   ['Late Login Alert',       'Send alert when employee logs in after threshold', true],
@@ -82,7 +83,7 @@ export default function SettingsPage() {
   const [holidays, setHolidays]     = useState([]);
   const [config, setConfig]         = useState({
     timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
-    language: 'English', payrollStartDay: getDefaultPayrollStartDate(), payrollEndDay: getDefaultPayrollEndDate(), attendanceStartDay: '1',
+    language: 'English', timeFormat: '24h', payrollStartDay: getDefaultPayrollStartDate(), payrollEndDay: getDefaultPayrollEndDate(), attendanceStartDay: '1',
     saturdayWorking: 'alternate', lateThreshold: '15',
   });
   const [archiveYears, setArchiveYears] = useState(3);
@@ -174,7 +175,8 @@ export default function SettingsPage() {
     setSaving(true);
     try {
       if (body._id) {
-        await api.put('/api/settings', { type, id: body._id, ...body });
+        const { _id, createdAt, updatedAt, __v, members, ...clean } = body;
+        await api.put('/api/settings', { type, id: body._id, ...clean });
       } else {
         await api.post('/api/settings', { type, ...body });
       }
@@ -358,11 +360,18 @@ export default function SettingsPage() {
                   ['Currency',    'currency',    ['INR', 'USD', 'EUR', 'GBP']],
                   ['Date Format', 'dateFormat',  ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD']],
                   ['Language',    'language',    ['English', 'Hindi', 'Tamil', 'Telugu']],
+                  ['Time Format', 'timeFormat',  [
+                    { label: '24 Hour (Railway Time)', value: '24h' },
+                    { label: '12 Hour (AM/PM)', value: '12h' },
+                  ]],
                 ].map(([label, key, opts]) => (
                   <div key={key} className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label>
                     <select className="form-select" value={config[key]} onChange={e => setConfig(p => ({ ...p, [key]: e.target.value }))}>
-                      {opts.map(o => <option key={o}>{o}</option>)}
+                      {opts.map(o => {
+                        const isObj = typeof o === 'object';
+                        return <option key={isObj ? o.value : o} value={isObj ? o.value : o}>{isObj ? o.label : o}</option>;
+                      })}
                     </select>
                   </div>
                 ))}
@@ -443,8 +452,8 @@ export default function SettingsPage() {
           {/* DEPARTMENTS */}
           {tab === 'departments' && renderSimpleTable(
             'departments', departments,
-            [{ key: 'name', label: 'Department', bold: true }, { key: 'head', label: 'Head' }],
-            () => { setModalForm({ name: '', head: '' }); setShowModal('dept'); },
+            [{ key: 'name', label: 'Department', bold: true }, { key: 'head', label: 'Head' }, { key: 'visibleDepartments', label: 'Can View' }],
+            () => { setModalForm({ name: '', head: '', visibleDepartments: [] }); setShowModal('dept'); },
             item => { setModalForm({ ...item }); setShowModal('dept'); },
             id => deleteItem('departments', id)
           )}
@@ -490,7 +499,7 @@ export default function SettingsPage() {
             <div className="card p-3 p-md-4">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
                 <div className="section-title" style={{ margin: 0 }}>Shift Management</div>
-                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, hardCapHours: 600, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShowModal('shift'); }}>
+                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, hardCapHours: 600, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShowModal('shift'); }}>
                   <i className="bi bi-plus-lg me-1" />Add Shift
                 </button>
               </div>
@@ -637,6 +646,31 @@ export default function SettingsPage() {
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Head</label>
                     <input className="form-control" value={modalForm.head || ''} onChange={e => setModalForm(p => ({ ...p, head: e.target.value }))} />
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Can view employees from</label>
+                    <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: 6, padding: '8px 12px' }}>
+                      {departments
+                        .filter(d => d.name !== modalForm.name)
+                        .map(d => (
+                          <div key={d._id} className="form-check" style={{ marginBottom: 4 }}>
+                            <input className="form-check-input" type="checkbox"
+                              checked={(modalForm.visibleDepartments || []).includes(d.name)}
+                              onChange={e => {
+                                const current = modalForm.visibleDepartments || [];
+                                setModalForm(p => ({
+                                  ...p,
+                                  visibleDepartments: e.target.checked
+                                    ? [...current, d.name]
+                                    : current.filter(n => n !== d.name),
+                                }));
+                              }} />
+                            <label className="form-check-label" style={{ fontSize: 13 }}>{d.name}</label>
+                          </div>
+                        ))}
+                      {departments.length <= 1 && <span className="text-muted" style={{ fontSize: 13 }}>No other departments available</span>}
+                    </div>
+                    <small className="text-muted" style={{ fontSize: 11 }}>Team leads and team admins in this department will be able to view data from selected departments.</small>
                   </div>
                 </div>
               </div>
@@ -799,11 +833,11 @@ export default function SettingsPage() {
                   </div>
                   <div className="col-md-3">
                     <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Start Time</label>
-                    <input type="time" className="form-control form-control-sm" value={modalForm.startTime || ''} onChange={e => setModalForm(p => ({ ...p, startTime: e.target.value }))} />
+                    <TimeInput className="form-control form-control-sm" value={modalForm.startTime || ''} onChange={e => setModalForm(p => ({ ...p, startTime: e.target.value }))} />
                   </div>
                   <div className="col-md-3">
                     <label className="form-label fw-semibold" style={{ fontSize: 13 }}>End Time</label>
-                    <input type="time" className="form-control form-control-sm" value={modalForm.endTime || ''} onChange={e => setModalForm(p => ({ ...p, endTime: e.target.value }))} />
+                    <TimeInput className="form-control form-control-sm" value={modalForm.endTime || ''} onChange={e => setModalForm(p => ({ ...p, endTime: e.target.value }))} />
                   </div>
 
                   <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
@@ -849,6 +883,19 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
+                  <div className="col-md-4">
+                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Half Day Threshold <span className="text-muted" style={{ fontSize: 10 }}>(below = half-day)</span></label>
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
+                        value={minutesToHrMin(modalForm.halfDayThreshold ?? 180).hours}
+                        onChange={e => { const cur = minutesToHrMin(modalForm.halfDayThreshold ?? 180); setModalForm(p => ({ ...p, halfDayThreshold: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
+                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
+                        value={minutesToHrMin(modalForm.halfDayThreshold ?? 180).minutes}
+                        onChange={e => { const cur = minutesToHrMin(modalForm.halfDayThreshold ?? 180); setModalForm(p => ({ ...p, halfDayThreshold: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
+                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
+                    </div>
+                  </div>
                   <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
                     <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Attendance Rules</span>
                   </div>

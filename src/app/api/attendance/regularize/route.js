@@ -5,6 +5,7 @@ import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
+import { getAccessibleDepartments } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, calculateBreakDeduction } from '@/lib/attendance-constants';
 
@@ -15,10 +16,35 @@ export async function GET(req) {
     await connectDB();
 
     const { searchParams } = new URL(req.url);
-    const scope = searchParams.get('scope'); // 'my' | 'approvals'
+    const scope = searchParams.get('scope'); // 'my' | 'approvals' | 'history'
 
     let query = {};
-    if (scope === 'approvals') {
+    if (scope === 'history') {
+      if (user.role === 'super_admin') {
+        query = {};
+      } else if (user.role === 'admin_full') {
+        const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
+        const excludeIds = excludeUsers.map(u => u._id);
+        query = { userId: { $nin: excludeIds } };
+      } else if (user.role === 'team_lead') {
+        const depts = await getAccessibleDepartments(user);
+        const deptMembers = await User.find({
+          department: { $in: depts },
+          status: 'active'
+        }).select('_id');
+        query = { userId: { $in: deptMembers.map(m => m._id) } };
+      } else if (user.role === 'team_admin') {
+        const depts = await getAccessibleDepartments(user);
+        const deptMembers = await User.find({
+          department: { $in: depts },
+          role: { $in: ['intern', 'employee', 'team_admin'] },
+          status: 'active'
+        }).select('_id');
+        query = { userId: { $in: deptMembers.map(m => m._id) } };
+      } else {
+        query = { userId: user._id };
+      }
+    } else if (scope === 'approvals') {
       if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role)) {
         return fail('Access denied', 403);
       }
@@ -29,20 +55,28 @@ export async function GET(req) {
         const excludeIds = excludeUsers.map(u => u._id);
         query = { userId: { $nin: excludeIds }, status: 'pending' };
       } else if (user.role === 'team_lead') {
-        const directReports = await User.find({ teamLeadId: user._id }).select('_id');
-        const teamAdmins = await User.find({ role: 'team_admin', teamLeadId: user._id }).select('_id');
-        const combinedIds = [...new Set([...directReports.map(m => m._id), ...teamAdmins.map(m => m._id)])];
-        query = { userId: { $in: combinedIds } };
+        const depts = await getAccessibleDepartments(user);
+        const deptMembers = await User.find({
+          department: { $in: depts },
+          role: { $in: ['intern', 'employee', 'team_admin'] },
+          status: 'active'
+        }).select('_id');
+        query = { userId: { $in: deptMembers.map(m => m._id) }, status: 'pending' };
       } else if (user.role === 'team_admin') {
-        const members = await User.find({ teamAdminId: user._id, role: { $ne: 'team_lead' } }).select('_id');
-        query = { userId: { $in: members.map(m => m._id) } };
+        const depts = await getAccessibleDepartments(user);
+        const deptMembers = await User.find({
+          department: { $in: depts },
+          role: { $in: ['intern', 'employee'] },
+          status: 'active'
+        }).select('_id');
+        query = { userId: { $in: deptMembers.map(m => m._id) }, status: 'pending' };
       }
     } else {
       query = { userId: user._id };
     }
 
     const requests = await AttendanceRegularization.find(query)
-      .populate('userId', 'name avatar department')
+      .populate('userId', 'name avatar department role')
       .populate('reviewedBy', 'name')
       .sort({ createdAt: -1 });
 
@@ -66,38 +100,30 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const {
-      date,
-      requestedIn,
-      requestedOut,
-      requestedBreakStart,
-      requestedBreakEnd,
-      requestedLunchStart,
-      requestedLunchEnd,
-      reason
-    } = validation.data;
-
-    const existingPending = await AttendanceRegularization.findOne({ userId: user._id, date: validation.data.date, status: 'pending' });
-    if (existingPending) {
-      return fail('You already have a pending regularization request for this date', 400);
-    }
+    const { date, requestedIn, requestedOut, requestedOutNotYet, requestedBreaks, reason } = validation.data;
 
     const countToday = await AttendanceRegularization.countDocuments({ userId: user._id, date: validation.data.date });
     if (countToday >= 4) {
       return fail('Maximum 4 regularization requests allowed per day', 400);
     }
 
+    const existingPending = await AttendanceRegularization.findOne({ userId: user._id, date: validation.data.date, status: 'pending' });
+    if (existingPending) {
+      return fail('You already have a pending regularization request for this date', 400);
+    }
+
     const request = await AttendanceRegularization.create({
-      userId: user._id,
-      date,
+      userId: user._id, date,
       requestedIn: requestedIn || null,
       requestedOut: requestedOut || null,
-      requestedBreakStart: requestedBreakStart || null,
-      requestedBreakEnd: requestedBreakEnd || null,
-      requestedLunchStart: requestedLunchStart || null,
-      requestedLunchEnd: requestedLunchEnd || null,
-      reason,
-      status: 'pending',
+      requestedOutNotYet: requestedOutNotYet || false,
+      requestedBreaks: (requestedBreaks || []).map(b => ({
+        type: b.type,
+        start: b.start || '',
+        end: b.end || null,
+        notYet: b.notYet || false,
+      })),
+      reason, status: 'pending',
     });
 
     // Send notification to reviewers (super admins, admins, team leads, team admins)
@@ -162,31 +188,43 @@ export async function PUT(req) {
         return fail('Access denied', 403);
       }
     } else if (user.role === 'team_lead') {
-      const directReports = await User.find({ teamLeadId: user._id }).select('_id');
-      const teamAdmins = await User.find({ role: 'team_admin', teamLeadId: user._id }).select('_id');
-      const allowedIds = [...directReports.map(m => m._id.toString()), ...teamAdmins.map(m => m._id.toString())];
+      const depts = await getAccessibleDepartments(user);
+      const deptMembers = await User.find({
+        department: { $in: depts },
+        role: { $in: ['intern', 'employee', 'team_admin'] },
+        status: 'active'
+      }).select('_id');
+      const allowedIds = deptMembers.map(m => m._id.toString());
       if (!allowedIds.includes(reg.userId.toString())) {
         return fail('Access denied', 403);
       }
     } else if (user.role === 'team_admin') {
-      const members = await User.find({ teamAdminId: user._id, role: { $ne: 'team_lead' } }).select('_id');
-      const allowedIds = members.map(m => m._id.toString());
+      const depts = await getAccessibleDepartments(user);
+      const deptMembers = await User.find({
+        department: { $in: depts },
+        role: { $in: ['intern', 'employee'] },
+        status: 'active'
+      }).select('_id');
+      const allowedIds = deptMembers.map(m => m._id.toString());
       if (!allowedIds.includes(reg.userId.toString())) {
         return fail('Access denied', 403);
       }
     }
 
-    if (reg.status !== 'pending') {
-      auditLog(`Regularization Review Attempted`, 'Attendance', user._id, `Attempted to ${action} already-processed request (status: ${reg.status})`, 'low', req.headers.get('x-forwarded-for') || '', null, reg.userId);
+    // STEP 1: Atomically claim the regulation FIRST
+    const updated = await AttendanceRegularization.findOneAndUpdate(
+      { _id: id, status: 'pending' },
+      { $set: { status: action, reviewedBy: user._id, reviewedAt: new Date() } },
+      { new: true }
+    );
+    if (!updated) {
+      const existing = await AttendanceRegularization.findById(id);
+      if (!existing) return fail('Request not found', 404);
+      auditLog(`Regularization Review Attempted`, 'Attendance', user._id, `Attempted to ${action} already-processed request (status: ${existing.status})`, 'low', req.headers.get('x-forwarded-for') || '', null, reg.userId);
       return fail('This request has already been processed', 400);
     }
 
-    reg.status = action;
-    reg.reviewedBy = user._id;
-    reg.reviewedAt = new Date();
-    await reg.save();
-
-    // If approved, update the actual attendance record
+    // STEP 2: Now safely update the attendance record
     if (action === 'approved') {
       let attendance = await Attendance.findOne({ userId: reg.userId, date: reg.date });
       if (!attendance) {
@@ -199,66 +237,65 @@ export async function PUT(req) {
 
       if (reg.requestedIn)  attendance.clockIn = reg.requestedIn;
       if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
+      if (reg.requestedOutNotYet) {
+        const nyUser = await User.findById(reg.userId).select('shift').lean();
+        const nyShift = await Shift.findOne({ name: nyUser?.shift || 'Morning (9AM-6PM)' }).lean();
+        if (nyShift?.endTime) attendance.clockOut = nyShift.endTime;
+      }
 
-      // Update breaks
-      const breaks = attendance.breaks ? [...attendance.breaks] : [];
-      const updateBreakType = (breaksArray, type, start, end) => {
-        const index = breaksArray.findIndex(b => b.type === type);
-        if (start || end) {
-          if (index !== -1) {
-            if (start !== undefined && start !== null) breaksArray[index].start = start;
-            if (end !== undefined && end !== null) breaksArray[index].end = end;
-          } else {
-            breaksArray.push({
-              type,
-              start: start || '',
-              end: end || null
-            });
-          }
+      // Apply requested breaks from regularization
+      const attendanceBreaks = attendance.breaks ? [...attendance.breaks] : [];
+      const attendanceWorkProgress = attendance.workProgress ? [...attendance.workProgress] : [];
+
+      if (reg.requestedBreaks && reg.requestedBreaks.length > 0) {
+        const byType = {};
+        for (const rb of reg.requestedBreaks) {
+          if (!byType[rb.type]) byType[rb.type] = [];
+          byType[rb.type].push(rb);
         }
-      };
 
-      if (reg.requestedBreakStart !== undefined && reg.requestedBreakStart !== null || reg.requestedBreakEnd !== undefined && reg.requestedBreakEnd !== null) {
-        updateBreakType(breaks, 'break', reg.requestedBreakStart, reg.requestedBreakEnd);
-      }
-      if (reg.requestedLunchStart !== undefined && reg.requestedLunchStart !== null || reg.requestedLunchEnd !== undefined && reg.requestedLunchEnd !== null) {
-        updateBreakType(breaks, 'lunch', reg.requestedLunchStart, reg.requestedLunchEnd);
-      }
-      attendance.breaks = breaks;
+        for (const [type, entries] of Object.entries(byType)) {
+          const existingIndices = attendanceBreaks
+            .map((b, i) => b.type === type ? i : -1)
+            .filter(i => i !== -1);
 
-      // Update work progress entries for breaks
-      const workProgress = attendance.workProgress ? [...attendance.workProgress] : [];
-      const updateWorkProgressBreak = (wpArray, type, start, end) => {
-        const index = wpArray.findIndex(w => w.type === type);
-        const taskDetails = type === 'lunch' ? 'Lunch break' : 'Break';
-        if (start || end) {
-          if (index !== -1) {
-            if (start !== undefined && start !== null) wpArray[index].startTime = start;
-            if (end !== undefined && end !== null) {
-              wpArray[index].endTime = end;
-              wpArray[index].status = 'completed';
+          entries.forEach((rb, idx) => {
+            if (rb.notYet) {
+              const removeIdx = attendanceBreaks.findIndex(b => b.type === type);
+              if (removeIdx !== -1) attendanceBreaks.splice(removeIdx, 1);
+              const wpRemoveIdx = attendanceWorkProgress.findIndex(w => w.type === type);
+              if (wpRemoveIdx !== -1) attendanceWorkProgress.splice(wpRemoveIdx, 1);
+            } else if (rb.start || rb.end) {
+              const existingIdx = existingIndices[idx];
+              if (existingIdx !== undefined) {
+                if (rb.start) attendanceBreaks[existingIdx].start = rb.start;
+                if (rb.end) attendanceBreaks[existingIdx].end = rb.end;
+              } else {
+                attendanceBreaks.push({ type, start: rb.start || '', end: rb.end || null });
+              }
+
+              const wpExistingIdx = attendanceWorkProgress.findIndex(w => w.type === type);
+              if (wpExistingIdx !== -1) {
+                if (rb.start) attendanceWorkProgress[wpExistingIdx].startTime = rb.start;
+                if (rb.end) {
+                  attendanceWorkProgress[wpExistingIdx].endTime = rb.end;
+                  attendanceWorkProgress[wpExistingIdx].status = 'completed';
+                }
+              } else {
+                attendanceWorkProgress.push({
+                  type, taskDetails: type === 'lunch' ? 'Lunch break' : 'Break',
+                  startTime: rb.start || '', endTime: rb.end || null,
+                  status: rb.end ? 'completed' : 'work_in_progress',
+                  remarks: '', feedback: '',
+                });
+              }
             }
-          } else {
-            wpArray.push({
-              type,
-              taskDetails,
-              startTime: start || '',
-              endTime: end || null,
-              status: end ? 'completed' : 'work_in_progress',
-              remarks: '',
-              feedback: ''
-            });
-          }
+          });
         }
-      };
+      }
 
-      if (reg.requestedBreakStart !== undefined && reg.requestedBreakStart !== null || reg.requestedBreakEnd !== undefined && reg.requestedBreakEnd !== null) {
-        updateWorkProgressBreak(workProgress, 'break', reg.requestedBreakStart, reg.requestedBreakEnd);
-      }
-      if (reg.requestedLunchStart !== undefined && reg.requestedLunchStart !== null || reg.requestedLunchEnd !== undefined && reg.requestedLunchEnd !== null) {
-        updateWorkProgressBreak(workProgress, 'lunch', reg.requestedLunchStart, reg.requestedLunchEnd);
-      }
-      attendance.workProgress = workProgress;
+      attendance.breaks = attendanceBreaks;
+      attendance.workProgress = attendanceWorkProgress;
 
       // Recalculate hours worked
       const empUser = await User.findById(reg.userId).select('shift').lean();
@@ -268,10 +305,12 @@ export async function PUT(req) {
 
       if (attendance.clockIn && attendance.clockOut) {
         const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-        const base = Math.max(0, toMins(attendance.clockOut) - toMins(attendance.clockIn));
+        let base = toMins(attendance.clockOut) - toMins(attendance.clockIn);
+        if (base < 0 && reg.requestedOutNotYet) base += 24 * 60;
+        base = Math.max(0, base);
         attendance.baseHoursWorked = base;
 
-        attendance.breakDeduction = calculateBreakDeduction(breaks, regCfg.breaks);
+        attendance.breakDeduction = calculateBreakDeduction(attendanceBreaks, regCfg.breaks);
         const { hoursWorked } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
         attendance.hoursWorked = hoursWorked;
         if (hoursWorked < regCfg.absentThreshold) {
@@ -279,8 +318,23 @@ export async function PUT(req) {
         } else {
           attendance.status = 'present';
         }
+
+        // Recalculate lateFlag based on shift start
+        if (empUser?.shift) {
+          const lateShiftDoc = await Shift.findOne({ name: empUser.shift }).lean();
+          if (lateShiftDoc?.startTime) {
+            const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
+            const shiftStartMins = sH * 60 + sM;
+            if (attendance.clockIn) {
+              const [cH, cM] = attendance.clockIn.split(':').map(Number);
+              const clockInMins = cH * 60 + cM;
+              const minutesLate = clockInMins - shiftStartMins;
+              attendance.lateFlag = minutesLate > (regCfg?.lateThreshold || 15);
+            }
+          }
+        }
       }
-      
+
       await attendance.save();
     }
 
@@ -305,7 +359,7 @@ export async function PUT(req) {
       reg.userId
     );
 
-    return ok(reg);
+    return ok(updated);
   } catch (e) {
     return fail(e.message, 500);
   }

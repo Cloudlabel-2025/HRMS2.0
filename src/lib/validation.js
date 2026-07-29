@@ -337,16 +337,26 @@ export const ClockInOutSchema = z.object({
 
 export const AttendanceRegularizeSchema = z.object({
   date: DateSchema,
-  requestedIn: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedOut: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedBreakStart: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedBreakEnd: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedLunchStart: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedLunchEnd: z.string().regex(/^\d{2}:\d{2}$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedIn: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedOut: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:MM').optional().or(z.literal('')),
+  requestedOutNotYet: z.boolean().optional(),
+  requestedBreaks: z.array(z.object({
+    type: z.enum(['break', 'lunch']),
+    start: z.string().optional().or(z.literal('')),
+    end: z.string().optional().or(z.literal('')),
+    notYet: z.boolean().optional(),
+  })).optional().default([]),
   reason: z.string().min(20, 'Reason must be detailed (min 20 chars)').max(1000),
 }).strict().refine(
-  (data) => data.requestedIn || data.requestedOut || data.requestedBreakStart || data.requestedBreakEnd || data.requestedLunchStart || data.requestedLunchEnd,
+  (data) => data.requestedIn || data.requestedOut || data.requestedOutNotYet || data.requestedBreaks?.length > 0,
   { message: 'At least one field (Clock In, Clock Out, Break, or Lunch) must be requested' }
+).refine(
+  (data) => {
+    if (data.requestedOutNotYet) return true;
+    if (data.requestedIn && data.requestedOut && data.requestedIn >= data.requestedOut) return false;
+    return true;
+  },
+  { message: 'Clock In must be before Clock Out' }
 );
 
 export const ApproveRegularizationSchema = z.object({
@@ -365,8 +375,8 @@ export const CreateDepartmentSchema = z.object({
 
 export const CreateShiftSchema = z.object({
   name: z.string().min(2).max(100),
-  startTime: z.string().regex(/^\d{2}:\d{2}$/, 'Start time must be HH:MM'),
-  endTime: z.string().regex(/^\d{2}:\d{2}$/, 'End time must be HH:MM'),
+  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Start time must be HH:MM'),
+  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'End time must be HH:MM'),
   days: z.array(z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])).optional(),
 }).strict();
 

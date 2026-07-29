@@ -122,26 +122,33 @@ export async function POST(req) {
           status = 'present';
         }
 
-        await Attendance.findOneAndUpdate(
-          { _id: record._id },
+        const updatedBreaks = (record.breaks || []).map(row => (
+          row.start && !row.end ? { ...row, end: finalClockOut } : row
+        ));
+        const updatedWorkProgress = (record.workProgress || []).map(row => (
+          row.startTime && !row.endTime
+            ? { ...row, endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
+            : row
+        ));
+
+        // Atomically claim AND finalize — single operation prevents race & crash-orphaning
+        const result = await Attendance.findOneAndUpdate(
+          { _id: record._id, clockOut: null, autoLoggedOut: { $ne: true } },
           {
             $set: {
               clockOut: finalClockOut,
-              hoursWorked,
-              baseHoursWorked: record.baseHoursWorked || baseHours,
               autoLoggedOut: true,
+              breaks: updatedBreaks,
+              workProgress: updatedWorkProgress,
+              baseHoursWorked: record.baseHoursWorked ?? baseHours,
+              breakDeduction: deduction,
+              hoursWorked,
               status,
-              workProgress: (record.workProgress || []).map(row => (
-                row.startTime && !row.endTime
-                  ? { ...row, endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
-                  : row
-              )),
-              breaks: (record.breaks || []).map(row => (
-                row.start && !row.end ? { ...row, end: finalClockOut } : row
-              )),
-            },
-          }
+            }
+          },
+          { new: true }
         );
+        if (!result) continue; // Another cron instance already processed this record
 
         autoLoggedOut.push({
           userId: record.userId,

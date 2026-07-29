@@ -8,6 +8,7 @@ import { CORE_HR_WRITE_ROLES, CORE_HR_ADMIN_ROLES, CORE_HR_MANAGER_ROLES } from 
 import { buildChangeSet, sanitizeProfileRecord } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { CreateEmploymentProfileSchema, validateRequest } from '@/lib/validation';
+import { getAccessibleDepartments } from '@/lib/rbac';
 
 function syncAuthUserFromProfile(identity, profile) {
   if (!identity?.authUserId) return null;
@@ -46,13 +47,15 @@ export async function GET(req) {
     if (!CORE_HR_ADMIN_ROLES.includes(user.role)) {
       const userIdentityId = (user.identityId || user._id).toString();
       if (user.role === 'team_lead') {
+        const depts = await getAccessibleDepartments(user);
         filters.push({ $or: [
-          { department: user.department },
+          { department: { $in: depts } },
           { 'reportingLine.teamLeadIdentityId': userIdentityId },
         ]});
       } else if (user.role === 'team_admin') {
+        const depts = await getAccessibleDepartments(user);
         filters.push({ $or: [
-          { department: user.department },
+          { department: { $in: depts } },
           { 'reportingLine.teamAdminIdentityId': userIdentityId },
           { 'reportingLine.teamLeadIdentityId': userIdentityId },
         ]});

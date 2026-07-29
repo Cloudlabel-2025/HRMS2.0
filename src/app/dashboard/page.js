@@ -5,6 +5,7 @@ import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import TimeInput from '@/components/TimeInput';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
@@ -314,11 +315,11 @@ export default function DashboardPage() {
               <div className="row g-3 mb-3">
                 <div className="col-6">
                   <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Start Time <span style={{color:'#ef4444'}}>*</span></label>
-                  <input type="time" className="form-control" value={permissionForm.startTime} onChange={e => setPermissionForm(prev => ({ ...prev, startTime: e.target.value }))} />
+                  <TimeInput className="form-control" value={permissionForm.startTime} onChange={e => setPermissionForm(prev => ({ ...prev, startTime: e.target.value }))} />
                 </div>
                 <div className="col-6">
                   <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>End Time <span style={{color:'#ef4444'}}>*</span></label>
-                  <input type="time" className="form-control" value={permissionForm.endTime} onChange={e => setPermissionForm(prev => ({ ...prev, endTime: e.target.value }))} />
+                  <TimeInput className="form-control" value={permissionForm.endTime} onChange={e => setPermissionForm(prev => ({ ...prev, endTime: e.target.value }))} />
                 </div>
               </div>
 

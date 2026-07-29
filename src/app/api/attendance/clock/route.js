@@ -9,7 +9,7 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { getShiftConfig, calculateHoursWorked, determineStatus, calculateBreakDeduction } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, determineStatus, calculateBreakDeduction, diffMins, getBreakAllowance } from '@/lib/attendance-constants';
 import { notify } from '@/lib/notify';
 
 export async function POST(req) {
@@ -27,6 +27,8 @@ export async function POST(req) {
     }
     
     const { action } = validation.data; // 'in' | 'out'
+    const geo = body.geo;
+    let deductionBreakdown;
     const now   = await getTzTime();
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
@@ -46,7 +48,7 @@ export async function POST(req) {
     if (action === 'in') {
       const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null });
       if (openRecord) {
-        if (checkAndApplyAutoLogout(openRecord, now)) {
+        if (await checkAndApplyAutoLogout(openRecord, now)) {
           await openRecord.save();
         } else {
           auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active`, 'low', ip, null, user._id);
@@ -145,6 +147,11 @@ export async function POST(req) {
             return fail('Please provide a detailed reason (at least 10 characters) for early login.', 400);
           }
         }
+      } else {
+        // Fallback: assume default shift 09:00 if shift not found
+        shiftFound = true;
+        shiftHour = 9;
+        shiftMin = 0;
       }
 
       const [h, m] = timeStr.split(':').map(Number);
@@ -185,6 +192,7 @@ export async function POST(req) {
             lateFlag,
             earlyLogin: isEarlyLogin,
             note: body.reason ? `Early login reason: ${body.reason}` : '',
+            ...(geo ? { geoLocation: geo } : {}),
           },
           $setOnInsert: {
             workProgress: [{
@@ -227,6 +235,18 @@ export async function POST(req) {
 
       await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}`, 'low', ip, null, user._id);
 
+      // Late notification
+      if (status === 'late' || (lateFlag && status !== 'leave')) {
+        const lateMinutes = minutesSinceShiftStart - (cfg?.lateThreshold || 15);
+        await notify(
+          [user._id],
+          'Late Clock-In',
+          `You clocked in ${lateMinutes} minutes late today (${today}). Your attendance has been marked as Late.`,
+          'attendance',
+          record._id
+        ).catch(() => {});
+      }
+
     } else if (action === 'out') {
       if (!record?.clockIn) {
         auditLog('Clock Out Attempted', 'Attendance', user._id, `Not clocked in yet`, 'low', ip, null, user._id);
@@ -259,8 +279,22 @@ export async function POST(req) {
         finalMinutes = outCfg.hardCapHours;
       }
 
-      const deduction = record.breakDeduction || 0;
+      // Recalculate break deduction from actual break records
+      const updatedBreaks = (record.breaks || []).map(row => (
+        row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
+      ));
+      const deduction = calculateBreakDeduction(updatedBreaks, outCfg.breaks);
       const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, outCfg);
+      deductionBreakdown = {
+        totalDeduction: deduction,
+        breakLog: updatedBreaks.map(b => ({
+          type: b.type,
+          start: b.start,
+          end: b.end,
+          duration: diffMins(b.start, b.end),
+          exceeded: diffMins(b.start, b.end) > getBreakAllowance(b.type, outCfg),
+        })),
+      };
       let status = record.status;
       if (hoursWorked < outCfg.absentThreshold) {
         status = 'absent';
@@ -271,7 +305,7 @@ export async function POST(req) {
         {
           clockOut: finalClockOut,
           hoursWorked,
-          baseHoursWorked: record.baseHoursWorked || baseHours,
+          baseHoursWorked: record.baseHoursWorked ?? baseHours,
           autoLoggedOut: isAutoLogout,
           status,
           workProgress: (record.workProgress || []).map(row => (
@@ -279,9 +313,7 @@ export async function POST(req) {
               ? { ...(row.toObject ? row.toObject() : row), endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
               : row
           )),
-          breaks: (record.breaks || []).map(row => (
-            row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
-          )),
+          breaks: updatedBreaks,
         },
         { new: true }
       );
@@ -292,7 +324,12 @@ export async function POST(req) {
       return fail('Invalid action. Use "in" or "out"', 400);
     }
 
-    return ok({ record, time: timeStr });
+    return ok({
+      record,
+      time: timeStr,
+      hoursWorked: action === 'out' ? record.hoursWorked : undefined,
+      deductionBreakdown: action === 'out' ? deductionBreakdown : undefined,
+    });
   } catch (e) {
     return fail(e.message, 500);
   }

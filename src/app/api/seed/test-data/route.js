@@ -115,6 +115,9 @@ export async function POST(req) {
 
     // ── 1. Settings: Department, Shift, Holidays ─────────────────────────
     await Department.findOneAndUpdate({ name: 'Engineering' }, { name: 'Engineering', head: 'Super Admin', members: 3 }, { upsert: true });
+    await Department.findOneAndUpdate({ name: 'Technical' }, { name: 'Technical', head: 'Super Admin', members: 0 }, { upsert: true });
+    await Department.findOneAndUpdate({ name: 'Functional' }, { name: 'Functional', head: 'Super Admin', members: 0 }, { upsert: true });
+    await Department.findOneAndUpdate({ name: 'Techno-Functional' }, { name: 'Techno-Functional', head: 'Super Admin', members: 0 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Design' }, { name: 'Design', head: 'Super Admin', members: 0 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Marketing' }, { name: 'Marketing', head: 'Super Admin', members: 0 }, { upsert: true });
     await Department.findOneAndUpdate({ name: 'Sales' }, { name: 'Sales', head: 'Super Admin', members: 0 }, { upsert: true });

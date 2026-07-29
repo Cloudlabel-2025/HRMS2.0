@@ -8,7 +8,31 @@ const DEFAULT_SETTINGS = {
   currency: 'INR',
   dateFormat: 'DD/MM/YYYY',
   language: 'English',
+  timeFormat: '24h',
 };
+
+export function formatTime(timeStr, format = '24h') {
+  if (!timeStr) return '';
+  if (format === '24h') return timeStr;
+  const [h, m] = timeStr.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return timeStr;
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+export function parseTime(displayStr) {
+  if (!displayStr) return '';
+  if (/^\d{2}:\d{2}$/.test(displayStr)) return displayStr;
+  const m = displayStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!m) return displayStr;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = m[3].toUpperCase();
+  if (ampm === 'PM' && h !== 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${min}`;
+}
 
 const SettingsContext = createContext({
   settings: DEFAULT_SETTINGS,
@@ -51,10 +75,10 @@ function renderDate(value, format = DEFAULT_SETTINGS.dateFormat, { weekday = fal
   return `${parts.date.toLocaleDateString('en-US', { weekday: 'long' })}, ${formatted}`;
 }
 
-function renderTime(value) {
+function renderTime(value, timeFormat = '24h') {
   const date = toDate(value);
   if (!date) return '';
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: timeFormat === '12h' });
 }
 
 export function SettingsProvider({ children }) {
@@ -81,9 +105,11 @@ export function SettingsProvider({ children }) {
     formatDate: (date, options) => renderDate(date, settings.dateFormat, options),
     formatDateTime: (date) => {
       const formattedDate = renderDate(date, settings.dateFormat);
-      const formattedTime = renderTime(date);
+      const formattedTime = renderTime(date, settings.timeFormat);
       return formattedTime ? `${formattedDate} ${formattedTime}` : formattedDate;
     },
+    formatTime: (timeStr) => formatTime(timeStr, settings.timeFormat),
+    parseTime,
   }), [settings]);
 
   return (

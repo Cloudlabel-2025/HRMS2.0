@@ -8,6 +8,7 @@ import { CORE_HR_WRITE_ROLES, CORE_HR_ADMIN_ROLES, CORE_HR_MANAGER_ROLES } from 
 import { buildChangeSet, sanitizeProfileRecord } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { UpdateEmploymentProfileSchema, validateRequest } from '@/lib/validation';
+import { canAccessDepartment } from '@/lib/rbac';
 
 function syncAuthUserFromProfile(identity, profile) {
   if (!identity?.authUserId) return null;
@@ -23,12 +24,12 @@ function syncAuthUserFromProfile(identity, profile) {
   });
 }
 
-function isManagedByUser(profile, user) {
+async function isManagedByUser(profile, user) {
   if (CORE_HR_ADMIN_ROLES.includes(user.role)) return true;
   const userIdentityId = (user.identityId || user._id).toString();
   const teamLeadId = profile?.reportingLine?.teamLeadIdentityId?.toString?.() || '';
   const teamAdminId = profile?.reportingLine?.teamAdminIdentityId?.toString?.() || '';
-  const sameDepartment = !!user.department && user.department === profile.department;
+  const sameDepartment = !!user.department && await canAccessDepartment(user, profile.department);
   return user.role === 'team_lead'
     ? sameDepartment || teamLeadId === userIdentityId || teamAdminId === userIdentityId
     : user.role === 'team_admin'
@@ -49,7 +50,7 @@ export async function GET(req, { params }) {
     const identity = profile.identityId;
     const self = identity?.authUserId && identity.authUserId.toString() === user._id.toString();
     if (!CORE_HR_ADMIN_ROLES.includes(user.role) && !CORE_HR_MANAGER_ROLES.includes(user.role) && !self) return fail('Access denied', 403);
-    if (!CORE_HR_ADMIN_ROLES.includes(user.role) && !self && !isManagedByUser(profile, user)) return fail('Access denied', 403);
+    if (!CORE_HR_ADMIN_ROLES.includes(user.role) && !self && !await isManagedByUser(profile, user)) return fail('Access denied', 403);
 
     return ok({ profile: sanitizeProfileRecord(profile) });
   } catch (e) {

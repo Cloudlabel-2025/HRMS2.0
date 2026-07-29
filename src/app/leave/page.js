@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import TimeInput from '@/components/TimeInput';
 import Pagination from '@/components/Pagination';
 
 const STATUS_STYLE = {
@@ -580,8 +581,7 @@ export default function LeavePage() {
                               <div className="row g-2" style={{ alignItems: 'center' }}>
                                 <div className="col-auto">
                                   <label style={{ fontSize: 12, color: '#64748b' }}>Start</label>
-                                  <input
-                                    type="time"
+                                  <TimeInput
                                     className="form-control form-control-sm"
                                     style={{ fontSize: 12, width: 130 }}
                                     value={form.customStartTime}
@@ -591,8 +591,7 @@ export default function LeavePage() {
                                 <div className="col-auto" style={{ paddingTop: 18, fontSize: 12, color: '#94a3b8' }}>to</div>
                                 <div className="col-auto">
                                   <label style={{ fontSize: 12, color: '#64748b' }}>End</label>
-                                  <input
-                                    type="time"
+                                  <TimeInput
                                     className="form-control form-control-sm"
                                     style={{ fontSize: 12, width: 130 }}
                                     value={form.customEndTime}

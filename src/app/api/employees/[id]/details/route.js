@@ -9,6 +9,7 @@ import User from '@/lib/models/User';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { sanitizeIdentityRecord, sanitizeProfileRecord } from '@/lib/core/privacy';
+import { canAccessDepartment } from '@/lib/rbac';
 
 export async function GET(req, { params }) {
   const { id } = await params;
@@ -23,7 +24,7 @@ export async function GET(req, { params }) {
   if (!emp) return fail('Employee not found', 404);
 
   if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) {
-    if (emp.department !== user.department) return fail('Access denied', 403);
+    if (!await canAccessDepartment(user, emp.department)) return fail('Access denied', 403);
   }
 
   const authUser = await User.findById(emp.userId).select('identityId profileId firstLoginAt');

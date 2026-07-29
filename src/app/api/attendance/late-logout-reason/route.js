@@ -4,6 +4,7 @@ import User from '@/lib/models/User';
 import { Notification } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getTzTime } from '@/lib/timezone';
 
 export async function POST(req) {
   try {
@@ -26,7 +27,7 @@ export async function POST(req) {
       {
         $set: {
           lateLogoutReason: trimmedReason,
-          lateLogoutReasonProvidedAt: new Date(),
+          lateLogoutReasonProvidedAt: await getTzTime(),
         },
       },
       { new: true }

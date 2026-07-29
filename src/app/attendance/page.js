@@ -1,34 +1,31 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
-import { useSettings } from '@/lib/settings';
+import { useSettings, formatTime } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import TimeInput from '@/components/TimeInput';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
+import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
 import Pagination from '@/components/Pagination';
 import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const STATUS_STYLE = {
-  present: { bg: '#dcfce7', color: '#16a34a', label: 'Present' },
-  absent:  { bg: '#fee2e2', color: '#dc2626', label: 'Absent' },
-  late:    { bg: '#fef3c7', color: '#d97706', label: 'Late' },
-  leave:   { bg: '#dbeafe', color: '#2563eb', label: 'Leave' },
-  sunday:  { bg: '#f8fafc', color: '#94a3b8', label: 'Sunday' },
-};
-
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const getBreakAllowance = (type, shiftConfig) => {
-  const rule = shiftConfig?.breaks?.find(b => b.type === type);
-  return rule?.maxDuration ?? (type === 'lunch' ? 60 : 30);
+  const rules = (shiftConfig?.breaks || []).filter(b => b.type === type);
+  if (rules.length === 0) return type === 'lunch' ? 60 : 30;
+  return rules.reduce((sum, b) => sum + (b.maxDuration ?? 0), 0);
 };
 const getBreakMaxCount = (type, shiftConfig) => {
-  const rule = shiftConfig?.breaks?.find(b => b.type === type);
-  return rule?.maxCount ?? 1;
+  const rules = (shiftConfig?.breaks || []).filter(b => b.type === type);
+  if (rules.length === 0) return 1;
+  return rules.reduce((sum, b) => sum + (b.maxCount ?? 1), 0);
 };
 const WORK_STATUSES = [
   { value: 'pending', label: 'Pending' },
@@ -57,7 +54,7 @@ function diffMins(start, end) {
 
 export default function AttendancePage() {
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, settings } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
   const [teamToday, setTeamToday]       = useState([]);
@@ -65,15 +62,21 @@ export default function AttendancePage() {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [clockLoading, setClockLoading] = useState(false);
   const [loading, setLoading]           = useState(true);
-  const [toast, setToast]               = useState(null);
+  const [toastQueue, setToastQueue] = useState([]);
   const [regRequests, setRegRequests]   = useState([]);
   const [showRegModal, setShowRegModal] = useState(false);
-  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedBreakStart: '', requestedBreakEnd: '', requestedLunchStart: '', requestedLunchEnd: '', reason: '' });
+  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], reason: '' });
   const [regSaving, setRegSaving]       = useState(false);
   const [todayPage, setTodayPage]       = useState(1);
   const [regPage, setRegPage]           = useState(1);
+  const canReview = useMemo(() => MANAGER_ROLES.includes(user?.role), [user?.role]);
+  const [regScope, setRegScope]         = useState(canReview ? 'approvals' : 'my');
   const [progressEmpPage, setProgressEmpPage] = useState(1);
   const [deleteConfirmIdx, setDeleteConfirmIdx] = useState(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [showEarlyClockModal, setShowEarlyClockModal] = useState(false);
+  const [earlyClockReason, setEarlyClockReason] = useState('');
+  const [workProgressDirty, setWorkProgressDirty] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -111,7 +114,11 @@ export default function AttendancePage() {
     finally { setSaveWorkLoading(false); }
   };
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
+  const showToast = (msg, type = 'success') => {
+    const id = Date.now() + Math.random();
+    setToastQueue(prev => [...prev, { id, msg, type }]);
+    setTimeout(() => setToastQueue(prev => prev.filter(t => t.id !== id)), 3000);
+  };
 
   const buildDateQuery = (uid) => {
     let q = `?scope=team${uid ? '&userId=' + uid : ''}&month=${teamMonth}`;
@@ -264,10 +271,9 @@ export default function AttendancePage() {
     finally { setDownloadLoading(false); }
   };
 
-  const canReview = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
   const isAdmin = canReview;
-  const isSuperAdmin = user?.role === 'super_admin';
-  const today   = (() => {
+  const isSuperAdmin = useMemo(() => user?.role === 'super_admin', [user?.role]);
+  const today   = useMemo(() => {
     const d = new Date();
     if (user?.shift && shifts.length > 0) {
       const matched = shifts.find(s => s.name === user.shift);
@@ -276,7 +282,7 @@ export default function AttendancePage() {
       }
     }
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  })();
+  }, [user?.shift, shifts]);
   const month   = today.slice(0, 7);
 
   // Team tab filters
@@ -369,9 +375,9 @@ export default function AttendancePage() {
 
   useEffect(() => {
     if (!user) return;
-    api.get('/api/settings?type=shifts').then(d => setShifts(Array.isArray(d) ? d : [])).catch(() => {});
     api.get('/api/settings?type=shifts').then(d => {
       const allShifts = Array.isArray(d) ? d : [];
+      setShifts(allShifts);
       const matched = allShifts.find(s => s.name === user?.shift);
       setShiftConfig(matched || null);
     }).catch(() => {});
@@ -379,44 +385,87 @@ export default function AttendancePage() {
       loadTodayRecord(),
       isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
-      loadRegRequests(canReview ? 'approvals' : 'my'),
+      loadRegRequests(regScope),
       api.get('/api/attendance/available-tasks').then(tasks => {
         setAvailableTasks(Array.isArray(tasks) ? tasks : []);
       }).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [user]);
 
+  // Warn on unsaved work progress
+  useEffect(() => {
+    if (!isDirty) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [isDirty]);
+
+  // Auto-save work progress every 2 minutes if dirty
+  useEffect(() => {
+    if (!workProgressDirty) return;
+    const timer = setInterval(() => {
+      if (workProgressDirty) saveWorkProgress();
+    }, 120000);
+    return () => clearInterval(timer);
+  }, [workProgressDirty]);
+
+  // Debounced auto-save: 3s after last edit
+  const debounceTimer = useRef(null);
+  useEffect(() => {
+    if (!workProgressDirty) return;
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => saveWorkProgress(), 3000);
+    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
+  }, [workProgressDirty]);
+
   const handleClock = async (action) => {
     setClockLoading(true);
     try {
-      const result = await api.post('/api/attendance/clock', { action });
+      let payload = { action };
+      const result = await api.post('/api/attendance/clock', payload);
       setTodayRecord(result.record);
-      showToast('Clocked ' + (action === 'in' ? 'in' : 'out') + ' at ' + result.time);
+      if (action === 'in' && result.record?.lateFlag) {
+        showToast('Late clock-in detected — your attendance has been marked as Late', 'warning');
+      }
+      if (action === 'out' && result.deductionBreakdown) {
+        showToast(
+          `Clocked out — ${result.hoursWorked} min worked, ${result.deductionBreakdown.totalDeduction} min deducted for breaks`,
+          'info'
+        );
+      } else if (action === 'in' && !result.record?.lateFlag) {
+        showToast('Clocked in at ' + result.time);
+      } else if (action === 'out') {
+        showToast('Clocked out at ' + result.time);
+      }
     } catch (e) {
       if (action === 'in' && e.message && e.message.includes('requires a reason')) {
-        const reason = window.prompt('You are clocking in early by more than 2 hours. Please enter a reason (min 10 chars):');
-        if (reason !== null) {
-          if (!reason.trim()) {
-            showToast('Reason is required for early clock-in.', 'error');
-            setClockLoading(false);
-            return;
-          }
-          if (reason.trim().length < 10) {
-            showToast('Please enter a detailed reason (at least 10 characters).', 'error');
-            setClockLoading(false);
-            return;
-          }
-          try {
-            const result = await api.post('/api/attendance/clock', { action, reason });
-            setTodayRecord(result.record);
-            showToast('Clocked in at ' + result.time);
-          } catch (retryErr) {
-            showToast(retryErr.message, 'error');
-          }
-        }
+        setEarlyClockReason('');
+        setShowEarlyClockModal(true);
       } else {
         showToast(e.message, 'error');
       }
+    }
+    finally { setClockLoading(false); }
+  };
+
+  const submitEarlyClock = async () => {
+    const reason = earlyClockReason;
+    if (!reason.trim()) {
+      showToast('Reason is required for early clock-in.', 'error');
+      return;
+    }
+    if (reason.trim().length < 10) {
+      showToast('Please enter a detailed reason (at least 10 characters).', 'error');
+      return;
+    }
+    setShowEarlyClockModal(false);
+    setClockLoading(true);
+    try {
+      const result = await api.post('/api/attendance/clock', { action: 'in', reason });
+      setTodayRecord(result.record);
+      showToast('Clocked in at ' + result.time);
+    } catch (retryErr) {
+      showToast(retryErr.message, 'error');
     }
     finally { setClockLoading(false); }
   };
@@ -435,6 +484,7 @@ export default function AttendancePage() {
   const persistTodayRecord = async (updates) => {
     const updated = await api.put('/api/attendance', { date: today, ...updates });
     setTodayRecord(updated);
+    setWorkProgressDirty(false);
     return updated;
   };
 
@@ -469,11 +519,15 @@ export default function AttendancePage() {
       ...prev,
       workProgress: (prev?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row),
     }));
+    setIsDirty(true);
+    setWorkProgressDirty(true);
   };
 
   const saveWorkProgress = async (rows = todayRecord?.workProgress || []) => {
-    try { await persistTodayRecord({ workProgress: rows }); }
-    catch (e) { showToast(e.message, 'error'); }
+    try {
+      await persistTodayRecord({ workProgress: rows });
+      setWorkProgressDirty(false);
+    } catch (e) { showToast(e.message, 'error'); }
   };
 
   const commitWorkRow = async (idx, patch) => {
@@ -579,10 +633,13 @@ export default function AttendancePage() {
 
       // Recalculate deduction: total over-time for all break types
       const allBreaks = updatedBreaks;
-      const breakOver = allBreaks.filter(b => b.type === 'break' && b.end)
-        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - getBreakAllowance('break', shiftConfig)), 0);
-      const lunchOver = allBreaks.filter(b => b.type === 'lunch' && b.end)
-        .reduce((acc, b) => acc + Math.max(0, diffMins(b.start, b.end) - getBreakAllowance('lunch', shiftConfig)), 0);
+      const calcOver = (type) => {
+        const total = allBreaks.filter(b => b.type === type && b.end)
+          .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
+        return Math.max(0, total - getBreakAllowance(type, shiftConfig));
+      };
+      const breakOver = calcOver('break');
+      const lunchOver = calcOver('lunch');
       const totalDeduction = breakOver + lunchOver;
 
       // Recalculate effective hours (base hoursWorked minus deductions)
@@ -663,8 +720,8 @@ export default function AttendancePage() {
       await api.post('/api/attendance/regularize', regForm);
       showToast('Regularization request submitted');
       setShowRegModal(false);
-      setRegForm({ date: '', requestedIn: '', requestedOut: '', requestedBreakStart: '', requestedBreakEnd: '', requestedLunchStart: '', requestedLunchEnd: '', reason: '' });
-      loadRegRequests('my');
+      setRegForm({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], reason: '' });
+      loadRegRequests(regScope);
     } catch (e) { showToast(e.message, 'error'); }
     finally { setRegSaving(false); }
   };
@@ -673,7 +730,7 @@ export default function AttendancePage() {
     try {
       await api.put('/api/attendance/regularize', { id, action });
       showToast('Request ' + action);
-      loadRegRequests('approvals');
+      loadRegRequests('approvals'); // always reload approvals after review
     } catch (e) { showToast(e.message, 'error'); }
   };
 
@@ -687,8 +744,29 @@ export default function AttendancePage() {
 
   const clockedIn  = !!todayRecord?.clockIn;
   const clockedOut = !!todayRecord?.clockOut;
+  const todayStr = new Date().toLocaleDateString('en-CA');
+  const breakInstances = useMemo(() => {
+    const rules = shiftConfig?.breaks || [];
+    const result = [];
+    for (const rule of rules) {
+      const count = rule.maxCount || 1;
+      for (let i = 0; i < count; i++) {
+        result.push({
+          key: `${rule.type}-${i}`,
+          type: rule.type,
+          label: rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break'),
+          icon: rule.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot',
+          color: rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b',
+          bgColor: rule.type === 'lunch' ? '#f5f3ff' : '#fffbeb',
+          borderColor: rule.type === 'lunch' ? '#8b5cf630' : '#f59e0b30',
+          index: i,
+        });
+      }
+    }
+    return result;
+  }, [shiftConfig]);
 
-  const tabs = ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])];
+  const tabs = useMemo(() => ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])], [isAdmin]);
   const tabLabels = { today: 'Today', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
 
   // Break/Lunch UI helpers
@@ -1015,38 +1093,42 @@ export default function AttendancePage() {
 
   return (
     <AppShell title="Attendance">
-      {toast && (
-        <div className="toast-container-custom">
-          <div className={'toast-custom ' + toast.type}>
-            <i className={'bi ' + (toast.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle')} /> {toast.msg}
-          </div>
+      {toastQueue.length > 0 && (
+        <div className="toast-container-custom" role="alert" aria-live="polite">
+          {toastQueue.map(t => (
+            <div key={t.id} className={'toast-custom ' + t.type}>
+              <i className={'bi ' + (t.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle')} /> {t.msg}
+            </div>
+          ))}
         </div>
       )}
 
       <div className="page-header">
         <div>
-          <h4>Time & Attendance</h4>
+          <h4>Time & Attendance{shiftConfig ? <span className="badge bg-secondary ms-2" style={{ fontSize: 11, fontWeight: 400, verticalAlign: 'middle' }}>{shiftConfig.name} ({shiftConfig.startTime}-{shiftConfig.endTime})</span> : ''}</h4>
           <p>{isSuperAdmin ? 'Team-wide attendance overview' : 'Track daily attendance, shifts, and working hours'}</p>
         </div>
-        {!isSuperAdmin && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            {!clockedIn && !clockedOut && (
-              <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
-                {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
-              </button>
-            )}
-            {clockedIn && !clockedOut && (
-              <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
-                {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
-              </button>
-            )}
-            {clockedIn && clockedOut && (
-              <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
-                <i className="bi bi-check-circle me-2" />Attendance Complete
-              </span>
-            )}
-          </div>
-        )}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {!isSuperAdmin && (
+            <>
+              {!clockedIn && !clockedOut && (
+                <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
+                  {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
+                </button>
+              )}
+              {clockedIn && !clockedOut && (
+                <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
+                  {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
+                </button>
+              )}
+              {clockedIn && clockedOut && (
+                <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
+                  <i className="bi bi-check-circle me-2" />Attendance Complete
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
@@ -1194,10 +1276,27 @@ export default function AttendancePage() {
                           <i className="bi bi-clock-history me-1" />Early Logged In
                         </span>
                       )}
+                      {clockedIn && !clockedOut && shiftConfig?.endTime && (
+                        <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+                          <i className="bi bi-clock me-1" />
+                          Expected clock-out by <strong>{shiftConfig.endTime}</strong>
+                        </div>
+                      )}
                       {(todayRecord.breakDeduction > 0) && (
-                        <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <i className="bi bi-dash-circle" />
-                          <span><strong>{todayRecord.breakDeduction} min</strong> deducted from working hours (excess break/lunch time)</span>
+                        <div style={{ marginTop: 14, padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, fontSize: 13, color: '#dc2626' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <i className="bi bi-dash-circle" />
+                            <span><strong>{todayRecord.breakDeduction} min</strong> deducted from working hours (excess break/lunch time)</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: '#ef4444', marginLeft: 22 }}>
+                            {(() => {
+                              const ded = todayRecord.deductionBreakdown || {};
+                              const parts = [];
+                              if (ded.breakDeduction) parts.push(`Break: ${ded.breakDeduction}m`);
+                              if (ded.lunchDeduction) parts.push(`Lunch: ${ded.lunchDeduction}m`);
+                              return parts.length ? parts.join(' | ') : '';
+                            })()}
+                          </div>
                         </div>
                       )}
                       {todayRecord.lateFlag && (
@@ -1215,36 +1314,67 @@ export default function AttendancePage() {
                   )}
                 </div>
               </div>
+              {/* Mobile-optimized clock widget */}
+              <div className="d-md-none" style={{ marginTop: 12 }}>
+                <div className="card p-3" style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: '#1e293b', marginBottom: 4 }}>
+                    {formatTime(nowTimeStr(), settings?.timeFormat || '24h')}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
+                    {todayRecord?.clockIn ? `Clocked in at ${todayRecord.clockIn}` : 'Not clocked in yet'}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                    {!clockedIn && (
+                      <button className="btn btn-success btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('in')} disabled={clockLoading}>
+                        {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-play-circle me-2" />Clock In</>}
+                      </button>
+                    )}
+                    {clockedIn && !clockedOut && (
+                      <button className="btn btn-danger btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('out')} disabled={clockLoading}>
+                        {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-stop-circle me-2" />Clock Out</>}
+                      </button>
+                    )}
+                    {clockedIn && clockedOut && (
+                      <div className="py-2">
+                        <i className="bi bi-check-circle text-success" style={{ fontSize: 24 }} />
+                        <div style={{ fontSize: 13, color: '#10b981', fontWeight: 600, marginTop: 4 }}>Complete</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
               {clockedIn && (
                 <div className="col-lg-6">
                   <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
                     <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                      {(shiftConfig?.breaks || [
+                      {((shiftConfig?.breaks && shiftConfig.breaks.length > 0) || [
                         { type: 'break', maxDuration: 30, maxCount: 1 },
                         { type: 'lunch', maxDuration: 60, maxCount: 1 },
-                      ]).map(rule => ({
-                        ...rule,
-                        label: rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break'),
-                        icon: rule.type === 'lunch' ? 'bi-cup-hot' : 'bi-clock',
-                        color: rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b',
-                      })).map(bt => (
-                        <button key={bt.type} onClick={() => setBreakTab(bt.type)}
+                      ]).map((rule, idx) => {
+                        const sameTypeCount = (shiftConfig?.breaks || []).filter(b => b.type === rule.type).length;
+                        const key = rule.type + '-' + idx;
+                        const label = (rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break')) + (sameTypeCount > 1 ? ` #${idx + 1}` : '');
+                        const icon = rule.type === 'lunch' ? 'bi-cup-hot' : 'bi-clock';
+                        const color = rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b';
+                        return (
+                           <button key={key} onClick={() => setBreakTab(rule.type)}
                           style={{
                             flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                             background: 'transparent',
-                            color: breakTab === bt.type ? bt.color : '#94a3b8',
-                            borderBottom: breakTab === bt.type ? `3px solid ${bt.color}` : '3px solid transparent',
+                            color: breakTab === rule.type ? color : '#94a3b8',
+                            borderBottom: breakTab === rule.type ? `3px solid ${color}` : '3px solid transparent',
                             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                             transition: 'all 0.15s',
                           }}>
-                          <i className={`bi ${bt.icon}`} style={{ fontSize: 14 }} />{bt.label}
-                          {overMins(bt.type) > 0 && (
+                          <i className={`bi ${icon}`} style={{ fontSize: 14 }} />{label}
+                          {overMins(rule.type) > 0 && (
                             <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
-                              −{overMins(bt.type)}m
+                              −{overMins(rule.type)}m
                             </span>
                           )}
                         </button>
-                      ))}
+                      );
+                    })}
                     </div>
                     <div style={{ padding: 16 }}>
                       {renderBreakLunchPanel(breakTab)}
@@ -1432,13 +1562,47 @@ export default function AttendancePage() {
       {/* REGULARIZE TAB */}
       {tab === 'regularize' && (
         <>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
-            <span style={{ fontWeight: 700, fontSize: 14 }}>{canReview ? 'Pending Regularization Requests' : 'My Regularization Requests'}</span>
-            {!canReview && (
+          {canReview ? (
+            <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
+              <div onClick={() => { setRegScope('my'); loadRegRequests('my'); }} style={{
+                flex: 1, padding: '12px 16px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s',
+                background: regScope === 'my' ? '#f0f4ff' : '#f8fafc',
+                border: regScope === 'my' ? '1.5px solid #3b82f6' : '1.5px solid #e2e8f0',
+                boxShadow: regScope === 'my' ? '0 1px 6px rgba(59,130,246,0.1)' : 'none',
+              }}>
+                <div style={{ fontSize: 12, color: regScope === 'my' ? '#3b82f6' : '#64748b', fontWeight: 600, marginBottom: 2 }}>
+                  <i className="bi bi-person me-1" />My Requests
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#1e293b' }}>
+                  {regRequests.filter(r => r.userId?._id?.toString() === user?._id?.toString()).length}
+                </div>
+              </div>
+              <div onClick={() => { setRegScope('approvals'); loadRegRequests('approvals'); }} style={{
+                flex: 1, padding: '12px 16px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s',
+                background: regScope === 'approvals' ? '#fffbeb' : '#f8fafc',
+                border: regScope === 'approvals' ? '1.5px solid #d97706' : '1.5px solid #e2e8f0',
+                boxShadow: regScope === 'approvals' ? '0 1px 6px rgba(217,119,6,0.1)' : 'none',
+              }}>
+                <div style={{ fontSize: 12, color: regScope === 'approvals' ? '#d97706' : '#64748b', fontWeight: 600, marginBottom: 2 }}>
+                  <i className="bi bi-inbox me-1" />Pending Approvals
+                </div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#1e293b' }}>
+                  {regRequests.filter(r => r.status === 'pending').length}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 16 }}>My Regularization Requests</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+            {user?.role !== 'super_admin' && (
               <button className="btn btn-primary btn-sm" onClick={() => setShowRegModal(true)}>
                 <i className="bi bi-plus-lg me-1" />New Request
               </button>
             )}
+            <Link href="/attendance/regularization-history" className="btn btn-outline-secondary btn-sm">
+              <i className="bi bi-clock-history me-1" />History
+            </Link>
           </div>
           {regRequests.length === 0 ? (
             <div className="card"><div className="empty-state"><i className="bi bi-clock-history" /><p>No regularization requests</p></div></div>
@@ -1467,20 +1631,35 @@ export default function AttendancePage() {
                           )}
                           <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedIn  || '—'}</td>
-                          <td style={{ fontSize: 13 }}>{r.requestedOut || '—'}</td>
+                          <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</td>
                           <td style={{ fontSize: 13 }}>
-                            {r.requestedBreakStart || r.requestedBreakEnd ? (
-                              `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}`
-                            ) : '—'}
+                            {(() => {
+                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === 'break');
+                              if (typeBreaks.length === 0) return '—';
+                              return typeBreaks.map((b, i) => {
+                                if (b.notYet) return <span key={i} style={{ color: '#f59e0b', fontStyle: 'italic' }}>Not yet</span>;
+                                return `${b.start || '—'} → ${b.end || '—'}`;
+                              }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
+                            })()}
                           </td>
                           <td style={{ fontSize: 13 }}>
-                            {r.requestedLunchStart || r.requestedLunchEnd ? (
-                              `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}`
-                            ) : '—'}
+                            {(() => {
+                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === 'lunch');
+                              if (typeBreaks.length === 0) return '—';
+                              return typeBreaks.map((b, i) => {
+                                if (b.notYet) return <span key={i} style={{ color: '#8b5cf6', fontStyle: 'italic' }}>Not yet</span>;
+                                return `${b.start || '—'} → ${b.end || '—'}`;
+                              }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
+                            })()}
                           </td>
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
-                          <td><span className={'badge status-' + r.status}>{r.status}</span></td>
-                          {canReview && (
+                          <td>
+                            <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                              <i className={`bi ${r.status === 'pending' ? 'bi-clock' : r.status === 'approved' ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}`} />
+                              {r.status}
+                            </span>
+                          </td>
+                          {canReview && regScope === 'approvals' && (
                             <td>
                               {r.status === 'pending' && (
                                 <div style={{ display: 'flex', gap: 4 }}>
@@ -1504,16 +1683,19 @@ export default function AttendancePage() {
                         {canReview && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
                         <div style={{ fontSize: 13, color: '#64748b' }}>{formatDate(r.date)}</div>
                       </div>
-                      <span className={'badge status-' + r.status}>{r.status}</span>
+                      <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                        <i className={`bi ${r.status === 'pending' ? 'bi-clock' : r.status === 'approved' ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}`} />
+                        {r.status}
+                      </span>
                     </div>
                     <div className="row g-2 mb-2">
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOut || '—'}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedBreakStart || r.requestedBreakEnd ? `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}` : '—'}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedLunchStart || r.requestedLunchEnd ? `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}` : '—'}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'break'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${b.start || '—'} → ${b.end || '—'}`).join(', '); })()}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'lunch'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${b.start || '—'} → ${b.end || '—'}`).join(', '); })()}</div></div>
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
-                    {canReview && r.status === 'pending' && (
+                    {canReview && regScope === 'approvals' && r.status === 'pending' && (
                       <div style={{ display: 'flex', gap: 8 }}>
                         <button className="btn btn-sm btn-success flex-fill" onClick={() => reviewRegularization(r._id, 'approved')}>Approve</button>
                         <button className="btn btn-sm btn-danger  flex-fill" onClick={() => reviewRegularization(r._id, 'rejected')}>Reject</button>
@@ -1535,51 +1717,132 @@ export default function AttendancePage() {
           )}
           {showRegModal && (
             <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-              <div className="modal-dialog modal-dialog-centered">
-                <div className="modal-content">
-                  <div className="modal-header">
-                    <h5 className="modal-title">Regularization Request</h5>
-                    <button className="btn-close" onClick={() => setShowRegModal(false)} />
-                  </div>
-                  <div className="modal-body">
-                    <div className="row g-3">
-                      <div className="col-12">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date *</label>
-                        <DateInput className="form-control" value={regForm.date} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} />
+              <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 520 }}>
+                <div className="modal-content" style={{ border: 'none', borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+                  <div style={{ padding: '20px 24px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#3b82f6,#1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 16 }}>
+                        <i className="bi bi-pencil-square" />
                       </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Clock In</label>
-                        <input type="time" className="form-control" value={regForm.requestedIn} onChange={e => setRegForm(p => ({ ...p, requestedIn: e.target.value }))} />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Clock Out</label>
-                        <input type="time" className="form-control" value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Break Start</label>
-                        <input type="time" className="form-control" value={regForm.requestedBreakStart} onChange={e => setRegForm(p => ({ ...p, requestedBreakStart: e.target.value }))} />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Break End</label>
-                        <input type="time" className="form-control" value={regForm.requestedBreakEnd} onChange={e => setRegForm(p => ({ ...p, requestedBreakEnd: e.target.value }))} />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Lunch Start</label>
-                        <input type="time" className="form-control" value={regForm.requestedLunchStart} onChange={e => setRegForm(p => ({ ...p, requestedLunchStart: e.target.value }))} />
-                      </div>
-                      <div className="col-6">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Actual Lunch End</label>
-                        <input type="time" className="form-control" value={regForm.requestedLunchEnd} onChange={e => setRegForm(p => ({ ...p, requestedLunchEnd: e.target.value }))} />
-                      </div>
-                      <div className="col-12">
-                        <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason *</label>
-                        <textarea className="form-control" rows={3} value={regForm.reason} onChange={e => setRegForm(p => ({ ...p, reason: e.target.value }))} />
+                      <div>
+                        <h5 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>Regularization Request</h5>
+                        <div style={{ fontSize: 11, color: '#94a3b8' }}>Update your attendance for a past date</div>
                       </div>
                     </div>
+                    <button className="btn-close" onClick={() => setShowRegModal(false)} />
                   </div>
-                  <div className="modal-footer">
-                    <button className="btn btn-outline-secondary" onClick={() => setShowRegModal(false)}>Cancel</button>
-                    <button className="btn btn-primary" onClick={submitRegularization} disabled={regSaving}>
+                  <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                        <i className="bi bi-calendar" style={{ color: '#3b82f6', fontSize: 14 }} />
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>Date</span>
+                      </div>
+                      <DateInput className="form-control" value={regForm.date} max={todayStr} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} />
+                    </div>
+                    <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                        <i className="bi bi-clock" style={{ color: '#3b82f6', fontSize: 14 }} />
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>Timing</span>
+                      </div>
+                      <div className="row g-2">
+                        <div className="col-6">
+                          <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock In</label>
+                          <TimeInput className="form-control" style={{ fontSize: 13 }} value={regForm.requestedIn} onChange={e => setRegForm(p => ({ ...p, requestedIn: e.target.value }))} />
+                        </div>
+                        <div className="col-6">
+                          <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock Out</label>
+                          <TimeInput className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} disabled={regForm.requestedOutNotYet} />
+                          {regForm.date === todayStr && (
+                            <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
+                              <input type="checkbox" checked={regForm.requestedOutNotYet}
+                                onChange={e => setRegForm(p => ({ ...p, requestedOutNotYet: e.target.checked, requestedOut: e.target.checked ? '' : p.requestedOut }))} />
+                              Not yet (still on shift)
+                            </label>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                    {breakInstances.map(bi => {
+                      const entryIndex = regForm.requestedBreaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
+                      const entry = entryIndex !== -1 ? regForm.requestedBreaks[entryIndex] : null;
+
+                      const updateBreak = (field, value) => {
+                        setRegForm(prev => {
+                          const breaks = [...(prev.requestedBreaks || [])];
+                          const idx = breaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
+                          const updated = { ...(breaks[idx] || { type: bi.type, _idx: bi.index }), [field]: value };
+                          if (idx !== -1) breaks[idx] = updated;
+                          else breaks.push(updated);
+                          return { ...prev, requestedBreaks: breaks };
+                        });
+                      };
+
+                      const getVal = (field) => {
+                        if (entry) return entry[field] || '';
+                        return '';
+                      };
+
+                      const notYet = getVal('notYet') === true;
+
+                      return (
+                        <div key={bi.key} style={{ background: bi.bgColor, borderRadius: 12, padding: 16, border: `1px solid ${bi.borderColor}` }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                            <i className={`bi ${bi.icon}`} style={{ color: bi.color, fontSize: 14 }} />
+                            <span style={{ fontSize: 13, fontWeight: 700 }}>{bi.label}{breakInstances.filter(b => b.type === bi.type).length > 1 ? ` #${bi.index + 1}` : ''}</span>
+                          </div>
+                          <div className="row g-2">
+                            <div className="col-6">
+                              <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Start</label>
+                              <TimeInput className="form-control" style={{ fontSize: 13 }}
+                                value={getVal('start')}
+                                onChange={e => updateBreak('start', e.target.value)}
+                                disabled={notYet} />
+                            </div>
+                            <div className="col-6">
+                              <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>End</label>
+                              <TimeInput className="form-control" style={{ fontSize: 13 }}
+                                value={getVal('end')}
+                                onChange={e => updateBreak('end', e.target.value)}
+                                disabled={notYet} />
+                              {regForm.date === todayStr && (
+                                <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
+                                  <input type="checkbox" checked={notYet}
+                                    onChange={e => {
+                                      const checked = e.target.checked;
+                                      setRegForm(prev => {
+                                        const breaks = [...(prev.requestedBreaks || [])];
+                                        const idx = breaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
+                                        const updated = { type: bi.type, _idx: bi.index, start: checked ? '' : (breaks[idx]?.start || ''), end: checked ? '' : (breaks[idx]?.end || ''), notYet: checked };
+                                        if (idx !== -1) breaks[idx] = updated;
+                                        else breaks.push(updated);
+                                        return { ...prev, requestedBreaks: breaks };
+                                      });
+                                    }} />
+                                  Not yet
+                                </label>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                        <i className="bi bi-chat-dots" style={{ color: '#3b82f6', fontSize: 14 }} />
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>Reason</span>
+                        <span style={{ color: '#ef4444', fontSize: 11 }}>*</span>
+                        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#94a3b8' }}>{regForm.reason.length}/1000</span>
+                      </div>
+                      <textarea className="form-control" rows={3} style={{ fontSize: 13, resize: 'vertical' }} value={regForm.reason} onChange={e => setRegForm(p => ({ ...p, reason: e.target.value }))} placeholder="Explain why you need to regularize..." />
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button className="btn btn-sm" onClick={() => setShowRegModal(false)}
+                      style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', color: '#64748b' }}>
+                      Cancel
+                    </button>
+                    <button className="btn btn-sm" onClick={submitRegularization} disabled={regSaving}
+                      style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, borderRadius: 10, background: 'linear-gradient(135deg,#3b82f6,#1e293b)', color: '#fff', border: 'none', opacity: regSaving ? 0.7 : 1 }}>
                       {regSaving ? <><span className="spinner-border spinner-border-sm me-2" />Submitting...</> : 'Submit Request'}
                     </button>
                   </div>
@@ -1873,6 +2136,23 @@ export default function AttendancePage() {
           </div>
         </div>
       )}
+
+      {/* Early Clock Reason Modal */}
+      {showEarlyClockModal && (
+        <div className="modal-overlay" onClick={() => setShowEarlyClockModal(false)}>
+          <div className="modal-content" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <h6>Early Clock-In Reason</h6>
+            <p style={{ fontSize: 13, color: '#64748b' }}>You are clocking in more than 2 hours before your shift. Please provide a reason.</p>
+            <textarea className="form-control" rows={3} placeholder="Reason (min 10 characters)..."
+              value={earlyClockReason} onChange={e => setEarlyClockReason(e.target.value)} style={{ fontSize: 13 }} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button className="btn btn-sm btn-secondary" onClick={() => setShowEarlyClockModal(false)}>Cancel</button>
+              <button className="btn btn-sm btn-primary" onClick={submitEarlyClock} disabled={earlyClockReason.trim().length < 10}>Submit</button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </AppShell>
   );
 }
@@ -1883,6 +2163,15 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
   const [loading, setLoading] = useState(true);
   const [recordsPage, setRecordsPage] = useState(1);
   const pageSize = 10;
+
+  const handleAbsenceReasonChange = async (recordId, reason) => {
+    try {
+      await api.put('/api/attendance', { recordId, absenceReason: reason });
+      setRecords(prev => prev.map(r => r._id === recordId ? { ...r, absenceReason: reason } : r));
+    } catch (e) {
+      console.error('Failed to update absence reason:', e);
+    }
+  };
 
   useEffect(() => {
     setRecordsPage(1);
@@ -1933,7 +2222,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
       <div className="card d-none d-md-block">
         <div className="table-responsive">
           <table className="table mb-0">
-            <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
+            <thead><tr><th>Date</th><th>Day</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Absence Reason</th><th>Flag</th></tr></thead>
             <tbody>
               {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
                 const d = new Date(row.date + 'T00:00:00');
@@ -1946,6 +2235,15 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
                     <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
                     <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                    <td style={{ fontSize: 13, maxWidth: 160 }}>
+                      {isAdmin && (row.status === 'absent' || row.status === 'late') ? (
+                        <input className="form-control form-control-sm" style={{ fontSize: 11 }}
+                          defaultValue={row.absenceReason || ''} placeholder="Add reason..."
+                          onBlur={e => { handleAbsenceReasonChange(row._id, e.target.value); }} />
+                      ) : (
+                        <span style={{ color: row.absenceReason ? '#1e293b' : '#94a3b8' }}>{row.absenceReason || '—'}</span>
+                      )}
+                    </td>
                     <td>
                       {row.leaveOverride?.status === 'pending' && (
                         <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
@@ -1993,6 +2291,18 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                   </div>
                 ))}
               </div>
+              {(row.status === 'absent' || row.status === 'late') && (
+                <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
+                  <strong>Absence Reason:</strong>{' '}
+                  {isAdmin ? (
+                    <input className="form-control form-control-sm d-inline-block" style={{ fontSize: 11, width: 'auto' }}
+                      defaultValue={row.absenceReason || ''} placeholder="Add reason..."
+                      onBlur={e => { handleAbsenceReasonChange(row._id, e.target.value); }} />
+                  ) : (
+                    <span style={{ color: row.absenceReason ? '#1e293b' : '#94a3b8' }}>{row.absenceReason || 'Not provided'}</span>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

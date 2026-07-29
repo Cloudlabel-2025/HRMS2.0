@@ -25,7 +25,7 @@ export function getAttendanceDate(now, shiftStartTime, shiftEndTime) {
   if (endMinutes < startMinutes) {
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
     // Before shift end → still the previous shift day
-    if (nowMinutes < endMinutes) {
+    if (nowMinutes <= endMinutes) {
       const prev = new Date(now);
       prev.setDate(prev.getDate() - 1);
       return formatDate(prev);

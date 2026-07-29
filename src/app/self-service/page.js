@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import DateInput from '@/components/DateInput';
+import TimeInput from '@/components/TimeInput';
 
 const EMPTY_FORM = {
   requestType: 'profile_update',
@@ -321,12 +322,12 @@ export default function SelfServicePage() {
                   </div>
                   <div className="col-md-4">
                     <label className="form-label">Start Time <span style={{color:'#ef4444'}}>*</span></label>
-                    <input type="time" className={`form-control${formErrors.permissionStartTime ? ' is-invalid' : ''}`} value={form.permissionStartTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionStartTime: e.target.value })); clearError('permissionStartTime'); }} />
+                    <TimeInput className={`form-control${formErrors.permissionStartTime ? ' is-invalid' : ''}`} value={form.permissionStartTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionStartTime: e.target.value })); clearError('permissionStartTime'); }} />
                     {formErrors.permissionStartTime && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionStartTime}</div>}
                   </div>
                   <div className="col-md-4">
                     <label className="form-label">End Time <span style={{color:'#ef4444'}}>*</span></label>
-                    <input type="time" className={`form-control${formErrors.permissionEndTime ? ' is-invalid' : ''}`} value={form.permissionEndTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionEndTime: e.target.value })); clearError('permissionEndTime'); }} />
+                    <TimeInput className={`form-control${formErrors.permissionEndTime ? ' is-invalid' : ''}`} value={form.permissionEndTime || ''} onChange={e => { setForm(prev => ({ ...prev, permissionEndTime: e.target.value })); clearError('permissionEndTime'); }} />
                     {formErrors.permissionEndTime && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionEndTime}</div>}
                   </div>
                 </>

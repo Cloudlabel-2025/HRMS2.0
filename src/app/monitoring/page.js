@@ -79,16 +79,16 @@ export default function MonitoringPage() {
         api.get('/api/leave?status=approved'),
       ]);
 
-      const attArr = [
-        ...(Array.isArray(attendanceToday) ? attendanceToday : []),
-        ...(Array.isArray(attendanceYest) ? attendanceYest : []),
-      ];
       const leaveArr = Array.isArray(leaves) ? leaves : [];
 
+      // Today's records take priority over yesterday's
       const attMap = {};
-      for (const r of attArr) {
+      for (const r of [...(Array.isArray(attendanceYest) ? attendanceYest : [])]) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
-        // Keep the latest record per user (prefer the one matching their shift-aware date)
+        if (uid) attMap[uid] = r;
+      }
+      for (const r of [...(Array.isArray(attendanceToday) ? attendanceToday : [])]) {
+        const uid = r.userId?._id?.toString() || r.userId?.toString();
         if (uid) attMap[uid] = r;
       }
 

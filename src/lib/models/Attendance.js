@@ -2,9 +2,9 @@ import mongoose from 'mongoose';
 
 const AttendanceSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  date:       { type: String, required: true },          // 'YYYY-MM-DD'
-  clockIn:    { type: String, default: null },           // 'HH:MM'
-  clockOut:   { type: String, default: null },
+  date:       { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
+  clockIn:    { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+  clockOut:   { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   hoursWorked:{ type: Number, default: 0 },              // in minutes
   baseHoursWorked: { type: Number, default: 0 },
   breakDeduction: { type: Number, default: 0 },
@@ -25,11 +25,16 @@ const AttendanceSchema = new mongoose.Schema({
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
   note:       { type: String, default: '' },
+  absenceReason: { type: String, default: '' },
   autoLoggedOut: { type: Boolean, default: false },
   lateLogoutReason: { type: String, default: '' },
   lateLogoutReasonProvidedAt: { type: Date, default: null },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
   earlyLogin: { type: Boolean, default: false },
+  geoLocation: {
+    lat: { type: Number },
+    lng: { type: Number },
+  },
   leaveOverride: {
     status:     { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

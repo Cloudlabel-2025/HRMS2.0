@@ -7,6 +7,9 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import { formatMins } from '@/lib/format';
+import { canAccessDepartment } from '@/lib/auth';
+import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
+import { triggerDownload } from '@/lib/csv-utils';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -18,21 +21,6 @@ const TABS = [
   { key: 'audit',       label: 'Audit Log',      icon: 'bi-shield-check' },
 ];
 
-const WP_STATUS_STYLE = {
-  pending: { bg: '#f8fafc', color: '#94a3b8' },
-  work_in_progress: { bg: '#dbeafe', color: '#2563eb' },
-  completed: { bg: '#dcfce7', color: '#16a34a' },
-  task_blocked: { bg: '#fef3c7', color: '#d97706' },
-  stopped: { bg: '#fee2e2', color: '#dc2626' },
-};
-const STATUS_STYLE = {
-  present: { bg: '#dcfce7', color: '#16a34a' },
-  absent: { bg: '#fee2e2', color: '#dc2626' },
-  late: { bg: '#fef3c7', color: '#d97706' },
-  leave: { bg: '#dbeafe', color: '#2563eb' },
-  holiday: { bg: '#f1f5f9', color: '#64748b' },
-};
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
@@ -278,14 +266,6 @@ export default function EmployeeProfilePage() {
     }
     return rows;
   };
-  const triggerDownload = (rows, filename) => {
-    const csv = '\uFEFF' + rows.map(r => r.map(c => `"${(c || '').replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a'); link.href = url; link.download = filename;
-    document.body.appendChild(link); link.click();
-    document.body.removeChild(link); URL.revokeObjectURL(url);
-  };
   const handleWpDownload = () => {
     const rows = toCsvRows(filteredCycles);
     const entryCount = rows.length - 1;
@@ -353,7 +333,7 @@ export default function EmployeeProfilePage() {
   const visibleTabs = TABS.filter(t => {
     if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
     if (t.key === 'audit' && (!['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString())) return false;
-    if (t.key === 'workprogress' && !(['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString() || (['team_admin', 'team_lead'].includes(user?.role) && user?.department === emp.department))) return false;
+    if (t.key === 'workprogress' && !(['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString() || (['team_admin', 'team_lead'].includes(user?.role) && canAccessDepartment(user, emp.department)))) return false;
     return true;
   });
 

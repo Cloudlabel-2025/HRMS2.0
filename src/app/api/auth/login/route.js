@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
 import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
-import { AuditLog, Shift, Leave } from '@/lib/models/index';
+import { AuditLog, Shift, Leave, Department } from '@/lib/models/index';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
 import { LoginSchema, validateRequest } from '@/lib/validation';
 
@@ -205,6 +205,13 @@ export async function POST(req) {
       ip,
     });
 
+    // Attach department visibility rules
+    let visibleDepartments = [];
+    if (user.department) {
+      const deptDoc = await Department.findOne({ name: user.department }).select('visibleDepartments').lean().catch(() => null);
+      visibleDepartments = deptDoc?.visibleDepartments || [];
+    }
+
     return ok({
       token,
       refreshToken,
@@ -222,6 +229,7 @@ export async function POST(req) {
         teamLeadId:  user.teamLeadId,
         teamAdminId: user.teamAdminId,
         isFirstLogin:user.isFirstLogin,
+        visibleDepartments,
       },
     });
   } catch (e) {

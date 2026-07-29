@@ -2,21 +2,22 @@
  * Central RBAC engine.
  * All permission logic lives here — no hardcoding in routes or frontend.
  */
+import { Department } from '@/lib/models/index';
 
 // ── Module access matrix ──────────────────────────────────────────────────────
 // Values: 'full' | 'limited' | 'self' | 'dept' | 'team' | 'assigned' | false
 export const MODULE_ACCESS = {
   dashboard:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:'self' },
-  employees:     { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:'dept',     intern:'dept',     sme:false },
+  employees:     { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:'dept',     intern:false,     sme:false },
   recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  timecard:      { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
-  attendance:    { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
-  absence:       { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
+  timecard:      { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
+  attendance:    { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
+  absence:       { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
   leave:         { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
   payroll:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:'self',     intern:false,      sme:'self' },
   payslip:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:'self',     intern:false,      sme:false },
-  tasks:         { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
-  projects:      { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
+  tasks:         { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
+  projects:      { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
   performance:   { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:false },
   documents:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:false },
   finance:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
@@ -32,6 +33,31 @@ export const MODULE_ACCESS = {
   audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   sme:           { super_admin:'full', admin_full:false,   recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
 };
+
+// ── Cross-department visibility rules ──────────────────────────────────────────
+
+/**
+ * Returns the list of department names this user is allowed to view.
+ * Returns null when the user has unrestricted access (admins/recruiters).
+ * Cross-department visibility only applies to team_lead and team_admin roles.
+ */
+export async function getAccessibleDepartments(user) {
+  if (['super_admin', 'admin_full', 'recruiter'].includes(user.role)) return null;
+  if (['team_lead', 'team_admin'].includes(user.role)) {
+    const dept = await Department.findOne({ name: user.department }).select('visibleDepartments').lean().catch(() => null);
+    if (dept?.visibleDepartments?.length) {
+      return [user.department, ...dept.visibleDepartments];
+    }
+  }
+  return [user.department];
+}
+
+/** True if the user is permitted to view employees in targetDepartment */
+export async function canAccessDepartment(user, targetDepartment) {
+  if (['super_admin', 'admin_full', 'recruiter'].includes(user.role)) return true;
+  const depts = await getAccessibleDepartments(user);
+  return depts !== null && depts.includes(targetDepartment);
+}
 
 // ── Public helpers ────────────────────────────────────────────────────────────
 
@@ -69,7 +95,7 @@ export function scopeFilter(user, {
 
   if (role === 'team_admin') {
     // Sees employees in their team (assigned to TLs under them, or directly)
-    return { [teamLeadField]: user._id };
+    return { teamAdminId: user._id };
   }
 
   // employee / intern — self only

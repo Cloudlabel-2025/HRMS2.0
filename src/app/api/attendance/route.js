@@ -9,6 +9,7 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { getShiftConfig, determineStatus, calculateHoursWorked } from '@/lib/attendance-constants';
+import { getAccessibleDepartments } from '@/lib/rbac';
 import { notify } from '@/lib/notify';
 
 async function getShiftAwareToday(targetUserId) {
@@ -26,11 +27,13 @@ async function getShiftAwareToday(targetUserId) {
 async function getTeamUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
   if (user.role === 'team_lead') {
-    const members = await User.find({ department: user.department, status: 'active', role: { $ne: 'super_admin' } }).select('_id');
+    const depts = await getAccessibleDepartments(user);
+    const members = await User.find({ department: { $in: depts }, status: 'active', role: { $ne: 'super_admin' } }).select('_id');
     return members.map(m => m._id);
   }
   if (user.role === 'team_admin') {
-    const members = await User.find({ department: user.department, role: { $nin: ['super_admin', 'team_lead'] }, status: 'active' }).select('_id');
+    const depts = await getAccessibleDepartments(user);
+    const members = await User.find({ department: { $in: depts }, role: { $nin: ['super_admin', 'team_lead'] }, status: 'active' }).select('_id');
     return members.map(m => m._id);
   }
   return [user._id];
@@ -96,7 +99,7 @@ export async function GET(req) {
 
     const now = await getTzTime();
     for (const rec of raw) {
-      if (checkAndApplyAutoLogout(rec, now)) {
+      if (await checkAndApplyAutoLogout(rec, now)) {
         await Attendance.findByIdAndUpdate(rec._id, {
           clockOut: rec.clockOut,
           autoLoggedOut: rec.autoLoggedOut,
@@ -152,6 +155,51 @@ export async function GET(req) {
       }
     }
 
+    // Persist corrected status/lateFlag for all recalculated records
+    const bulkOps = raw
+      .filter(rec => rec.clockIn && rec._id)
+      .map(rec => ({
+        updateOne: {
+          filter: { _id: rec._id },
+          update: { $set: { status: rec.status, lateFlag: rec.lateFlag } }
+        }
+      }));
+
+    if (bulkOps.length > 0) {
+      await Attendance.bulkWrite(bulkOps).catch(err => {
+        console.error('Failed to persist corrected attendance status:', err);
+      });
+    }
+
+    // Consecutive late detection for managers
+    if (scope === 'team' && user.role !== 'employee') {
+      const CONSECUTIVE_THRESHOLD = 3;
+      const lateEmployees = raw
+        .filter(r => r.lateFlag && r.status !== 'leave')
+        .map(r => r.userId?._id?.toString())
+        .filter(Boolean);
+      const uniqueLateUserIds = [...new Set(lateEmployees)];
+      for (const uid of uniqueLateUserIds) {
+        const recentRecords = await Attendance.find({ userId: uid })
+          .sort({ date: -1 })
+          .limit(CONSECUTIVE_THRESHOLD)
+          .lean();
+        const consecutiveLateDays = recentRecords.filter(r => r.lateFlag).length;
+        if (consecutiveLateDays >= CONSECUTIVE_THRESHOLD) {
+          const empUser = await User.findById(uid).select('name').lean();
+          if (empUser) {
+            await Notification.create({
+              userId: user._id,
+              title: 'Consecutive Late Days',
+              message: `${empUser.name} has been late for ${consecutiveLateDays} consecutive days.`,
+              type: 'attendance',
+              refId: uid,
+            }).catch(() => {});
+          }
+        }
+      }
+    }
+
     return ok(raw);
   } catch (e) {
     return fail(e.message, 500);
@@ -172,10 +220,12 @@ export async function POST(req) {
       today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     }
 
-    const existing = await Attendance.findOne({ userId: targetUserId, date: today });
-    if (existing) return fail('Attendance already marked for today', 409);
-
-    const record = await Attendance.create({ userId: targetUserId, date: today, ...body });
+    const record = await Attendance.findOneAndUpdate(
+      { userId: targetUserId, date: today },
+      { $setOnInsert: { userId: targetUserId, date: today, ...body } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    if (!record) return fail('Failed to create attendance record', 500);
     return ok(record, 201);
   } catch (e) {
     return fail(e.message, 500);
@@ -246,16 +296,26 @@ export async function PUT(req) {
       return fail('Access denied', 403);
     }
 
-    const allowed = ['breaks', 'workProgress', 'hoursWorked', 'baseHoursWorked', 'breakDeduction', 'note'];
+    const allowed = ['breaks', 'workProgress', 'hoursWorked', 'baseHoursWorked', 'breakDeduction', 'note', 'absenceReason'];
     const update = {};
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
 
-    // Enforce 1 break and 1 lunch break per day limit
+    // Enforce break limits from shift config
     if (body.breaks) {
-      const numBreaks = body.breaks.filter(b => b.type === 'break').length;
-      const numLunches = body.breaks.filter(b => b.type === 'lunch').length;
-      if (numBreaks > 1 || numLunches > 1) {
-        return fail('You can only take 1 break and 1 lunch break per day.', 400);
+      const targetUser = await User.findById(targetUserId).select('shift').lean();
+      const shiftDoc = await Shift.findOne({ name: targetUser?.shift || 'Morning (9AM-6PM)' }).lean();
+      const cfg = await getGlobalConfig();
+      const shiftCfg = getShiftConfig(shiftDoc, cfg);
+
+      const typeLabels = { break: 'break(s)', lunch: 'lunch(es)' };
+      for (const [type, label] of Object.entries(typeLabels)) {
+        const allowed = (shiftCfg.breaks || [])
+          .filter(b => b.type === type)
+          .reduce((sum, b) => sum + (b.maxCount ?? 1), 0);
+        const count = body.breaks.filter(b => b.type === type).length;
+        if (count > allowed) {
+          return fail(`You can only take ${allowed} ${label} per day.`, 400);
+        }
       }
     }
 

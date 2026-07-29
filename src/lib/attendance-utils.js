@@ -6,20 +6,12 @@ import Attendance from './models/Attendance';
 import { Leave } from './models/index';
 import { notify } from './notify';
 import { connectDB } from './db';
+import { getTzTime } from '@/lib/timezone';
 
-export function toMinutes(timeStr) {
-  if (!timeStr) return 0;
-  const [h, m] = timeStr.split(':').map(Number);
-  return h * 60 + m;
-}
+export { toMinutes, diffMins } from './attendance-constants';
 
-export function diffMins(start, end) {
-  if (!start || !end) return 0;
-  const s = toMinutes(start), e = toMinutes(end);
-  return e > s ? e - s : 0;
-}
-
-export function checkAndApplyAutoLogout(record, now = new Date(), cfg) {
+export async function checkAndApplyAutoLogout(record, now, cfg) {
+  if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
 
   const shiftCfg = cfg || { hardCapHours: 600, expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };

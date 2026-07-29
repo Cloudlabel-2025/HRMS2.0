@@ -7,6 +7,7 @@ import Leave from '@/lib/models/Leave';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { AuditLog, Announcement, Employee } from '@/lib/models/index';
+import { getAccessibleDepartments } from '@/lib/rbac';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -26,6 +27,20 @@ export async function GET(req) {
   const isSelfRole  = ['employee', 'intern'].includes(role);
   const isAdminRole = ['super_admin', 'admin_full'].includes(role);
   const isTeamRole  = ['team_lead', 'team_admin'].includes(role);
+
+  // Build announcement filter before the parallel queries
+  let announcementFilter = {};
+  if (!isAdminRole) {
+    const accessibleDepts = await getAccessibleDepartments(user);
+    announcementFilter = {
+      $or: [
+        { audience: 'Company-wide' },
+        ...(accessibleDepts ? [{ departments: { $in: accessibleDepts } }] : []),
+        ...(accessibleDepts ? [{ audience: { $in: accessibleDepts } }] : []),
+        ...(teamIds ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
+      ],
+    };
+  }
 
   const [
     totalEmployees,
@@ -55,18 +70,7 @@ export async function GET(req) {
         : { assignedTo: user._id, status: { $in: ['To Do', 'In Progress'] } }
     ),
     AuditLog.find().sort({ createdAt: -1 }).limit(5).populate('userId', 'name'),
-    Announcement.find(
-      isAdminRole
-        ? {}
-        : {
-            $or: [
-              { audience: 'Company-wide' },
-              ...(user.department ? [{ departments: user.department }] : []),
-              ...(user.department ? [{ audience: user.department }] : []),
-              ...(teamIds ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
-            ],
-          }
-    ).sort({ createdAt: -1 }).limit(3),
+    Announcement.find(announcementFilter).sort({ createdAt: -1 }).limit(3),
   ]);
 
   const myLeaveBalance = isSelfRole

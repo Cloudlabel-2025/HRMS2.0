@@ -5,7 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee, Department, Applicant } from '@/lib/models/index';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { hasAccess } from '@/lib/rbac';
+import { hasAccess, getAccessibleDepartments } from '@/lib/rbac';
 import { CreateEmployeeSchema, validateRequest } from '@/lib/validation';
 import { buildSensitiveIdentifierPayload } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
@@ -25,9 +25,10 @@ export async function GET(req) {
 
     const query = {};
 
-    // Scope by role — everyone (except admins) sees their own department
+    // Scope by role — everyone (except admins) sees their permitted departments
     if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) {
-      query.department = user.department;
+      const accessibleDepts = await getAccessibleDepartments(user);
+      query.department = { $in: accessibleDepts };
     } else if (dept) {
       query.department = dept;
     }

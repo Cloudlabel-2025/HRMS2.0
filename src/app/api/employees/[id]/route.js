@@ -4,6 +4,7 @@ import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee } from '@/lib/models/index';
 import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
+import { canAccessDepartment } from '@/lib/rbac';
 
 export async function GET(req, { params }) {
   const { id } = await params;
@@ -14,9 +15,9 @@ export async function GET(req, { params }) {
   const emp = await Employee.findById(id);
   if (!emp) return fail('Employee not found', 404);
 
-  // Everyone (except admins) can view anyone in their own department
+  // Everyone (except admins) can view anyone in their permitted departments
   if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) {
-    if (emp.department !== user.department) {
+    if (!await canAccessDepartment(user, emp.department)) {
       return fail('Access denied', 403);
     }
   }

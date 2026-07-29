@@ -6,6 +6,7 @@ import { Department, Employee } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { CORE_HR_MANAGER_ROLES } from '@/lib/core/constants';
+import { canAccessDepartment } from '@/lib/rbac';
 import { buildChangeSet } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { LifecycleActionSchema, validateRequest } from '@/lib/validation';
@@ -38,12 +39,12 @@ async function loadProfile(profileId) {
   return EmpProfile.findById(profileId).populate('identityId');
 }
 
-function canOperateOnProfile(profile, user) {
+async function canOperateOnProfile(profile, user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return true;
   const userIdentityId = (user.identityId || user._id).toString();
   const teamLeadId = profile?.reportingLine?.teamLeadIdentityId?.toString?.() || '';
   const teamAdminId = profile?.reportingLine?.teamAdminIdentityId?.toString?.() || '';
-  const sameDepartment = !!user.department && user.department === profile.department;
+  const sameDepartment = !!user.department && await canAccessDepartment(user, profile.department);
   if (user.role === 'team_lead') return sameDepartment || teamLeadId === userIdentityId || teamAdminId === userIdentityId;
   if (user.role === 'team_admin') return sameDepartment || teamAdminId === userIdentityId || teamLeadId === userIdentityId;
   return false;
@@ -116,7 +117,7 @@ export async function POST(req) {
     // Record locking — block mutations on finalized separated profiles
     if (profile.isLocked && action !== 'rehire') return fail('This profile is locked after exit clearance. Only rehire is allowed.', 403);
 
-    if (!canOperateOnProfile(profile, user) && !['super_admin', 'admin_full'].includes(user.role)) {
+    if (!await canOperateOnProfile(profile, user) && !['super_admin', 'admin_full'].includes(user.role)) {
       return fail('Access denied', 403);
     }
 

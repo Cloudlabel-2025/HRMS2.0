@@ -17,8 +17,8 @@ const MODEL_MAP = {
 const ADMIN_ROLES = ['super_admin', 'admin_full'];
 
 const FIELD_ALLOWLIST = {
-  departments:  ['name', 'head', 'members'],
-  shifts:       ['name', 'startTime', 'endTime', 'days', 'expectedHours', 'hardCapHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd'],
+  departments:  ['name', 'head', 'members', 'visibleDepartments'],
+  shifts:       ['name', 'startTime', 'endTime', 'days', 'expectedHours', 'hardCapHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
   holidays:     ['name', 'date', 'type'],
   config:       ['key', 'value'],
   roles:        ['name', 'description'],
@@ -183,6 +183,9 @@ export async function PUT(req) {
   if (!MODEL_MAP[type]) return fail('Invalid type', 400);
   const { data, error: validationError } = validateSettingsPayload(type, body, { isUpdate: true });
   if (validationError) return validationError;
+  if (type === 'departments' && data.visibleDepartments !== undefined) {
+    data.visibleDepartments = Array.isArray(data.visibleDepartments) ? data.visibleDepartments : [];
+  }
   const doc = await MODEL_MAP[type].findByIdAndUpdate(id, data, { new: true, runValidators: true });
   if (!doc) return fail('Not found', 404);
   return ok(doc);

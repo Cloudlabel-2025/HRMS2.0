@@ -5,15 +5,18 @@ import User from '@/lib/models/User';
 import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleLabel } from '@/lib/payroll-cycle';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getAccessibleDepartments } from '@/lib/rbac';
 
 async function getTeamUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
   if (user.role === 'team_lead') {
-    const members = await User.find({ department: user.department, status: 'active' }).select('_id');
+    const depts = await getAccessibleDepartments(user);
+    const members = await User.find({ department: { $in: depts }, status: 'active' }).select('_id');
     return members.map(m => m._id);
   }
   if (user.role === 'team_admin') {
-    const members = await User.find({ department: user.department, role: { $ne: 'team_lead' }, status: 'active' }).select('_id');
+    const depts = await getAccessibleDepartments(user);
+    const members = await User.find({ department: { $in: depts }, role: { $ne: 'team_lead' }, status: 'active' }).select('_id');
     return members.map(m => m._id);
   }
   return [user._id];

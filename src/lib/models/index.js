@@ -260,17 +260,24 @@ const ApplicantSchema = new mongoose.Schema({
 const AttendanceRegularizationSchema = new mongoose.Schema({
   userId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   date:        { type: String, required: true },
-  requestedIn: { type: String },
-  requestedOut:{ type: String },
-  requestedBreakStart: { type: String, default: null },
-  requestedBreakEnd:   { type: String, default: null },
-  requestedLunchStart: { type: String, default: null },
-  requestedLunchEnd:   { type: String, default: null },
+  requestedIn: { type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/, default: null },
+  requestedOut:{ type: String, match: /^([01]\d|2[0-3]):[0-5]\d$/, default: null },
+  requestedOutNotYet:{ type: Boolean, default: false },
+  requestedBreaks: [{
+    type: { type: String, enum: ['break', 'lunch'], required: true },
+    start: { type: String, default: '' },
+    end: { type: String, default: null },
+    notYet: { type: Boolean, default: false },
+  }],
   reason:      { type: String, required: true },
   status:      { type: String, enum: ['pending','approved','rejected'], default: 'pending' },
   reviewedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   reviewedAt:  { type: Date, default: null },
 }, { timestamps: true });
+
+// Indexes for AttendanceRegularization
+AttendanceRegularizationSchema.index({ userId: 1, date: 1 });
+AttendanceRegularizationSchema.index({ status: 1 });
 
 // ── Role & Designation ───────────────────────────────────────────────────────
 const RoleSchema = new mongoose.Schema({
@@ -302,9 +309,10 @@ const NotificationSchema = new mongoose.Schema({
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 const DepartmentSchema = new mongoose.Schema({
-  name:    { type: String, required: true, unique: true },
-  head:    { type: String, default: '' },
-  members: { type: Number, default: 0 },
+  name:              { type: String, required: true, unique: true },
+  head:              { type: String, default: '' },
+  members:           { type: Number, default: 0 },
+  visibleDepartments: { type: [String], default: [] },
 }, { timestamps: true });
 
 const ShiftSchema = new mongoose.Schema({
@@ -324,7 +332,10 @@ const ShiftSchema = new mongoose.Schema({
     maxCount:    { type: Number, default: 1 },
   }],
   autoLogoutAfterShiftEnd: { type: Number, default: 360 },
+  halfDayThreshold: { type: Number, default: 180 },
 }, { timestamps: true });
+
+ShiftSchema.index({ name: 1 });
 
 const HolidaySchema = new mongoose.Schema({
   name: { type: String, required: true },
