@@ -1,7 +1,8 @@
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { connectDB } from '@/lib/db';
 import { TokenBlacklist } from '@/lib/models/index';
-import { getTokenFromRequest, ok, fail } from '@/lib/jwt';
+import { getTokenFromRequest, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
+import { NextResponse } from 'next/server';
 
 /**
  * POST /api/auth/logout
@@ -31,7 +32,10 @@ export async function POST(req) {
     // Audit log
     await auditLog('Logout', 'Auth', user._id, `User ${user.name} logged out`, 'low', ip, null, user._id);
 
-    return ok({ message: 'Logged out successfully' });
+    const response = NextResponse.json({ success: true, data: { message: 'Logged out successfully' } });
+    response.cookies.set('hrms_access', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+    response.cookies.set('hrms_refresh', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+    return response;
   } catch (e) {
     return fail('Logout failed: ' + e.message, 500);
   }

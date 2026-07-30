@@ -5,6 +5,10 @@ import { ok, fail } from '@/lib/jwt';
 import { uploadFile } from '@/lib/cloudinary';
 import { CreateDocumentSchema, validateRequest } from '@/lib/validation';
 
+const DOCUMENT_CATEGORIES = new Set(['Policy', 'Employee', 'Contract', 'HR', 'Other']);
+const DOCUMENT_ACCESS = new Set(['all', 'admin', 'employee']);
+const ALLOWED_DOCUMENT_EXTENSIONS = new Set(['pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'png', 'jpg', 'jpeg']);
+
 export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
@@ -57,10 +61,15 @@ export async function POST(req) {
       const expiry = formData.get('expiry') || undefined;
 
       if (!file) return fail('No file provided', 400);
+      if (!DOCUMENT_CATEGORIES.has(category) || !DOCUMENT_ACCESS.has(access)) return fail('Invalid document category or access level', 400);
+      if (typeof name !== 'string' || !name.trim() || name.length > 200) return fail('Document name must be between 1 and 200 characters', 400);
+      if (access === 'employee' && !employeeId) return fail('Employee access documents require an employee', 400);
 
       // 10 MB size limit
       if (file.size > 10 * 1024 * 1024) return fail('File exceeds 10 MB limit', 400);
       if (file.size === 0) return fail('File is empty', 400);
+      const extension = String(file.name || '').split('.').pop()?.toLowerCase() || '';
+      if (!ALLOWED_DOCUMENT_EXTENSIONS.has(extension)) return fail('Unsupported document type', 400);
 
       let buffer;
       if (typeof file.arrayBuffer === 'function') {
@@ -82,7 +91,7 @@ export async function POST(req) {
         : `${fileSizeKB} KB`;
 
       const doc = await Document.create({
-        name,
+        name: name.trim(),
         category,
         fileUrl: result.url,
         fileSize,

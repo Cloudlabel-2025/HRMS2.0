@@ -1,17 +1,13 @@
-import { getToken, getRefreshToken, setToken } from '@/lib/auth';
-
 let refreshPromise = null;
 
 async function tryRefresh() {
   // Deduplicate concurrent refresh calls
   if (refreshPromise) return refreshPromise;
   refreshPromise = (async () => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) throw new Error('Session expired');
     const res = await fetch('/api/auth/refresh', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
+      credentials: 'same-origin',
     });
     let json;
     try {
@@ -20,8 +16,7 @@ async function tryRefresh() {
       throw new Error('Session expired');
     }
     if (!res.ok) throw new Error('Session expired');
-    setToken(json.data.token);
-    return json.data.token;
+    return true;
   })();
   try {
     return await refreshPromise;
@@ -31,17 +26,15 @@ async function tryRefresh() {
 }
 
 async function request(url, options = {}, retry = true) {
-  const token = getToken();
   const isFormData = options.body instanceof FormData;
   const headers = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...options.headers,
   };
   if (typeof window !== 'undefined' && window.__impersonatedUser?._id) {
     headers['X-Impersonate'] = window.__impersonatedUser._id;
   }
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
 
   // Auto-refresh on 401 then retry once
   if (res.status === 401 && retry) {
@@ -51,8 +44,6 @@ async function request(url, options = {}, retry = true) {
     } catch {
       // Refresh failed — redirect to login
       if (typeof window !== 'undefined') {
-        localStorage.removeItem('hrms_token');
-        localStorage.removeItem('hrms_refresh');
         localStorage.removeItem('hrms_user');
         window.location.replace('/login?reason=expired');
       }

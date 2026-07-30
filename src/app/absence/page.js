@@ -14,11 +14,12 @@ export default function AbsencePage() {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
   const [toast, setToast] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [cardFilter, setCardFilter] = useState('all');
   const pageSize = 10;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [month]);
+  }, [month, cardFilter]);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -39,6 +40,30 @@ export default function AbsencePage() {
   const flagged = absences.filter(a => a.flagged || a.pattern >= 3);
   const noNotif = absences.filter(a => a.reason?.includes('No notification'));
   const depts = new Set(absences.map(a => a.userId?.department)).size;
+  const filteredAbsences = cardFilter === 'flagged' ? flagged : cardFilter === 'unnotified' ? noNotif : absences;
+
+  const handleExport = () => {
+    if (!filteredAbsences.length) return showToast('No absence records available to export');
+    const escapeCsv = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+    const rows = [
+      ['Employee', 'Department', 'Date', 'Reason', 'Absences This Month', 'Pattern Alert'],
+      ...filteredAbsences.map(absence => [
+        absence.userId?.name || '',
+        absence.userId?.department || '',
+        absence.date || '',
+        absence.reason || '',
+        absence.pattern || 1,
+        absence.flagged || absence.pattern >= 3 ? 'Flagged' : 'Normal',
+      ]),
+    ];
+    const csv = rows.map(row => row.map(escapeCsv).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `absence-management-${month}${cardFilter === 'all' ? '' : `-${cardFilter}`}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <AppShell title="Absence Management">
@@ -48,37 +73,38 @@ export default function AbsencePage() {
         <div><h4>Absence Management</h4><p>Track unplanned absences, patterns, and alerts</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input type="month" className="form-control" style={{ width: 160, fontSize: 13 }} value={month} onChange={e => setMonth(e.target.value)} />
-          <button className="btn btn-outline-secondary"><i className="bi bi-download me-2" />Export</button>
+          <button className="btn btn-outline-secondary" onClick={handleExport} disabled={loading || filteredAbsences.length === 0}><i className="bi bi-download me-2" />Export</button>
         </div>
       </div>
 
       <div className="row g-3 mb-4">
         {[
-          { label: 'Total Absences', value: absences.length, color: '#ef4444', icon: 'bi-person-x' },
-          { label: 'Flagged Patterns', value: flagged.length, color: '#f59e0b', icon: 'bi-exclamation-triangle' },
-          { label: 'Without Leave Applied', value: noNotif.length, color: '#8b5cf6', icon: 'bi-calendar-x' },
-          { label: 'Departments Affected', value: depts, color: '#3b82f6', icon: 'bi-diagram-3' },
+          { label: 'Total Absences', value: absences.length, color: '#ef4444', icon: 'bi-person-x', filter: 'all' },
+          { label: 'Flagged Patterns', value: flagged.length, color: '#f59e0b', icon: 'bi-exclamation-triangle', filter: 'flagged' },
+          { label: 'Without Leave Applied', value: noNotif.length, color: '#8b5cf6', icon: 'bi-calendar-x', filter: 'unnotified' },
+          { label: 'Departments Affected', value: depts, color: '#3b82f6', icon: 'bi-diagram-3', filter: 'all' },
         ].map((s, i) => (
-          <div key={i} className="col-6 col-xl-3">
-            <div className="stat-card">
+          <div key={i} className="col-6 col-xl-3 d-flex">
+            <button type="button" className="stat-card" onClick={() => setCardFilter(s.filter)} aria-pressed={cardFilter === s.filter} style={{ width: '100%', minHeight: 172, textAlign: 'left', cursor: 'pointer', border: cardFilter === s.filter ? `2px solid ${s.color}` : undefined }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div><div style={{ fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 6 }}>{s.label}</div><div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div></div>
+                <div><div style={{ minHeight: 36, fontSize: 12, color: '#64748b', fontWeight: 600, marginBottom: 6 }}>{s.label}</div><div style={{ fontSize: 28, fontWeight: 800, color: s.color }}>{s.value}</div></div>
                 <div className="stat-icon" style={{ background: s.color + '15' }}><i className={`bi ${s.icon}`} style={{ color: s.color }} /></div>
               </div>
-            </div>
+            </button>
           </div>
         ))}
       </div>
 
       <div className="card">
+        {!loading && <div style={{ padding: '11px 16px', borderBottom: '1px solid #f1f5f9', fontSize: 12, color: '#64748b' }}>Showing {cardFilter === 'flagged' ? 'flagged patterns' : cardFilter === 'unnotified' ? 'absences without leave applied' : 'all absences'} · {filteredAbsences.length} record{filteredAbsences.length !== 1 ? 's' : ''}</div>}
         {loading ? <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div> : (
           <div className="table-responsive">
             <table className="table mb-0">
               <thead><tr><th>Employee</th><th>Department</th><th>Date</th><th>Reason</th><th>Absences (Month)</th><th>Pattern Alert</th></tr></thead>
               <tbody>
-                {absences.length === 0 ? (
+                {filteredAbsences.length === 0 ? (
                   <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-person-check" /><h6>No absences recorded for {month}</h6></div></td></tr>
-                ) : absences.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(a => (
+                ) : filteredAbsences.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(a => (
                   <tr key={a._id}>
                     <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -101,12 +127,12 @@ export default function AbsencePage() {
             </table>
           </div>
         )}
-        {!loading && absences.length > 0 && (
+        {!loading && filteredAbsences.length > 0 && (
           <Pagination
             currentPage={currentPage}
-            totalPages={Math.ceil(absences.length / pageSize)}
+            totalPages={Math.ceil(filteredAbsences.length / pageSize)}
             onPageChange={setCurrentPage}
-            totalItems={absences.length}
+            totalItems={filteredAbsences.length}
             pageSize={pageSize}
           />
         )}

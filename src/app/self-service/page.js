@@ -304,7 +304,7 @@ export default function SelfServicePage() {
                   <option value="address_update">Address Update</option>
                   <option value="emergency_contact_update">Emergency Contact Update</option>
                   <option value="resignation">Resignation</option>
-                  <option value="permission">Permission Request</option>
+                  {user?.role !== 'super_admin' && <option value="permission">Permission Request</option>}
                 </select>
               </div>
               <div className="col-md-8">

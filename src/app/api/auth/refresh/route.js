@@ -1,10 +1,13 @@
-import { verifyToken, signToken, ok, fail } from '@/lib/jwt';
+import { verifyToken, signToken, getRefreshTokenFromRequest, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 import { connectDB } from '@/lib/db';
 import User from '@/lib/models/User';
+import { NextResponse } from 'next/server';
 
 export async function POST(req) {
   try {
-    const { refreshToken } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    // Body fallback keeps active clients functional during the cookie migration.
+    const refreshToken = getRefreshTokenFromRequest(req) || body.refreshToken;
     if (!refreshToken) return fail('Refresh token required', 401);
 
     const decoded = verifyToken(refreshToken);
@@ -16,7 +19,9 @@ export async function POST(req) {
     if (!user || user.status !== 'active') return fail('User not found or inactive', 401);
 
     const token = signToken({ id: user._id, role: user.role });
-    return ok({ token });
+    const response = NextResponse.json({ success: true, data: { refreshed: true } });
+    response.cookies.set('hrms_access', token, { ...SESSION_COOKIE_OPTIONS, maxAge: 15 * 60 });
+    return response;
   } catch (e) {
     return fail(e.message, 500);
   }

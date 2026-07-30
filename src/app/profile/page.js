@@ -1,9 +1,8 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
-import { useRouter } from 'next/navigation';
 import AppShell from '@/components/AppShell';
 
 const SEV_COLOR = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
@@ -12,33 +11,107 @@ const SEV_BG    = { low: '#f0fdf4', medium: '#fffbeb', high: '#fef2f2' };
 export default function ProfilePage() {
   const { user } = useAuth();
   const { formatDate, formatDateTime } = useSettings();
-  const router = useRouter();
 
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [tab, setTab]             = useState('info');
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photoError, setPhotoError] = useState('');
+  const [showPhotoActions, setShowPhotoActions] = useState(false);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!user) return;
 
     // Regular employees — redirect to their Employee record profile page
-    if (!['super_admin', 'admin_full'].includes(user.role)) {
-      api.get('/api/employees')
-        .then(emps => {
-          const mine = emps.find(e => e.email === user.email);
-          if (mine) router.replace(`/employees/${mine._id}`);
-          else setLoading(false);
-        })
-        .catch(() => setLoading(false));
-      return;
-    }
-
     // Admins — load their own audit logs from the audit API
-    api.get(`/api/audit?userId=${user.id}`)
-      .then(d => setAuditLogs(Array.isArray(d.logs) ? d.logs : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [user, router]);
+    if (['super_admin', 'admin_full'].includes(user.role)) {
+      api.get(`/api/audit?userId=${user.id}`)
+        .then(d => setAuditLogs(Array.isArray(d.logs) ? d.logs : []))
+        .catch(() => {})
+        .finally(() => setLoading(false));
+    } else {
+      setLoading(false);
+    }
+  }, [user]);
+
+  const compressProfilePhoto = async (file) => {
+    if (file.size > 25 * 1024 * 1024) throw new Error('Choose an image smaller than 25 MB.');
+    const sourceUrl = URL.createObjectURL(file);
+    try {
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('This image could not be processed.'));
+        element.src = sourceUrl;
+      });
+      let width = image.naturalWidth;
+      let height = image.naturalHeight;
+      const initialScale = Math.min(1, 2400 / Math.max(width, height));
+      width = Math.max(1, Math.round(width * initialScale));
+      height = Math.max(1, Math.round(height * initialScale));
+      let quality = 0.9;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(image, 0, 0, width, height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+        if (!blob) throw new Error('Unable to compress this image.');
+        if (blob.size <= 4.75 * 1024 * 1024) {
+          const name = `${file.name.replace(/\.[^.]+$/, '') || 'profile-photo'}.jpg`;
+          return new File([blob], name, { type: 'image/jpeg' });
+        }
+        quality = Math.max(0.55, quality - 0.1);
+        if (attempt >= 3) {
+          width = Math.max(1, Math.round(width * 0.8));
+          height = Math.max(1, Math.round(height * 0.8));
+        }
+      }
+      throw new Error('The image could not be compressed below 5 MB.');
+    } finally {
+      URL.revokeObjectURL(sourceUrl);
+    }
+  };
+
+  const uploadProfilePhoto = async (event) => {
+    const photo = event.target.files?.[0];
+    event.target.value = '';
+    if (!photo) return;
+    setShowPhotoActions(false);
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(photo.type)) return setPhotoError('Choose a JPG, PNG, or WebP image.');
+    setPhotoError('');
+    setUploadingPhoto(true);
+    try {
+      const compressedPhoto = await compressProfilePhoto(photo);
+      const data = new FormData();
+      data.append('photo', compressedPhoto);
+      const response = await fetch('/api/profile/avatar', { method: 'POST', credentials: 'same-origin', body: data });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'Unable to upload profile photo');
+      window.location.reload();
+    } catch (error) {
+      setPhotoError(error.message);
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const removeProfilePhoto = async () => {
+    setPhotoError('');
+    setUploadingPhoto(true);
+    try {
+      const response = await fetch('/api/profile/avatar', { method: 'DELETE', credentials: 'same-origin' });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'Unable to remove profile photo');
+      window.location.reload();
+    } catch (error) {
+      setPhotoError(error.message);
+    } finally {
+      setUploadingPhoto(false);
+      setShowPhotoActions(false);
+    }
+  };
 
   if (loading) return (
     <AppShell title="My Profile">
@@ -53,15 +126,19 @@ export default function ProfilePage() {
       {/* Hero Banner */}
       <div className="card mb-4" style={{ borderRadius: 16, overflow: 'hidden', border: 'none' }}>
         <div style={{ height: 100, background: `linear-gradient(135deg, ${ROLE_COLORS[user.role] || '#3b82f6'} 0%, #1e293b 100%)` }} />
-        <div style={{ padding: '0 28px 24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 12, marginTop: -44 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16 }}>
-              <div style={{ width: 88, height: 88, borderRadius: 18, background: '#fff', padding: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', flexShrink: 0 }}>
-                <div style={{ width: '100%', height: '100%', borderRadius: 14, background: `linear-gradient(135deg, ${ROLE_COLORS[user.role] || '#3b82f6'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 800, color: '#fff' }}>
-                  {user.avatar || user.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+        <div style={{ padding: '20px 28px 24px', position: 'relative', background: '#fff' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ width: 88, height: 88, borderRadius: 18, background: '#fff', padding: 4, boxShadow: '0 4px 16px rgba(0,0,0,0.12)', flexShrink: 0, position: 'relative' }}>
+                <div style={{ width: '100%', height: '100%', borderRadius: 14, background: `linear-gradient(135deg, ${ROLE_COLORS[user.role] || '#3b82f6'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, fontWeight: 800, color: '#fff', overflow: 'hidden' }}>
+                  {user.profilePhoto ? <img src={user.profilePhoto} alt={`${user.name}'s profile`} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : (user.avatar || user.name?.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase())}
                 </div>
+                <button type="button" aria-label="Edit profile photo" onClick={() => setShowPhotoActions(value => !value)} disabled={uploadingPhoto}
+                  style={{ position: 'absolute', right: -8, bottom: -8, width: 30, height: 30, borderRadius: '50%', border: '3px solid #fff', background: '#2563eb', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 2px 8px rgba(37,99,235,0.35)', zIndex: 2 }}>
+                  <i className="bi bi-pencil-fill" style={{ fontSize: 11 }} />
+                </button>
               </div>
-              <div style={{ paddingBottom: 4 }}>
+              <div>
                 <h3 style={{ margin: 0, fontWeight: 800, fontSize: 22, color: '#0f172a' }}>{user.name}</h3>
                 <div style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>
                   <span style={{ fontWeight: 600, color: '#334155' }}>{user.designation || ROLE_LABELS[user.role]}</span>
@@ -73,6 +150,8 @@ export default function ProfilePage() {
               {ROLE_LABELS[user.role] || user.role}
             </span>
           </div>
+          <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp" onChange={uploadProfilePhoto} style={{ display: 'none' }} />
+          {photoError && <div style={{ marginTop: 12, fontSize: 12, color: '#dc2626' }}>{photoError}</div>}
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 24px', marginTop: 18, paddingTop: 14, borderTop: '1px solid #f1f5f9' }}>
             {[
               { icon: 'bi-envelope', val: user.email },
@@ -87,6 +166,31 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      {showPhotoActions && (
+        <div onClick={() => setShowPhotoActions(false)} style={{ position: 'fixed', inset: 0, zIndex: 1055, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, background: 'rgba(15,23,42,0.48)', backdropFilter: 'blur(3px)' }}>
+          <div onClick={event => event.stopPropagation()} style={{ width: 'min(100%, 360px)', overflow: 'hidden', borderRadius: 18, background: '#fff', boxShadow: '0 24px 56px rgba(15,23,42,0.28)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 20px 14px', borderBottom: '1px solid #eef2f7' }}>
+              <div>
+                <div style={{ color: '#0f172a', fontSize: 17, fontWeight: 750 }}>Profile photo</div>
+                <div style={{ color: '#64748b', fontSize: 12, marginTop: 3 }}>Keep your profile recognisable to your team.</div>
+              </div>
+              <button type="button" aria-label="Close photo options" onClick={() => setShowPhotoActions(false)} style={{ width: 30, height: 30, border: 'none', borderRadius: 8, background: '#f1f5f9', color: '#64748b', cursor: 'pointer' }}><i className="bi bi-x-lg" /></button>
+            </div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '16px 20px', background: '#f8fafc' }}>
+              <div style={{ width: 48, height: 48, flexShrink: 0, overflow: 'hidden', borderRadius: 14, background: `linear-gradient(135deg, ${ROLE_COLORS[user.role] || '#3b82f6'}, #1e293b)`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800 }}>
+                {user.profilePhoto ? <img src={user.profilePhoto} alt="Current profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : user.avatar}
+              </div>
+              <div><div style={{ color: '#1e293b', fontSize: 13, fontWeight: 700 }}>{user.name}</div><div style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>{user.profilePhoto ? 'Current photo' : 'No photo uploaded'}</div></div>
+            </div>
+            <div style={{ padding: 20, display: 'grid', gap: 10 }}>
+              <button type="button" onClick={() => fileInputRef.current?.click()} disabled={uploadingPhoto} style={{ width: '100%', border: 'none', borderRadius: 10, padding: '11px 14px', background: '#2563eb', color: '#fff', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}><i className="bi bi-upload me-2" />{uploadingPhoto ? 'Processing image...' : 'Upload new photo'}</button>
+              {user.profilePhoto && <button type="button" onClick={removeProfilePhoto} disabled={uploadingPhoto} style={{ width: '100%', border: '1px solid #fecaca', borderRadius: 10, padding: '10px 14px', background: '#fff', color: '#dc2626', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}><i className="bi bi-trash3 me-2" />Remove photo</button>}
+              <div style={{ color: '#94a3b8', textAlign: 'center', fontSize: 10.5 }}>JPG, PNG, or WebP · automatically optimised to 5 MB</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>

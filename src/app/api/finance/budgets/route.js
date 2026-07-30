@@ -12,7 +12,7 @@ export async function GET(req) {
     await connectDB();
     const { searchParams } = new URL(req.url);
     const year = searchParams.get('year') || new Date().getFullYear();
-    const budgets = await Budget.find({ year: Number(year) }).sort({ department: 1 });
+    const budgets = await Budget.find({ year: Number(year), department: 'Organisation', month: { $gte: 1, $lte: 12 } }).sort({ month: 1 });
     return ok({ budgets });
   } catch (e) {
     return fail(e.message, 500);
@@ -26,9 +26,15 @@ export async function POST(req) {
     if (!hasAccess(user.role, 'finance')) return fail('Access denied', 403);
     await connectDB();
     const body = await req.json();
+    const year = Number(body.year);
+    const month = Number(body.month);
+    const allocated = Number(body.allocated);
+    if (!Number.isInteger(year) || year < 2000 || year > 2100 || !Number.isInteger(month) || month < 1 || month > 12 || !Number.isFinite(allocated) || allocated <= 0) {
+      return fail('Valid year, month, and positive allocation are required', 400);
+    }
     const budget = await Budget.findOneAndUpdate(
-      { department: body.department, year: body.year },
-      body,
+      { department: 'Organisation', year, month },
+      { $inc: { allocated } },
       { upsert: true, new: true }
     );
     return ok({ budget }, 201);

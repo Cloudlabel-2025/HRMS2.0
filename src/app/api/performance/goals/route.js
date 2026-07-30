@@ -1,8 +1,12 @@
 import { connectDB } from '@/lib/db';
-import { Goal } from '@/lib/models/index';
+import { Goal, Notification } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+
+function currentCycle(date = new Date()) {
+  return `C${Math.floor(date.getMonth() / 3) + 1}${date.getFullYear()}`;
+}
 
 async function getTeamUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
@@ -47,32 +51,58 @@ export async function POST(req) {
     await connectDB();
     const ip = req.headers.get('x-forwarded-for') || '';
     const body = await req.json();
-    if (!body.title) {
-      auditLog('Goal Create Failed', 'Performance', user._id, 'Failed to create goal: title is required', 'low', ip, null, user._id);
-      return fail('Goal title is required', 400);
+    if (!body.title?.trim() || body.title.length > 35) {
+      auditLog('Goal Create Failed', 'Performance', user._id, 'Failed to create goal: title is required or exceeds 35 characters', 'low', ip, null, user._id);
+      return fail('Goal title is required and must be at most 35 characters', 400);
     }
 
-    let targetId;
-    if (['employee', 'intern'].includes(user.role)) {
-      targetId = user._id;
-    } else if (['team_lead', 'team_admin'].includes(user.role)) {
-      targetId = body.userId || user._id;
-      if (targetId.toString() !== user._id.toString()) {
-        const filter = user.role === 'team_lead' ? { teamLeadId: user._id } : { teamAdminId: user._id };
-        const member = await User.findOne({ _id: targetId, ...filter });
-        if (!member) {
-          auditLog('Goal Create Failed', 'Performance', user._id, `Attempted to assign goal to non-team member (${targetId})`, 'low', ip, null, user._id);
-          return fail('You can only assign goals to your team members', 403);
-        }
-      }
-    } else {
-      targetId = body.userId || user._id;
-    }
+    const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
+    const targetId = isAdmin ? (body.userId || user._id) : user._id;
 
-    const goal = await Goal.create({ ...body, userId: targetId });
-    auditLog('Goal Created', 'Performance', user._id, `Created goal: "${body.title}"`, 'low', ip, null, targetId);
+    const goal = await Goal.create({ ...body, userId: targetId, approvalStatus: isAdmin ? 'approved' : 'pending' });
+    if (!isAdmin) {
+      const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id');
+      if (admins.length) await Notification.insertMany(admins.map(admin => ({ userId: admin._id, title: 'Goal approval requested', message: `${user.name} requested the goal: ${goal.title}`, type: 'performance', refId: goal._id })));
+    }
+    auditLog(isAdmin ? 'Goal Created' : 'Goal Approval Requested', 'Performance', user._id, `${isAdmin ? 'Created' : 'Requested'} goal: "${body.title}"`, 'low', ip, null, targetId);
     return ok({ goal }, 201);
   } catch (e) {
     return fail(e.message, 500);
   }
+}
+
+export async function PUT(req) {
+  try {
+    const { user, error } = await requireAuth(req);
+    if (error) return error;
+    if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Only Super Admin and Admin can validate goals', 403);
+    await connectDB();
+    const { id, validationComment = '', action } = await req.json();
+    const goal = await Goal.findById(id);
+    if (!goal) return fail('Goal not found', 404);
+    if (['approve_request', 'reject_request'].includes(action)) {
+      if (goal.approvalStatus !== 'pending') return fail('This goal request has already been decided');
+      goal.approvalStatus = action === 'approve_request' ? 'approved' : 'rejected';
+      goal.validationComment = validationComment.trim();
+      await goal.save();
+      await Notification.create({
+        userId: goal.userId,
+        title: `Goal request ${action === 'approve_request' ? 'approved' : 'rejected'}`,
+        message: `${action === 'approve_request' ? 'Your requested goal is now active' : 'Your goal request was rejected'}: ${goal.title}`,
+        type: 'performance',
+        refId: goal._id,
+      });
+      await auditLog('Goal Request Decision', 'Performance', user._id, `${action === 'approve_request' ? 'Approved' : 'Rejected'} goal request: "${goal.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, goal.userId);
+      return ok({ goal });
+    }
+    if (goal.validationStatus === 'validated') return fail('Goal is already validated');
+    if (goal.progress < 100 && goal.cycle === currentCycle()) return fail('A goal can be validated only after completion or at the end of its cycle');
+    goal.validationStatus = 'validated';
+    goal.validatedBy = user._id;
+    goal.validatedAt = new Date();
+    goal.validationComment = validationComment.trim();
+    await goal.save();
+    await auditLog('Goal Validated', 'Performance', user._id, `Validated goal: "${goal.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, goal.userId);
+    return ok({ goal });
+  } catch (e) { return fail(e.message, 500); }
 }

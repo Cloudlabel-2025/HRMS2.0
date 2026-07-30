@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { assertProductionConfiguration } from './runtime-config';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) throw new Error('Please define MONGODB_URI in .env.local');
@@ -7,6 +8,7 @@ let cached = global._mongoose;
 if (!cached) cached = global._mongoose = { conn: null, promise: null };
 
 async function dbConnect() {
+  assertProductionConfiguration();
   if (cached.conn) {
     if (cached.conn.readyState === 1) return cached.conn;
     cached.conn = null;

@@ -5,6 +5,8 @@ import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
 import { AuditLog, Shift, Leave, Department } from '@/lib/models/index';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
 import { LoginSchema, validateRequest } from '@/lib/validation';
+import { NextResponse } from 'next/server';
+import { SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 
 const rateLimit = new Map();
 
@@ -212,9 +214,7 @@ export async function POST(req) {
       visibleDepartments = deptDoc?.visibleDepartments || [];
     }
 
-    return ok({
-      token,
-      refreshToken,
+    const response = NextResponse.json({ success: true, data: {
       isFirstLogin: user.isFirstLogin,
       needsLateLogoutReason,
       lateLogoutDate,
@@ -231,7 +231,10 @@ export async function POST(req) {
         isFirstLogin:user.isFirstLogin,
         visibleDepartments,
       },
-    });
+    }});
+    response.cookies.set('hrms_access', token, { ...SESSION_COOKIE_OPTIONS, maxAge: 15 * 60 });
+    response.cookies.set('hrms_refresh', refreshToken, { ...SESSION_COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 });
+    return response;
   } catch (e) {
     return fail('Internal error: ' + e.message, 500);
   }

@@ -9,6 +9,7 @@ import { buildChangeSet, sanitizeProfileRecord } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { UpdateEmploymentProfileSchema, validateRequest } from '@/lib/validation';
 import { canAccessDepartment } from '@/lib/rbac';
+import { notifyExpiredProbations } from '@/lib/core/probation';
 
 function syncAuthUserFromProfile(identity, profile) {
   if (!identity?.authUserId) return null;
@@ -44,6 +45,7 @@ export async function GET(req, { params }) {
     if (error) return error;
 
     await dbConnect();
+    await notifyExpiredProbations();
     const profile = await EmpProfile.findById(id).populate('identityId', 'identityCode legalName primaryEmail preferredName recordStatus authUserId');
     if (!profile) return fail('Employment profile not found', 404);
 

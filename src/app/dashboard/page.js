@@ -36,10 +36,12 @@ function BarChart({ data }) {
 
 export default function DashboardPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [announcementQueue, setAnnouncementQueue] = useState([]);
+  const [acknowledgingAnnouncement, setAcknowledgingAnnouncement] = useState(false);
 
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [permissionForm, setPermissionForm] = useState({ date: '', startTime: '', endTime: '', reason: '' });
@@ -95,11 +97,30 @@ export default function DashboardPage() {
       .then(setStats)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
+
+    api.get('/api/notifications')
+      .then(notes => setAnnouncementQueue((Array.isArray(notes) ? notes : []).filter(note => note.type === 'announcement' && !note.read)))
+      .catch(() => {});
   }, []);
+
+  const acknowledgeAnnouncement = async () => {
+    const announcement = announcementQueue[0];
+    if (!announcement || acknowledgingAnnouncement) return;
+    setAcknowledgingAnnouncement(true);
+    try {
+      await api.patch('/api/notifications', { id: announcement._id });
+      setAnnouncementQueue(queue => queue.slice(1));
+    } catch (e) {
+      setError(e.message || 'Unable to acknowledge the announcement. Please try again.');
+    } finally {
+      setAcknowledgingAnnouncement(false);
+    }
+  };
 
   if (!user) return null;
 
   const role = user.role;
+  const isSuperAdmin = role === 'super_admin';
   const isAdmin     = ['super_admin', 'admin_full'].includes(role);
   const isTeamLead  = role === 'team_lead';
   const isTeamAdmin = role === 'team_admin';
@@ -135,19 +156,38 @@ export default function DashboardPage() {
     ]
   ) : [];
 
+  const statCardRoutes = {
+    'Total Employees': '/employees',
+    'Team Members': '/employees',
+    'Present Today': '/attendance',
+    'Days Present': '/attendance',
+    'Pending Leaves': '/leave',
+    'Pending Approvals': '/leave',
+    'Leave Approvals': '/leave',
+    'My Leave Balance': '/leave',
+    'Leave Balance': '/leave',
+    'Open Tasks': '/tasks',
+    'Team Tasks': '/tasks',
+    'Pending Tasks': '/tasks',
+    'Open Positions': '/recruitment',
+    'Last Payslip': '/payroll',
+  };
+
   // Quick actions based on role
   const quickActions = isAdmin ? [
     { icon: 'bi-person-plus', label: 'Add Employee', color: '#3b82f6', href: '/employees' },
     { icon: 'bi-calendar-check', label: 'Approve Leaves', color: '#f59e0b', href: '/leave' },
     { icon: 'bi-cash-stack', label: 'Run Payroll', color: '#10b981', href: '/payroll' },
     { icon: 'bi-megaphone', label: 'Announce', color: '#8b5cf6', href: '/communication' },
-    { icon: 'bi-shield-check', label: 'Request Permission', color: '#14b8a6', onClick: () => setShowPermissionModal(true) },
+    ...(!isSuperAdmin ? [{ icon: 'bi-shield-check', label: 'Request Permission', color: '#14b8a6', onClick: () => setShowPermissionModal(true) }] : []),
   ] : [
     { icon: 'bi-clock', label: 'Mark Attendance', color: '#3b82f6', href: '/attendance' },
     { icon: 'bi-calendar-plus', label: 'Request Leave', color: '#f59e0b', href: '/leave' },
     { icon: 'bi-shield-check', label: 'Request Permission', color: '#10b981', onClick: () => setShowPermissionModal(true) },
     { icon: 'bi-person-badge', label: 'My Profile', color: '#8b5cf6', href: '/self-service' },
   ];
+
+  const currentAnnouncement = announcementQueue[0];
 
   return (
     <AppShell title="Dashboard">
@@ -181,7 +221,13 @@ export default function DashboardPage() {
           <div className="row g-3 mb-4">
             {statCards.map((s, i) => (
               <div key={i} className="col-6 col-xl-3">
-                <div className="stat-card">
+                <Link
+                  href={statCardRoutes[s.label] || '/dashboard'}
+                  className="stat-card"
+                  aria-label={`Open ${s.label}`}
+                  style={{ display: 'block', textDecoration: 'none', transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 10px 22px rgba(15, 23, 42, 0.10)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = ''; }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                     <div>
                       <div style={{ fontSize: 12.5, color: '#64748b', fontWeight: 600, marginBottom: 6, letterSpacing: 0.2 }}>{s.label}</div>
@@ -191,7 +237,7 @@ export default function DashboardPage() {
                       <i className={`bi ${s.icon}`} style={{ color: s.color }} />
                     </div>
                   </div>
-                </div>
+                </Link>
               </div>
             ))}
           </div>
@@ -228,32 +274,27 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Activity + Announcements */}
+          {/* Employee monitoring + announcements */}
           <div className="row g-3">
             <div className="col-lg-6">
               <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <i className="bi bi-activity" style={{ color: '#3b82f6', fontSize: 15 }} />
+                    <i className="bi bi-person-lines-fill" style={{ color: '#3b82f6', fontSize: 15 }} />
                   </div>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Recent Activity</span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Employee Monitoring</span>
+                  {stats?.monitoring && <Link href="/monitoring" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Open monitoring <i className="bi bi-arrow-right" /></Link>}
                 </div>
-                {stats?.recentActivity?.length === 0 && <div className="empty-state"><i className="bi bi-activity" /><p>No recent activity</p></div>}
-                {stats?.recentActivity?.map((a, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', padding: '14px 0', borderBottom: i < stats.recentActivity.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
-                    {/* Timeline dot */}
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                      <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#3b82f6', border: '2px solid #dbeafe', flexShrink: 0 }} />
-                      {i < stats.recentActivity.length - 1 && <div style={{ width: 1, flex: 1, background: '#e2e8f0', marginTop: 4 }} />}
+                {stats?.monitoring ? <>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
+                  {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
+                    <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
+                      <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
+                      <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, color: '#334155', lineHeight: 1.45, fontWeight: 500 }}>{a.text}</div>
-                      <div style={{ fontSize: 11.5, color: '#94a3b8', marginTop: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <i className="bi bi-clock" style={{ fontSize: 10 }} />{formatDateTime(a.time)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
               </div>
             </div>
 
@@ -283,6 +324,7 @@ export default function DashboardPage() {
                     </div>
                     <div style={{ fontSize: 14, fontWeight: 650, color: '#0f172a', marginBottom: 4, letterSpacing: '-0.01em' }}>{a.title}</div>
                     <div style={{ fontSize: 12.5, color: '#64748b', lineHeight: 1.55 }}>{a.body}</div>
+                    {a.attachment?.url && <a href={a.attachment.url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, color: '#2563eb', fontSize: 11.5, fontWeight: 700, textDecoration: 'none' }}><i className="bi bi-paperclip" />{a.attachment.name || 'Open attachment'}</a>}
                   </div>
                 ))}
               </div>
@@ -291,7 +333,32 @@ export default function DashboardPage() {
         </>
       )}
 
-      {showPermissionModal && (
+      {currentAnnouncement && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="announcement-modal-title"
+          style={{
+            position: 'fixed', inset: 0, padding: 16,
+            backgroundColor: 'rgba(15, 23, 42, 0.68)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000,
+          }}>
+          <div className="card shadow-lg" style={{ width: '100%', maxWidth: 520, borderRadius: 16, border: 'none', overflow: 'hidden' }}>
+            <div style={{ padding: '24px 24px 12px', textAlign: 'center' }}>
+              <div style={{ width: 48, height: 48, margin: '0 auto 13px', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#eff6ff', color: '#2563eb' }}><i className="bi bi-megaphone-fill" style={{ fontSize: 21 }} /></div>
+              <div style={{ fontSize: 11.5, color: '#64748b', fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.7 }}>New announcement</div>
+              <h5 id="announcement-modal-title" style={{ color: '#0f172a', fontWeight: 750, margin: '7px 0 0' }}>{currentAnnouncement.title.replace(/^Announcement:\s*/, '')}</h5>
+            </div>
+            <div style={{ padding: '8px 24px 24px', color: '#475569', fontSize: 14, lineHeight: 1.65, whiteSpace: 'pre-wrap', textAlign: 'center' }}>{currentAnnouncement.message}</div>
+            {currentAnnouncement.attachment?.url && <div style={{ padding: '0 24px 24px', textAlign: 'center' }}><a href={currentAnnouncement.attachment.url} download={currentAnnouncement.attachment.name || true} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '9px 13px', borderRadius: 8, background: '#eff6ff', color: '#2563eb', fontSize: 12.5, fontWeight: 700, textDecoration: 'none' }}><i className="bi bi-download" />Download {currentAnnouncement.attachment.name || 'attachment'}</a></div>}
+            <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
+              <button type="button" className="btn btn-primary px-5" onClick={acknowledgeAnnouncement} disabled={acknowledgingAnnouncement}>{acknowledgingAnnouncement ? 'Please wait...' : 'OK'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPermissionModal && !isSuperAdmin && (
         <div style={{
           position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
           backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',

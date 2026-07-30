@@ -76,7 +76,7 @@ function getCycleDateRange(payrollStartDay, payrollEndDay) {
 }
 
 const EMPTY_GOAL = { title: '', target: '', progress: 0, cycle: '', userId: '' };
-const EMPTY_REVIEW = { userId: '', cycle: '', projectId: '', taskId: '', selfScore: '', selfComment: '', peerScore: '', peerComment: '', managerScore: '', managerComment: '', status: 'pending' };
+const EMPTY_REVIEW = { userId: '', cycle: '', projectId: '', taskId: '', status: 'in_review' };
 
 export default function PerformancePage() {
   const { user } = useAuth();
@@ -97,6 +97,12 @@ export default function PerformancePage() {
   const [reviewForm, setReviewForm] = useState(EMPTY_REVIEW);
   const [reviewProjects, setReviewProjects] = useState([]);
   const [reviewTasks, setReviewTasks] = useState([]);
+  const [reviewSubmission, setReviewSubmission] = useState(null);
+  const [submissionScore, setSubmissionScore] = useState('');
+  const [submissionComment, setSubmissionComment] = useState('');
+  const [submissionStatus, setSubmissionStatus] = useState('completed');
+  const [goalDecision, setGoalDecision] = useState(null);
+  const [goalDecisionComment, setGoalDecisionComment] = useState('');
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [payrollStartDay, setPayrollStartDay] = useState(26);
@@ -110,6 +116,8 @@ export default function PerformancePage() {
   const [analyticsPage, setAnalyticsPage] = useState(1);
   const pageSize = 10;
 
+  useEffect(() => { if (new URLSearchParams(window.location.search).get('tab') === 'reviews') setTab('reviews'); }, []);
+
   useEffect(() => {
     setMyGoalsPage(1);
     setEmpPage(1);
@@ -120,6 +128,8 @@ export default function PerformancePage() {
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
+  const canSetGoals = ['super_admin', 'admin_full'].includes(user?.role);
+  const canValidateGoals = ['super_admin', 'admin_full'].includes(user?.role);
 
   const load = async () => {
     setLoading(true);
@@ -166,8 +176,7 @@ export default function PerformancePage() {
 
   const saveGoal = async () => {
     if (!goalForm.title) return showToast('Goal title required', 'error');
-    if (goalForm.title.length > 30) return showToast('Goal title must be at most 30 characters', 'error');
-    if (!/^[a-zA-Z0-9]+$/.test(goalForm.title)) return showToast('Goal title must contain only letters and numbers', 'error');
+    if (goalForm.title.length > 35) return showToast('Goal title must be at most 35 characters', 'error');
     if (!goalForm.target) return showToast('Target date is required', 'error');
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -177,7 +186,7 @@ export default function PerformancePage() {
     setSaving(true);
     try {
       await api.post('/api/performance/goals', goalForm);
-      showToast('Goal created');
+      showToast(canSetGoals ? 'Goal created' : 'Goal request sent to Admin');
       setShowGoalModal(false);
       setGoalForm(EMPTY_GOAL);
       load();
@@ -212,16 +221,10 @@ export default function PerformancePage() {
   const saveReview = async () => {
     if (!reviewForm.userId || !reviewForm.cycle) return showToast('Employee and cycle required', 'error');
     if (!reviewForm.projectId) return showToast('Project is required', 'error');
-    if (!reviewForm.selfScore || !reviewForm.peerScore || !reviewForm.managerScore) return showToast('All scores (Self, Peer, Manager) are required', 'error');
     setSaving(true);
     try {
-      await api.post('/api/performance/reviews', {
-        ...reviewForm,
-        selfScore: +reviewForm.selfScore,
-        peerScore: +reviewForm.peerScore,
-        managerScore: +reviewForm.managerScore,
-      });
-      showToast('Review submitted');
+      await api.post('/api/performance/reviews', reviewForm);
+      showToast('Review created and project members notified');
       setShowReviewModal(false);
       setReviewForm(EMPTY_REVIEW);
       setReviewProjects([]);
@@ -232,6 +235,16 @@ export default function PerformancePage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const submitReviewScore = async () => {
+    if (submissionScore === '') return showToast('Select a score', 'error');
+    setSaving(true);
+    try {
+      await api.put('/api/performance/reviews', { id: reviewSubmission._id, action: reviewSubmission.action, score: +submissionScore, comment: submissionComment, status: submissionStatus });
+      showToast(reviewSubmission.action === 'manager' ? 'Review completed' : 'Score submitted');
+      setReviewSubmission(null); setSubmissionScore(''); setSubmissionComment(''); load();
+    } catch (e) { showToast(e.message, 'error'); } finally { setSaving(false); }
   };
 
   const handleReviewEmployeeChange = async (userId) => {
@@ -272,7 +285,34 @@ export default function PerformancePage() {
     }
   };
 
-  const myGoals = goals.filter(g => g.userId?._id === user?.id || g.userId === user?.id);
+  const validateGoal = async (goal) => {
+    const validationComment = window.prompt(`Validate "${goal.title}". Optional validation comment:`);
+    if (validationComment === null) return;
+    try {
+      await api.put('/api/performance/goals', { id: goal._id, validationComment });
+      showToast('Goal validated');
+      setEmployeeGoals(previous => previous.map(item => item._id === goal._id ? { ...item, validationStatus: 'validated', validationComment } : item));
+    } catch (error) { showToast(error.message, 'error'); }
+  };
+
+  const decideGoalRequest = async (goal, action) => {
+    setGoalDecision({ goal, action });
+    setGoalDecisionComment('');
+  };
+
+  const confirmGoalDecision = async () => {
+    if (!goalDecision) return;
+    try {
+      setSaving(true);
+      await api.put('/api/performance/goals', { id: goalDecision.goal._id, action: goalDecision.action, validationComment: goalDecisionComment });
+      showToast(goalDecision.action === 'approve_request' ? 'Goal request accepted' : 'Goal request rejected');
+      setGoalDecision(null);
+      load();
+    } catch (error) { showToast(error.message, 'error'); } finally { setSaving(false); }
+  };
+
+  const myGoals = goals.filter(g => (g.userId?._id === user?.id || g.userId === user?.id) && g.cycle === getCurrentCycle(payrollStartDay));
+  const goalRequests = goals.filter(goal => goal.approvalStatus === 'pending');
 
   const assignableEmployees = (() => {
     if (!user) return [];
@@ -309,7 +349,7 @@ export default function PerformancePage() {
       <div className="page-header">
         <div><h4>Performance Management</h4><p>Goals, KPIs, reviews, and appraisals</p></div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-outline-primary" onClick={() => { setGoalForm(p => ({ ...p, cycle: getCurrentCycle(payrollStartDay) })); setShowGoalModal(true); }}><i className="bi bi-plus-lg me-2" />Set Goal</button>
+          <button className="btn btn-outline-primary" onClick={() => { setGoalForm(p => ({ ...p, cycle: getCurrentCycle(payrollStartDay) })); setShowGoalModal(true); }}><i className="bi bi-plus-lg me-2" />{canSetGoals ? 'Set Goal' : 'Request Goal'}</button>
           {isAdmin && <button className="btn btn-primary" onClick={() => { setReviewForm({ ...EMPTY_REVIEW, cycle: getCurrentCycle(payrollStartDay) }); setReviewProjects([]); setReviewTasks([]); setShowReviewModal(true); }}><i className="bi bi-plus-lg me-2" />Add Review</button>}
         </div>
       </div>
@@ -384,6 +424,7 @@ export default function PerformancePage() {
 
           {tab === 'employee-goals' && (
             <div>
+              {canSetGoals && goalRequests.length > 0 && <div className="card p-3 mb-3"><div style={{ fontWeight: 700, fontSize: 15, marginBottom: 10 }}>Goal Requests</div>{goalRequests.map(goal => <div key={goal._id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ flex: 1 }}><div style={{ fontWeight: 600, fontSize: 13 }}>{goal.title}</div><div style={{ fontSize: 11, color: '#64748b' }}>{goal.userId?.name || 'Employee'} · {goal.cycle}</div></div><button className="btn btn-sm btn-outline-danger" onClick={() => decideGoalRequest(goal, 'reject_request')}>Reject</button><button className="btn btn-sm btn-success" onClick={() => decideGoalRequest(goal, 'approve_request')}>Accept</button></div>)}</div>}
               {!selectedEmployee ? (
                 <>
                   <div className="row g-3">
@@ -447,6 +488,8 @@ export default function PerformancePage() {
                                 {goal.status === 'achieved' ? 'Achieved' : goal.status === 'missed' ? 'Missed' : 'In Progress'}
                               </span>
                             </div>
+                            {goal.weeklyUpdates?.length > 0 && <div style={{ marginTop: 10, borderTop: '1px solid #e2e8f0', paddingTop: 8 }}><div style={{ fontSize: 11, fontWeight: 700, color: '#475569', marginBottom: 4 }}>Weekly updates</div>{goal.weeklyUpdates.map(update => <div key={update._id || update.weekEnding} style={{ fontSize: 11, color: '#64748b', marginTop: 3 }}><strong>{update.weekEnding}</strong> · {update.progress}% · {update.remark}</div>)}</div>}
+                            {goal.validationStatus === 'validated' ? <div style={{ marginTop: 8, fontSize: 11, color: '#16a34a', fontWeight: 700 }}><i className="bi bi-patch-check me-1" />Validated</div> : canValidateGoals && (goal.progress === 100 || goal.cycle !== getCurrentCycle(payrollStartDay)) ? <button className="btn btn-sm btn-outline-success mt-2" onClick={() => validateGoal(goal)}>Validate Goal</button> : null}
                           </div>
                         </div>
                       ))}
@@ -493,7 +536,7 @@ export default function PerformancePage() {
                         <td>{r.managerScore ? <StarRating value={r.managerScore} /> : '—'}</td>
                         <td>{r.overall ? <><div style={{ fontWeight: 800, fontSize: 16, color: RATING_COLOR(r.overall) }}>{r.overall}</div><div style={{ fontSize: 10, color: '#94a3b8' }}>{RATING_LABEL(r.overall)}</div></> : '—'}</td>
                         <td><span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color }}>{STATUS_STYLE[r.status]?.label}</span></td>
-                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setShowFeedback(r)}><i className="bi bi-eye me-1" />View</button></td>
+                        <td><div style={{ display: 'flex', gap: 4 }}><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setShowFeedback(r)}><i className="bi bi-eye me-1" />View</button>{r.canSubmitSelf && <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'self' }); }}>Self score</button>}{r.canSubmitPeer && <button className="btn btn-sm btn-outline-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'peer' }); }}>Peer score</button>}{r.canComplete && <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setSubmissionStatus('completed'); setReviewSubmission({ ...r, action: 'manager' }); }}>Complete</button>}</div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -565,6 +608,15 @@ export default function PerformancePage() {
             </div>
           )}
         </>
+      )}
+
+      {goalDecision && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{goalDecision.action === 'approve_request' ? 'Accept Goal Request' : 'Reject Goal Request'}</h5><button className="btn-close" onClick={() => setGoalDecision(null)} /></div><div className="modal-body"><p style={{ fontSize: 13, color: '#475569' }}>{goalDecision.action === 'approve_request' ? 'Accept' : 'Reject'} <strong>{goalDecision.goal.title}</strong>?</p><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional)</span></label><textarea className="form-control" rows="3" value={goalDecisionComment} onChange={e => setGoalDecisionComment(e.target.value)} /></div><div className="modal-footer"><button className="btn btn-outline-secondary" onClick={() => setGoalDecision(null)}>Cancel</button><button className={`btn ${goalDecision.action === 'approve_request' ? 'btn-success' : 'btn-danger'}`} disabled={saving} onClick={confirmGoalDecision}>{saving ? 'Saving...' : goalDecision.action === 'approve_request' ? 'Accept Request' : 'Reject Request'}</button></div></div></div></div>
+      )}
+
+      {reviewSubmission && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{reviewSubmission.action === 'self' ? 'Self Score' : reviewSubmission.action === 'peer' ? 'Peer Score' : 'Manager Review'}</h5><button className="btn-close" onClick={() => setReviewSubmission(null)} /></div><div className="modal-body"><div className="row g-3"><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Score out of 5</label><select className="form-select" value={submissionScore} onChange={e => setSubmissionScore(e.target.value)}><option value="">Select score</option>{[0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5].map(value => <option key={value} value={value}>{value}</option>)}</select></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{reviewSubmission.action === 'manager' ? 'Manager comments' : 'Comments'}</label><textarea className="form-control" rows="3" value={submissionComment} onChange={e => setSubmissionComment(e.target.value)} /></div>{reviewSubmission.action === 'manager' && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Final status</label><select className="form-select" value={submissionStatus} onChange={e => setSubmissionStatus(e.target.value)}><option value="completed">Completed</option><option value="improvement_plan">Improvement plan</option></select></div>}</div></div><div className="modal-footer"><button className="btn btn-outline-secondary" onClick={() => setReviewSubmission(null)}>Cancel</button><button className="btn btn-primary" disabled={saving} onClick={submitReviewScore}>{saving ? 'Saving...' : 'Submit'}</button></div></div></div>
+        </div>
       )}
 
       {showFeedback && (
@@ -643,7 +695,7 @@ export default function PerformancePage() {
               <div className="modal-header"><h5 className="modal-title">Set Goal</h5><button className="btn-close" onClick={() => { setShowGoalModal(false); setGoalForm(EMPTY_GOAL); }} /></div>
               <div className="modal-body">
                 <div className="row g-3">
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" maxLength={30} value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value.replace(/[^a-zA-Z0-9]/g, '') }))} /></div>
+                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" maxLength={35} value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value }))} /></div>
                   {showAssigneeSelector && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To</label><select className="form-select" value={goalForm.userId} onChange={e => setGoalForm(p => ({ ...p, userId: e.target.value }))}><option value="">Myself</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>}
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date *</label><input type="date" className="form-control" min={targetDateMin} max={targetDateMax} value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" value={goalForm.cycle} disabled style={{ background: '#f1f5f9', cursor: 'not-allowed' }} /></div>
@@ -652,7 +704,7 @@ export default function PerformancePage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => { setShowGoalModal(false); setGoalForm(EMPTY_GOAL); }}>Cancel</button>
-                <button className="btn btn-primary" onClick={saveGoal} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save Goal'}</button>
+                <button className="btn btn-primary" onClick={saveGoal} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : (canSetGoals ? 'Save Goal' : 'Send Request')}</button>
               </div>
             </div>
           </div>
@@ -672,11 +724,8 @@ export default function PerformancePage() {
                     <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project *</label><select className="form-select" value={reviewForm.projectId} onChange={e => handleReviewProjectChange(e.target.value)}><option value="">Select</option>{reviewProjects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}</select></div>
                     {reviewForm.projectId && <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task</label><select className="form-select" value={reviewForm.taskId} onChange={e => setReviewForm(p => ({ ...p, taskId: e.target.value }))}><option value="">Select</option>{reviewTasks.map(t => <option key={t._id} value={t._id}>{t.title}</option>)}</select></div>}
                   </>}
-                  {[['Self Score *', 'selfScore'], ['Peer Score *', 'peerScore'], ['Manager Score *', 'managerScore']].map(([label, key]) => (
-                    <div key={key} className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{label}</label><select className="form-select" value={reviewForm[key]} onChange={e => setReviewForm(p => ({ ...p, [key]: e.target.value }))}><option value="">Select</option>{[0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5].map(v => <option key={v} value={v}>{v}</option>)}</select></div>
-                  ))}
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Manager Comment</label><textarea className="form-control" rows={2} value={reviewForm.managerComment} onChange={e => setReviewForm(p => ({ ...p, managerComment: e.target.value }))} /></div>
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status</label><select className="form-select" value={reviewForm.status} onChange={e => setReviewForm(p => ({ ...p, status: e.target.value }))}>{['pending', 'in_review', 'completed', 'improvement_plan'].map(s => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}</select></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status</label><select className="form-select" value={reviewForm.status} disabled style={{ background: '#f1f5f9' }}><option value="in_review">In Review</option></select></div>
+                  <div className="col-12"><div className="alert mb-0" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 13 }}>Creating this review notifies the selected employee and all project members. They submit self/peer scores first; the review owner then completes it with the final manager score and comments.</div></div>
                 </div>
               </div>
               <div className="modal-footer">

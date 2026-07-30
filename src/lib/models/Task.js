@@ -1,11 +1,10 @@
 import mongoose from 'mongoose';
 
-const ALPHANUMERIC = /^[a-zA-Z0-9]+$/;
-
 const ProjectSchema = new mongoose.Schema({
-  name:        { type: String, required: true, match: ALPHANUMERIC, maxlength: 30 },
+  name:        { type: String, required: true, trim: true, maxlength: 30 },
   description: { type: String, required: true },
   team:        [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  responsibleTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   departments: [{ type: String }],
   startDate:   { type: String, required: true },
   endDate:     { type: String, required: true },
@@ -26,13 +25,15 @@ const ProjectSchema = new mongoose.Schema({
 });
 
 const TaskSchema = new mongoose.Schema({
-  title:      { type: String, required: true, match: ALPHANUMERIC, maxlength: 30 },
+  title:      { type: String, required: true, trim: true, maxlength: 30 },
   description:{ type: String, required: true },
   projectId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   priority:   { type: String, enum: ['low','medium','high'], required: true },
-  status:     { type: String, enum: ['To Do','In Progress','Completed','Blocked'], default: 'To Do' },
+  status:     { type: String, enum: ['To Do','In Progress','Pending','Completed','Blocked'], default: 'To Do' },
+  statusHistory: [{ status: { type: String }, changedAt: { type: Date, default: Date.now }, changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } }],
+  activityLog: [{ date: { type: String, required: true }, comment: { type: String, required: true }, addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, addedAt: { type: Date, default: Date.now } }],
   due:        { type: String, required: true },
   reminderSent:{ type: Boolean, default: false },
 }, { timestamps: true });

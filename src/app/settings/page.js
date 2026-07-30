@@ -26,7 +26,6 @@ const TABS = [
   { key: 'categories',   label: 'Asset Categories', icon: 'bi-tag' },
   { key: 'shifts',       label: 'Shifts',       icon: 'bi-clock' },
   { key: 'holidays',     label: 'Holidays',     icon: 'bi-calendar3' },
-  { key: 'notifications',label: 'Notifications',icon: 'bi-bell' },
 ];
 
 const toDateInputValue = (value) => {

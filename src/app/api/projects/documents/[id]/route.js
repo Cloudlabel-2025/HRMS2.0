@@ -2,6 +2,8 @@ import { connectDB } from '@/lib/db';
 import ProjectDocument from '@/lib/models/ProjectDocument';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { Project } from '@/lib/models/Task';
+import { canManageUser } from '@/lib/rbac';
 
 export async function DELETE(req, { params }) {
   try {
@@ -13,6 +15,11 @@ export async function DELETE(req, { params }) {
     const { id } = await params;
     const doc = await ProjectDocument.findById(id);
     if (!doc) return fail('Document not found', 404);
+    const project = await Project.findById(doc.projectId).select('team');
+    if (!project) return fail('Project not found', 404);
+    const canManageProject = ['super_admin', 'admin_full'].includes(user.role) ||
+      (await Promise.all(project.team.map(memberId => canManageUser(user, memberId)))).some(Boolean);
+    if (!canManageProject) return fail('Access denied', 403);
 
     await auditLog(
       'Project Document Deleted',

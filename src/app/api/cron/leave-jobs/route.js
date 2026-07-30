@@ -1,17 +1,24 @@
 import dbConnect from '@/lib/db';
 import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
 import { ok, fail } from '@/lib/jwt';
+import { notifyExpiredProbations } from '@/lib/core/probation';
 
 export async function POST(req) {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return fail('Leave jobs are not configured', 503);
+  if (req.headers.get('authorization') !== `Bearer ${cronSecret}`) return fail('Unauthorized', 401);
+
   const body = await req.json();
   const { action } = body;
   
   if (!action) return fail('action is required', 400);
 
-  // In production, require an authorization header for cron jobs
-  // if (req.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) return fail('Unauthorized', 401);
-
   await dbConnect();
+
+  if (action === 'notify-expired-probation') {
+    const processed = await notifyExpiredProbations();
+    return ok({ message: `Expired probation notifications sent for ${processed} employees`, processed });
+  }
 
   if (action === 'monthly-accrual') {
     const now = new Date();

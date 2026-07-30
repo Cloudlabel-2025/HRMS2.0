@@ -36,16 +36,24 @@ export function isWorkingDay(dateStr, config, holidays) {
 
   if (holidays?.some(h => h.date === dateStr)) return false;
 
-  if (dayOfWeek === 6) {
-    if (config.saturdayWorking === 'all') return true;
-    if (config.saturdayWorking === 'none') return false;
-    if (config.saturdayWorking === 'alternate') {
-      const ordinal = getSaturdayOrdinal(year, month, day);
-      return ordinal === 2 || ordinal === 4;
-    }
-  }
-
+  // Saturdays are working days unless Super Admin marked that specific date as
+  // a Calendar holiday. This supports any alternate-Saturday arrangement.
   return true;
+}
+
+export async function getWorkingDayCalendar(fromDate, toDate, config = {}) {
+  const holidays = await Holiday.find({ date: { $gte: fromDate, $lte: toDate } }).lean();
+  const holidayDates = holidays.map(holiday => holiday.date);
+  let workingDays = 0;
+  let sundays = 0;
+  let saturdayHolidays = 0;
+  for (const d = new Date(fromDate + 'T00:00:00'); d <= new Date(toDate + 'T00:00:00'); d.setDate(d.getDate() + 1)) {
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (d.getDay() === 0) sundays++;
+    if (d.getDay() === 6 && holidayDates.includes(dateStr)) saturdayHolidays++;
+    if (isWorkingDay(dateStr, config, holidays)) workingDays++;
+  }
+  return { workingDays, holidays: holidayDates, sundays, saturdayHolidays };
 }
 
 export function getCycleRange(payrollStartDay, payrollEndDay, year, month) {
@@ -76,22 +84,7 @@ export function getCycleLabel(year, month, payrollStartDay, payrollEndDay) {
 }
 
 export async function countWorkingDays(fromDate, toDate, config) {
-  const holidays = await Holiday.find({
-    date: { $gte: fromDate, $lte: toDate },
-  }).lean();
-
-  let count = 0;
-  const from = new Date(fromDate + 'T00:00:00');
-  const to = new Date(toDate + 'T00:00:00');
-
-  for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    if (isWorkingDay(dateStr, config, holidays)) {
-      count++;
-    }
-  }
-
-  return count;
+  return (await getWorkingDayCalendar(fromDate, toDate, config)).workingDays;
 }
 
 export async function getCycleWorkingDays(year, month, config) {

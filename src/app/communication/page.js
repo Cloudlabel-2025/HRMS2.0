@@ -11,6 +11,45 @@ const TAGS = [
   { label: 'Team', color: '#10b981' }, { label: 'Payroll', color: '#f59e0b' },
 ];
 const EMPTY_FORM = { title: '', body: '', audience: 'Company-wide', selectedDepts: [], tag: 'General', tagColor: '#3b82f6' };
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const COMPRESSIBLE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+async function compressAnnouncementImage(file) {
+  if (file.size <= MAX_ATTACHMENT_BYTES || !COMPRESSIBLE_IMAGE_TYPES.has(file.type)) return file;
+
+  const imageUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error('The selected image could not be compressed'));
+      element.src = imageUrl;
+    });
+    let width = image.naturalWidth;
+    let height = image.naturalHeight;
+    const largestSide = Math.max(width, height);
+    if (largestSide > 2560) {
+      const scale = 2560 / largestSide;
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
+
+    for (const quality of [0.9, 0.8, 0.7, 0.6, 0.5]) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(image, 0, 0, width, height);
+      const compressed = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+      if (compressed && compressed.size <= MAX_ATTACHMENT_BYTES) {
+        const baseName = file.name.replace(/\.[^.]+$/, '');
+        return new File([compressed], `${baseName}.jpg`, { type: 'image/jpeg' });
+      }
+    }
+    throw new Error('Image could not be compressed to 5 MB. Please choose a smaller image.');
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
 
 export default function CommunicationPage() {
   const { user } = useAuth();
@@ -20,6 +59,9 @@ export default function CommunicationPage() {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [attachmentFile, setAttachmentFile] = useState(null);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [compressingAttachment, setCompressingAttachment] = useState(false);
   const [saving, setSaving] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [toast, setToast] = useState(null);
@@ -51,13 +93,48 @@ export default function CommunicationPage() {
 
   useEffect(() => { if (user) { load(); if (isAdmin) loadDepartments(); } }, [user]);
 
+  const handleAttachmentChange = async (event) => {
+    const file = event.target.files?.[0] || null;
+    if (!file) return setAttachmentFile(null);
+    if (file.size <= MAX_ATTACHMENT_BYTES) return setAttachmentFile(file);
+    if (!COMPRESSIBLE_IMAGE_TYPES.has(file.type)) {
+      setAttachmentFile(null);
+      event.target.value = '';
+      return showToast(file.type === 'image/gif' ? 'GIF attachments must be 5 MB or smaller to preserve animation' : 'Non-image attachments must be 5 MB or smaller', 'error');
+    }
+
+    setCompressingAttachment(true);
+    try {
+      const compressedFile = await compressAnnouncementImage(file);
+      setAttachmentFile(compressedFile);
+      showToast(`Image compressed to ${(compressedFile.size / 1024 / 1024).toFixed(1)} MB`);
+    } catch (e) {
+      setAttachmentFile(null);
+      event.target.value = '';
+      showToast(e.message, 'error');
+    } finally {
+      setCompressingAttachment(false);
+    }
+  };
+
   const handlePost = async () => {
     if (!form.title || !form.body) return showToast('Title and body are required', 'error');
     if (form.title.length > 40) return showToast('Title must be 40 characters or less', 'error');
     if (!/[a-zA-Z]/.test(form.title)) return showToast('Title must contain at least one letter', 'error');
+    if (attachmentFile?.size > MAX_ATTACHMENT_BYTES) return showToast('Attachment must be 5 MB or smaller', 'error');
     setSaving(true);
     try {
       const tag = TAGS.find(t => t.label === form.tag);
+      let attachment;
+      if (attachmentFile) {
+        setUploadingAttachment(true);
+        const formData = new FormData();
+        formData.append('file', attachmentFile);
+        const response = await fetch('/api/announcements/upload', { method: 'POST', credentials: 'same-origin', body: formData });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Document upload failed');
+        attachment = result.data;
+      }
       const payload = {
         title: form.title,
         body: form.body,
@@ -65,16 +142,19 @@ export default function CommunicationPage() {
         departments: form.selectedDepts,
         tag: form.tag,
         tagColor: tag?.color || '#3b82f6',
+        ...(attachment ? { attachment } : {}),
       };
       await api.post('/api/announcements', payload);
       showToast('Announcement posted');
       setShowModal(false);
       setForm(EMPTY_FORM);
+      setAttachmentFile(null);
       load();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
       setSaving(false);
+      setUploadingAttachment(false);
     }
   };
 
@@ -92,7 +172,7 @@ export default function CommunicationPage() {
       <div className="page-header">
         <div><h4>Announcements & Notifications</h4><p>Company-wide and department-specific communications</p></div>
         {isAdmin && (
-          <button className="btn btn-primary" onClick={() => { setForm({ ...EMPTY_FORM, audience: isTeamLeadOnly ? 'My Team' : 'Company-wide' }); setShowModal(true); }}>
+          <button className="btn btn-primary" onClick={() => { setForm({ ...EMPTY_FORM, audience: isTeamLeadOnly ? 'My Team' : 'Company-wide' }); setAttachmentFile(null); setShowModal(true); }}>
             <i className="bi bi-megaphone me-2" />Post Announcement
           </button>
         )}
@@ -139,6 +219,7 @@ export default function CommunicationPage() {
               </div>
               <h6 style={{ fontWeight: 700, marginBottom: 8 }}>{a.title}</h6>
               <p style={{ fontSize: 13, color: '#64748b', margin: 0, lineHeight: 1.6 }}>{a.body}</p>
+              {a.attachment?.url && <a href={a.attachment.url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, color: '#2563eb', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}><i className="bi bi-paperclip" />{a.attachment.name || 'Open attachment'} <i className="bi bi-box-arrow-up-right" /></a>}
               <div style={{ display: 'flex', gap: 12, marginTop: 14, paddingTop: 12, borderTop: '1px solid #f8fafc' }}>
                 <button style={{ background: 'none', border: 'none', fontSize: 12, color: '#64748b', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }} onClick={() => handleLike(a._id)}>
                   <i className="bi bi-hand-thumbs-up" />{a.likes?.length || 0} Likes
@@ -153,10 +234,11 @@ export default function CommunicationPage() {
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content">
-              <div className="modal-header"><h5 className="modal-title">Post Announcement</h5><button className="btn-close" onClick={() => setShowModal(false)} /></div>
+              <div className="modal-header"><h5 className="modal-title">Post Announcement</h5><button className="btn-close" onClick={() => { setShowModal(false); setAttachmentFile(null); }} /></div>
               <div className="modal-body">
                 <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Title</label><input className="form-control" value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value.slice(0, 40) }))} maxLength={40} /><div style={{ fontSize: 11, color: form.title.length >= 35 ? '#dc2626' : '#94a3b8', textAlign: 'right', marginTop: 2 }}>{form.title.length}/40</div></div>
                 <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Message</label><textarea className="form-control" rows={4} value={form.body} onChange={e => setForm(p => ({ ...p, body: e.target.value }))} /></div>
+                <div className="mb-3"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Attachment <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional)</span></label><input className="form-control" type="file" accept="image/png,image/jpeg,image/gif,image/webp,.pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx" onChange={handleAttachmentChange} disabled={compressingAttachment} /><div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{compressingAttachment ? 'Compressing image…' : `Images, PDF, Word, Excel, CSV, or PowerPoint up to 5 MB${attachmentFile ? ` · ${attachmentFile.name}` : ''}`}</div></div>
                 <div className="row g-3">
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Audience</label>
@@ -216,8 +298,8 @@ export default function CommunicationPage() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={handlePost} disabled={saving}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />Posting...</> : <><i className="bi bi-megaphone me-2" />Post</>}</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); setAttachmentFile(null); }} disabled={saving}>Cancel</button>
+                <button className="btn btn-primary" onClick={handlePost} disabled={saving || compressingAttachment}>{saving ? <><span className="spinner-border spinner-border-sm me-2" />{uploadingAttachment ? 'Uploading attachment...' : 'Posting...'}</> : <><i className="bi bi-megaphone me-2" />Post</>}</button>
               </div>
             </div>
           </div>

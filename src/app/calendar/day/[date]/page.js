@@ -19,6 +19,8 @@ export default function DayActivityPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [actionsExpanded, setActionsExpanded] = useState(true);
+  const [dayEmployees, setDayEmployees] = useState([]);
+  const [selectedEmployeeActivity, setSelectedEmployeeActivity] = useState(null);
 
   useEffect(() => {
     if (!user || !date) return;
@@ -87,6 +89,10 @@ export default function DayActivityPage() {
           announcements: announcementsOnDay,
           actions,
         });
+        const today = new Date().toISOString().slice(0, 10);
+        if (['super_admin', 'admin_full'].includes(user.role) && d < today) {
+          api.get(`/api/calendar/day?date=${d}`).then(result => setDayEmployees(Array.isArray(result?.employees) ? result.employees : [])).catch(() => {});
+        } else setDayEmployees([]);
       } catch (e) {
         console.error(e);
       } finally {
@@ -120,6 +126,8 @@ export default function DayActivityPage() {
             {MONTHS[dt.getMonth()]} {dt.getDate()}, {dt.getFullYear()}
           </div>
         </div>
+
+        {dayEmployees.length > 0 && <div className="card mb-3" style={{ borderRadius: 16, border: 'none', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}><div style={{ padding: '16px 20px', fontWeight: 700, fontSize: 14 }}>Employee activity for this day</div><div style={{ padding: '0 20px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>{dayEmployees.map(employee => <button key={employee._id} className="btn btn-sm btn-outline-primary" onClick={async () => { try { setSelectedEmployeeActivity(await api.get(`/api/calendar/day?date=${d}&userId=${employee._id}`)); } catch {} }}>{employee.name} <span style={{ color: '#64748b' }}>· {((employee.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</span></button>)}</div></div>}
 
         {loading ? (
           <div className="text-center py-5">
@@ -537,6 +545,7 @@ export default function DayActivityPage() {
           </>
         )}
       </div>
+      {selectedEmployeeActivity && <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{selectedEmployeeActivity.employee.name} — {d}</h5><button className="btn-close" onClick={() => setSelectedEmployeeActivity(null)} /></div><div className="modal-body"><div className="row g-3 mb-3"><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Hours worked</div><strong>{((selectedEmployeeActivity.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>8-hour target</div><strong style={{ color: (selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? '#16a34a' : '#dc2626' }}>{(selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? 'Met' : 'Not met'}</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Clock times</div><strong>{selectedEmployeeActivity.attendance?.clockIn || '—'} – {selectedEmployeeActivity.attendance?.clockOut || '—'}</strong></div></div><div style={{ fontWeight: 700, marginBottom: 8 }}>Audit log</div>{selectedEmployeeActivity.logs.length ? selectedEmployeeActivity.logs.map(log => <div key={log._id} style={{ padding: '10px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</div><div style={{ fontSize: 12, color: '#64748b' }}>{log.details}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div></div>) : <div style={{ fontSize: 13, color: '#94a3b8' }}>No audit activity recorded for this day.</div>}</div></div></div></div>}
     </AppShell>
   );
 }

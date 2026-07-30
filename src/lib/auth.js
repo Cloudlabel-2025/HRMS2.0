@@ -42,9 +42,19 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     const stored = localStorage.getItem('hrms_user');
-    const token = localStorage.getItem('hrms_token');
-    if (stored && token) setUser(JSON.parse(stored));
-    setLoading(false);
+    if (stored) setUser(JSON.parse(stored));
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then(async res => {
+        if (!res.ok) throw new Error('No active session');
+        const json = await res.json();
+        localStorage.setItem('hrms_user', JSON.stringify(json.data));
+        setUser(json.data);
+      })
+      .catch(() => {
+        localStorage.removeItem('hrms_user');
+        setUser(null);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const login = async (email, password) => {
@@ -55,8 +65,6 @@ export function AuthProvider({ children }) {
     });
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Login failed' };
-    localStorage.setItem('hrms_token', json.data.token);
-    localStorage.setItem('hrms_refresh', json.data.refreshToken);
     localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
     setUser(json.data.user);
     return {
@@ -69,8 +77,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
-    localStorage.removeItem('hrms_token');
-    localStorage.removeItem('hrms_refresh');
+    void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
     localStorage.removeItem('hrms_user');
     localStorage.removeItem('hrms_impersonated_user');
     window.__impersonatedUser = null;
@@ -125,18 +132,15 @@ export function useAuth() {
 }
 
 export function getToken() {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('hrms_token');
+  return null;
 }
 
 export function getRefreshToken() {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('hrms_refresh');
+  return null;
 }
 
 export function setToken(token) {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('hrms_token', token);
+  // Access tokens intentionally remain HTTP-only cookies and are never exposed to client code.
 }
 
 // Module access matrix — mirrors server-side rbac.js

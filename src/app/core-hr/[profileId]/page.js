@@ -9,6 +9,7 @@ import { useSettings } from '@/lib/settings';
 import DateInput from '@/components/DateInput';
 
 const ACTIONS = [
+  { key: 'start_probation',   label: 'New Probation', icon: 'bi-calendar-plus', color: '#f59e0b', help: 'Set a probation period for onboarding, active, or rehired employees.' },
   { key: 'confirm_probation', label: 'Probation',  icon: 'bi-shield-check',    color: '#3b82f6', help: 'Onboarding → Probation, or confirm Probation → Active.' },
   { key: 'transfer',          label: 'Transfer',   icon: 'bi-arrow-left-right', color: '#8b5cf6', help: 'Update department, designation and shift.' },
   { key: 'promotion',         label: 'Promote',    icon: 'bi-graph-up-arrow',   color: '#10b981', help: 'Record a new designation for the employee.' },
@@ -40,7 +41,7 @@ const CLEARANCE_ITEMS = [
 
 const EMPTY_FORM = {
   profileId: '', effectiveDate: '', reason: '', confirmationNote: '',
-  department: '', designation: '', shift: '',
+  department: '', designation: '', shift: '', role: '',
   employmentType: 'full_time',
   separationType: 'resignation', noticePeriodDays: 0, lastWorkingDate: '',
   suspensionUntil: '', probationEndDate: '',
@@ -109,6 +110,7 @@ export default function CoreHrProfilePage() {
   const [action, setAction]             = useState('confirm_probation');
   const [form, setForm]                 = useState(EMPTY_FORM);
   const [toast, setToast]               = useState(null);
+  const [activeConfirmOpen, setActiveConfirmOpen] = useState(false);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
 
@@ -125,10 +127,11 @@ export default function CoreHrProfilePage() {
       // API returns { profile } wrapped
       const p = profileRes.profile || profileRes;
       setProfile(p);
+      if (p.employmentStatus === 'active') setAction('start_probation');
       setDepartments(Array.isArray(deptRes) ? deptRes.map(d => d.name) : []);
       setDesignations(Array.isArray(desigRes) ? desigRes : []);
       setShifts(Array.isArray(shiftRes) ? shiftRes.map(s => s.name) : []);
-      setForm({ ...EMPTY_FORM, profileId, department: p.department || '', designation: p.designation || '', shift: p.shift || '' });
+      setForm({ ...EMPTY_FORM, profileId, department: p.department || '', designation: p.designation || '', shift: p.shift || '', role: p.identityId?.authUserId?.role || '' });
 
       // Fetch full identity
       if (p.identityId?._id || p.identityId) {
@@ -179,14 +182,16 @@ export default function CoreHrProfilePage() {
   const submit = async () => {
     if (!form.effectiveDate) return showToast('Effective date is required', 'error');
     if (action !== 'confirm_probation' && !form.reason.trim()) return showToast('Reason is required', 'error');
-    if (action === 'confirm_probation' && !form.confirmationNote?.trim()) return showToast('Confirmation note is required', 'error');
+    if (['confirm_probation', 'start_probation'].includes(action) && !form.confirmationNote?.trim()) return showToast('Confirmation note is required', 'error');
     if (action === 'transfer' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
-    if (action === 'promotion' && !form.designation) return showToast('New designation is required', 'error');
+    if (action === 'promotion' && (!form.designation || !form.role)) return showToast('New designation and promoted role are required', 'error');
     if (action === 'rehire' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
     if (action === 'separation' && !form.lastWorkingDate) return showToast('Last working date is required', 'error');
     if (action === 'confirm_probation' && probationTabLocked) return showToast(`Probation active until ${formatDate(probationEndDate)}`, 'error');
     if (action === 'confirm_probation' && !['onboarding','probation'].includes(profile.employmentStatus)) return showToast(`Employee is already ${fmt(profile.employmentStatus)}`, 'error');
     if (action === 'confirm_probation' && profile.employmentStatus === 'onboarding' && !form.probationEndDate) return showToast('Probation end date is required', 'error');
+    if (action === 'start_probation' && !['onboarding','active','rehired'].includes(profile.employmentStatus)) return showToast(`Cannot start probation while employee is ${fmt(profile.employmentStatus)}`, 'error');
+    if (action === 'start_probation' && !form.probationEndDate) return showToast('Probation end date is required', 'error');
 
     const payload = { action, data: { ...form } };
     if (!form.lastWorkingDate) delete payload.data.lastWorkingDate;
@@ -208,6 +213,29 @@ export default function CoreHrProfilePage() {
       showToast(msg, 'error');
     }
     finally { setSaving(false); }
+  };
+
+  const turnActiveAfterProbation = async () => {
+    if (!profile || !probationEnded) return;
+    setSaving(true);
+    try {
+      await api.post('/api/core/lifecycle/transition', {
+        action: 'confirm_probation',
+        data: {
+          profileId,
+          effectiveDate: new Date().toISOString().slice(0, 10),
+          confirmationNote: 'Probation period completed',
+        },
+      });
+      setActiveConfirmOpen(false);
+      showToast('Employee is now Active');
+      await load();
+      await loadHistory();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updateClearance = async (field, value) => {
@@ -246,6 +274,23 @@ export default function CoreHrProfilePage() {
         <div className="toast-container-custom">
           <div className={`toast-custom ${toast.type}`}>
             <i className={`bi ${toast.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'} me-2`} />{toast.msg}
+          </div>
+        </div>
+      )}
+      {activeConfirmOpen && (
+        <div role="dialog" aria-modal="true" aria-labelledby="active-confirm-title" style={{ position: 'fixed', inset: 0, zIndex: 100001, background: 'rgba(15,23,42,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div style={{ width: '100%', maxWidth: 440, background: '#fff', borderRadius: 16, boxShadow: '0 24px 60px rgba(15,23,42,0.28)', overflow: 'hidden' }}>
+            <div style={{ padding: '20px 22px 14px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: '#dcfce7', color: '#15803d', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-person-check-fill" /></div>
+              <div>
+                <h5 id="active-confirm-title" style={{ margin: 0, fontSize: 16, fontWeight: 800, color: '#0f172a' }}>Confirm employee as Active?</h5>
+                <p style={{ margin: '7px 0 0', fontSize: 13, lineHeight: 1.55, color: '#64748b' }}>This completes the employee’s current probation period and records the lifecycle transition in HRMS.</p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '14px 22px 20px', borderTop: '1px solid #f1f5f9' }}>
+              <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setActiveConfirmOpen(false)} disabled={saving}>Cancel</button>
+              <button type="button" className="btn btn-success btn-sm" onClick={turnActiveAfterProbation} disabled={saving}>{saving ? 'Updating...' : 'Turn Active'}</button>
+            </div>
           </div>
         </div>
       )}
@@ -322,7 +367,11 @@ export default function CoreHrProfilePage() {
 
             {/* Tab pills */}
             <div style={{ display: 'flex', gap: 4, padding: '14px 16px 0', background: '#f8fafc', overflowX: 'auto' }}>
-              {ACTIONS.map(item => {
+              {ACTIONS.filter(item => {
+                if (item.key === 'confirm_probation') return ['onboarding', 'probation'].includes(profile.employmentStatus);
+                if (item.key === 'start_probation') return ['onboarding', 'active', 'rehired'].includes(profile.employmentStatus);
+                return true;
+              }).map(item => {
                 const isLocked = item.key === 'confirm_probation' && probationTabLocked;
                 return (
                   <button key={item.key} type="button"
@@ -367,7 +416,7 @@ export default function CoreHrProfilePage() {
                   <input className="form-control" style={{ fontSize: 13 }} placeholder="Policy or business reason" value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
                 </Field>
 
-                {action === 'confirm_probation' && (
+                {['confirm_probation', 'start_probation'].includes(action) && (
                   <>
                     <div className="col-12">
                       {probationTabLocked && (
@@ -386,16 +435,26 @@ export default function CoreHrProfilePage() {
                         </div>
                       )}
                       {!probationTabLocked && profile.employmentStatus === 'probation' && probationEnded && (
-                        <div style={{ padding: '10px 14px', borderRadius: 9, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <i className="bi bi-check-circle" style={{ color: '#16a34a', fontSize: 15 }} />
-                          <span><strong>Probation period has ended.</strong> You can now confirm as Active.</span>
+                        <div style={{ padding: '12px 14px', borderRadius: 9, background: '#f0fdf4', border: '1px solid #bbf7d0', fontSize: 13 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <i className="bi bi-check-circle" style={{ color: '#16a34a', fontSize: 15 }} />
+                            <span><strong>Probation period has ended.</strong> Choose the next employment status.</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, marginTop: 10, paddingLeft: 23 }}>
+                            <button type="button" className="btn btn-success btn-sm" onClick={() => setActiveConfirmOpen(true)} disabled={saving}>
+                              <i className="bi bi-person-check me-1" />Turn Active
+                            </button>
+                            <button type="button" className="btn btn-outline-warning btn-sm" onClick={() => switchAction('start_probation')} disabled={saving}>
+                              <i className="bi bi-arrow-repeat me-1" />Return Probation
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
-                    {profile.employmentStatus === 'onboarding' && (
+                    {(action === 'start_probation' || profile.employmentStatus === 'onboarding') && (
                       <Field label="Probation End Date *">
                         <DateInput className="form-control" style={{ fontSize: 13 }} min={form.effectiveDate || undefined} value={form.probationEndDate} onChange={e => setForm(p => ({ ...p, probationEndDate: e.target.value }))} />
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>Earliest date HR can confirm this employee as Active.</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>The employee will automatically become Active on this date.</div>
                       </Field>
                     )}
                     <Field label="Confirmation Note *" col="col-12">
@@ -431,12 +490,17 @@ export default function CoreHrProfilePage() {
                 )}
 
                 {action === 'promotion' && (
-                  <Field label="New Designation *" col="col-12">
+                  <><Field label="New Designation *">
                     <select className="form-select" style={{ fontSize: 13 }} value={form.designation} onChange={e => setForm(p => ({ ...p, designation: e.target.value }))}>
                       <option value="">Select designation</option>
                       {designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}
                     </select>
-                  </Field>
+                  </Field><Field label="Role *">
+                    <select className="form-select" style={{ fontSize: 13 }} value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
+                      <option value="">Select role</option>
+                      {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                  </Field></>
                 )}
 
                 {action === 'rehire' && (

@@ -35,6 +35,7 @@ const UserSchema = new mongoose.Schema({
   phone:        { type: String, default: '' },
   shift:        { type: String, default: 'Morning (9AM-6PM)' },
   avatar:       { type: String, default: '' },
+  profilePhoto: { type: String, default: '' },
   skills:       [{ type: String }],
   joinDate:     { type: Date },
   status:       { type: String, enum: ['active', 'inactive', 'alumni'], default: 'active' },
@@ -90,4 +91,7 @@ UserSchema.methods.resetLoginAttempts = async function () {
   await this.save();
 };
 
+// Re-register during local development so newly added profile fields are not
+// ignored by Mongoose's cached schema after a hot reload.
+if (process.env.NODE_ENV === 'development' && mongoose.models.User) delete mongoose.models.User;
 export default mongoose.models.User || mongoose.model('User', UserSchema);

@@ -5,8 +5,8 @@ import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 
-const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', general: 'bi-bell', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack' };
-const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', general: '#3b82f6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316' };
+const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', announcement: 'bi-megaphone', general: 'bi-bell', performance: 'bi-graph-up-arrow', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack' };
+const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', announcement: '#2563eb', general: '#3b82f6', performance: '#8b5cf6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316' };
 
 function getNotifRoute(n, role) {
   if (n.type === 'leave') return '/leave';
@@ -16,6 +16,8 @@ function getNotifRoute(n, role) {
   }
   if (n.type === 'lifecycle') return '/core-hr';
   if (n.type === 'payroll') return '/payroll';
+  if (n.type === 'performance') return '/performance?tab=reviews';
+  if (n.type === 'announcement') return '/communication';
   return null;
 }
 
@@ -26,6 +28,7 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
   const [notifications, setNotifications] = useState([]);
+  const [newsAnnouncements, setNewsAnnouncements] = useState([]);
   const pollRef = useRef(null);
   const [pendingRequests, setPendingRequests] = useState(0);
 
@@ -42,11 +45,24 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
       .catch(() => {});
   };
 
+  const loadNewsAnnouncements = () => {
+    api.get('/api/announcements')
+      .then(data => {
+        const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+        const announcements = Array.isArray(data?.announcements) ? data.announcements : [];
+        setNewsAnnouncements(announcements
+          .filter(announcement => new Date(announcement.createdAt).getTime() >= cutoff)
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
+      })
+      .catch(() => setNewsAnnouncements([]));
+  };
+
   useEffect(() => {
     if (!user) return;
     loadNotifs();
     loadPendingRequests();
-    pollRef.current = setInterval(() => { loadNotifs(); loadPendingRequests(); }, 30000);
+    loadNewsAnnouncements();
+    pollRef.current = setInterval(() => { loadNotifs(); loadPendingRequests(); loadNewsAnnouncements(); }, 30000);
     return () => clearInterval(pollRef.current);
   }, [user]);
 
@@ -57,6 +73,7 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
   };
 
   const unreadCount = notifications.filter(n => !n.read).length;
+  const newsText = newsAnnouncements.map(announcement => announcement.title).join('  •  ');
 
   const markAllRead = async () => {
     await api.patch('/api/notifications', {}).catch(() => {});
@@ -88,11 +105,12 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
       </div>
 
       <div className="topbar-right">
-        <div className="topbar-search d-none d-md-flex">
-          <i className="bi bi-search" style={{ color: '#94a3b8', fontSize: 14 }} />
-          <input placeholder="Search..." />
-          <kbd style={{ fontSize: 10, color: '#94a3b8', background: '#e2e8f0', borderRadius: 4, padding: '1px 5px', fontFamily: 'inherit', letterSpacing: 0.5 }}>⌘K</kbd>
-        </div>
+        <button type="button" className="topbar-news d-none d-md-flex" onClick={() => router.push('/communication')} aria-label="Open announcements">
+          <span className="topbar-news-label"><i className="bi bi-megaphone-fill" /> News</span>
+          <span className="topbar-news-viewport">
+            {newsText ? <span className="topbar-news-track"><span>{newsText}</span><span aria-hidden="true">{newsText}</span></span> : <span className="topbar-news-empty">No new announcements today</span>}
+          </span>
+        </button>
 
         <div style={{ position: 'relative' }}>
           <button className="topbar-icon-btn" onClick={() => { setShowNotif(p => !p); setShowProfile(false); if (!showNotif) loadNotifs(); }}>
@@ -140,8 +158,8 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
 
         <div style={{ position: 'relative' }}>
           <div className="avatar" onClick={() => { setShowProfile(p => !p); setShowNotif(false); }}
-            style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)` }}>
-            {user.avatar}
+            style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)`, overflow: 'hidden' }}>
+            {user.profilePhoto ? <img src={user.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : user.avatar}
           </div>
           {showProfile && (
               <div className="dropdown-panel" style={{ right: 0, width: 220 }}>

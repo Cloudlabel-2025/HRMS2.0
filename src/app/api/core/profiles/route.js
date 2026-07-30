@@ -9,6 +9,7 @@ import { buildChangeSet, sanitizeProfileRecord } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { CreateEmploymentProfileSchema, validateRequest } from '@/lib/validation';
 import { getAccessibleDepartments } from '@/lib/rbac';
+import { notifyExpiredProbations } from '@/lib/core/probation';
 
 function syncAuthUserFromProfile(identity, profile) {
   if (!identity?.authUserId) return null;
@@ -31,6 +32,7 @@ export async function GET(req) {
     if (!canReadCoreHr) return fail('Access denied', 403);
 
     await dbConnect();
+    await notifyExpiredProbations();
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
     const status = searchParams.get('status') || '';

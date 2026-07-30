@@ -23,13 +23,13 @@ function mapStatusToUserStatus(status, separationType = '') {
   return 'active';
 }
 
-function buildLegacyEmployeeSync(profile, identity, userStatus) {
+function buildLegacyEmployeeSync(profile, identity, userStatus, reportingUserIds) {
   return {
     department: profile.department,
     designation: profile.designation,
     shift: profile.shift,
-    teamLeadId: profile.reportingLine?.teamLeadIdentityId || null,
-    teamAdminId: profile.reportingLine?.teamAdminIdentityId || null,
+    teamLeadId: reportingUserIds.teamLeadId,
+    teamAdminId: reportingUserIds.teamAdminId,
     status: userStatus,
     leaveBalance: undefined,
   };
@@ -53,6 +53,18 @@ async function canOperateOnProfile(profile, user) {
 async function syncAll(profile, identity, actor, changes, eventType, action, fromState, toState, reason, metadata = {}) {
   const userStatus = mapStatusToUserStatus(profile.employmentStatus, profile.separation?.separationType || '');
   const authUserId = getIdentityUserId(identity);
+  const reportingIdentityIds = [
+    profile.reportingLine?.teamLeadIdentityId,
+    profile.reportingLine?.teamAdminIdentityId,
+  ].filter(Boolean);
+  const reportingIdentities = reportingIdentityIds.length
+    ? await UsrIdentity.find({ _id: { $in: reportingIdentityIds } }).select('_id authUserId').lean()
+    : [];
+  const reportingUserByIdentity = new Map(reportingIdentities.map(item => [item._id.toString(), item.authUserId]));
+  const reportingUserIds = {
+    teamLeadId: profile.reportingLine?.teamLeadIdentityId ? reportingUserByIdentity.get(profile.reportingLine.teamLeadIdentityId.toString()) || null : null,
+    teamAdminId: profile.reportingLine?.teamAdminIdentityId ? reportingUserByIdentity.get(profile.reportingLine.teamAdminIdentityId.toString()) || null : null,
+  };
 
   if (authUserId) {
     await User.findByIdAndUpdate(authUserId, {
@@ -64,14 +76,14 @@ async function syncAll(profile, identity, actor, changes, eventType, action, fro
       designation: profile.designation,
       shift: profile.shift,
       status: userStatus,
-      teamLeadId: profile.reportingLine?.teamLeadIdentityId || null,
-      teamAdminId: profile.reportingLine?.teamAdminIdentityId || null,
+      teamLeadId: reportingUserIds.teamLeadId,
+      teamAdminId: reportingUserIds.teamAdminId,
     });
   }
 
   await Employee.findOneAndUpdate(
     { userId: authUserId },
-    buildLegacyEmployeeSync(profile, identity, userStatus),
+    buildLegacyEmployeeSync(profile, identity, userStatus, reportingUserIds),
     { upsert: false }
   );
 
@@ -132,6 +144,17 @@ export async function POST(req) {
     let reason = data.reason || data.confirmationNote || '';
     const metadata = { action, effectiveDate, requestId, ip, userAgent };
 
+    const separatedStatuses = ['resigned', 'terminated', 'retired', 'alumni'];
+    if (action === 'separation' && separatedStatuses.includes(profile.employmentStatus)) {
+      return fail('This employee is already separated. Use rehire to create a new employment period.', 409);
+    }
+    if (['transfer', 'promotion', 'suspend'].includes(action) && separatedStatuses.includes(profile.employmentStatus)) {
+      return fail('Separated employees cannot be changed. Rehire the employee first.', 409);
+    }
+    if (action === 'suspend' && profile.employmentStatus === 'suspended') {
+      return fail('This employee is already suspended', 409);
+    }
+
     if (action === 'confirm_probation') {
       if (!['onboarding', 'probation'].includes(profile.employmentStatus))
         return fail('Only onboarding or probation profiles can be confirmed', 400);
@@ -160,6 +183,20 @@ export async function POST(req) {
       reason = data.confirmationNote || reason || 'Status updated';
     }
 
+    if (action === 'start_probation') {
+      if (!['onboarding', 'active', 'rehired'].includes(profile.employmentStatus)) {
+        return fail('Only onboarding, active, or rehired employees can start a probation period', 400);
+      }
+      const endDate = new Date(data.probationEndDate);
+      if (endDate <= new Date(effectiveDate)) return fail('Probation end date must be after the effective date', 400);
+      profile.employmentStatus = 'probation';
+      profile.probationStartDate = effectiveDate;
+      profile.probationEndDate = endDate;
+      profile.confirmationDate = null;
+      actionLabel = 'Start probation period';
+      reason = data.confirmationNote;
+    }
+
     if (action === 'transfer') {
       profile.department = data.department;
       profile.designation = data.designation;
@@ -174,6 +211,7 @@ export async function POST(req) {
     }
 
     if (action === 'promotion') {
+      if (!data.role) return fail('Promoted role is required', 400);
       profile.designation = data.designation;
       profile.businessUnit = data.businessUnit || profile.businessUnit;
       profile.compensationSnapshot = {
@@ -184,6 +222,8 @@ export async function POST(req) {
       };
       actionLabel = 'Promote employee';
       reason = data.reason;
+      const authUserId = getIdentityUserId(identity);
+      if (authUserId) await User.findByIdAndUpdate(authUserId, { role: data.role });
     }
 
     if (action === 'rehire') {
@@ -242,12 +282,12 @@ export async function POST(req) {
     // Sync department member counts on transfer or separation
     if (action === 'transfer' && before.department !== profile.department) {
       await Promise.all([
-        Department.findOneAndUpdate({ name: before.department }, { $inc: { members: -1 } }),
+        Department.findOneAndUpdate({ name: before.department, members: { $gt: 0 } }, { $inc: { members: -1 } }),
         Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } }),
       ]);
     }
     if (action === 'separation') {
-      await Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: -1 } });
+      await Department.findOneAndUpdate({ name: profile.department, members: { $gt: 0 } }, { $inc: { members: -1 } });
     }
     if (action === 'rehire') {
       await Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } });

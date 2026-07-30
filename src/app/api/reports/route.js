@@ -8,19 +8,37 @@ import EmpProfile from '@/lib/models/EmploymentProfile';
 import { SelfServiceRequest } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { hasAccess, getAccessibleDepartments, getManagedUserIds } from '@/lib/rbac';
+
+const REPORT_TYPES = new Set(['attendance', 'leave', 'payroll', 'tasks', 'lifecycle']);
+
+async function getReportUserQuery(user, requestedDepartment) {
+  if (['super_admin', 'admin_full'].includes(user.role)) return requestedDepartment ? { department: requestedDepartment } : {};
+  if (user.role === 'team_lead') {
+    const departments = await getAccessibleDepartments(user);
+    return { department: requestedDepartment && departments.includes(requestedDepartment) ? requestedDepartment : { $in: departments } };
+  }
+  if (user.role === 'team_admin') return { _id: { $in: await getManagedUserIds(user) } };
+  // Limited reporting roles are self-only until a dedicated reporting policy is approved.
+  return { _id: user._id };
+}
 
 export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
+    if (!hasAccess(user.role, 'reports')) return fail('Access denied', 403);
     await connectDB();
 
     const { searchParams } = new URL(req.url);
     const type  = searchParams.get('type') || 'attendance';
     const month = searchParams.get('month') || new Date().toISOString().slice(0, 7);
     const dept  = searchParams.get('dept') || '';
+    if (!REPORT_TYPES.has(type)) return fail('Invalid report type', 400);
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return fail('Month must be YYYY-MM', 400);
+    if (type === 'payroll' && !['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
 
-    const userQuery = dept ? { department: dept } : {};
+    const userQuery = await getReportUserQuery(user, dept);
     const users = await User.find({ ...userQuery, role: { $ne: 'super_admin' } }).select('_id name department');
     const userIds = users.map(u => u._id);
 
@@ -102,7 +120,7 @@ export async function GET(req) {
       const payrolls = await Payroll.find({ userId: { $in: userIds }, month })
         .populate('userId', 'name department');
 
-      const totalGross = payrolls.reduce((s, p) => s + (p.grossPay || 0), 0);
+      const totalGross = payrolls.reduce((s, p) => s + (p.monthlyGross || p.grossPay || 0), 0);
       const totalNet   = payrolls.reduce((s, p) => s + (p.netPay || 0), 0);
       const totalDeductions = payrolls.reduce((s, p) => s + (p.totalDeductions || 0), 0);
 
@@ -117,7 +135,7 @@ export async function GET(req) {
           type: 'bar', title: 'Gross vs Net Salary',
           labels: payrolls.map(p => p.userId?.name),
           datasets: [
-            { label: 'Gross', data: payrolls.map(p => p.grossPay || 0), backgroundColor: '#8b5cf6' },
+            { label: 'Gross', data: payrolls.map(p => p.monthlyGross || p.grossPay || 0), backgroundColor: '#8b5cf6' },
             { label: 'Net',   data: payrolls.map(p => p.netPay || 0),   backgroundColor: '#10b981' },
           ],
         },
@@ -136,9 +154,9 @@ export async function GET(req) {
       const tasks = await Task.find({ assignedTo: { $in: userIds } })
         .populate('assignedTo', 'name department');
 
-      const done       = tasks.filter(t => t.status === 'completed').length;
-      const inProgress = tasks.filter(t => t.status === 'in_progress').length;
-      const overdue    = tasks.filter(t => t.status === 'overdue').length;
+      const done       = tasks.filter(t => t.status === 'Completed').length;
+      const inProgress = tasks.filter(t => t.status === 'In Progress').length;
+      const overdue    = tasks.filter(t => t.due && t.due < new Date().toISOString().slice(0, 10) && t.status !== 'Completed').length;
 
       return ok({
         summary: [
@@ -160,7 +178,7 @@ export async function GET(req) {
         rows: tasks.map(t => ({
           Task: t.title, 'Assigned To': t.assignedTo?.name,
           Department: t.assignedTo?.department, Priority: t.priority,
-          Status: t.status, 'Due Date': t.dueDate?.toString().slice(0, 10),
+          Status: t.status, 'Due Date': t.due || '—',
         })),
       });
     }

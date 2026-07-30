@@ -29,6 +29,9 @@ const PayrollSchema = new mongoose.Schema({
   // Attendance
   presentDays:{ type: Number },
   lopDays:    { type: Number, default: 0 },
+  workingDays:{ type: Number, default: 0 },
+  salaryPerDay:{ type: Number, default: 0 },
+  holidayDates:[{ type: String }],
 
   // meta
   cycleLabel:{ type: String },

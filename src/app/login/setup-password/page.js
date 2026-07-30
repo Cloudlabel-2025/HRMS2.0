@@ -28,13 +28,10 @@ export default function SetupPasswordPage() {
 
     setLoading(true);
     try {
-      const token = localStorage.getItem('hrms_token');
       const res = await fetch('/api/auth/setup-password', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ currentPassword, newPassword }),
       });
       const data = await res.json();

@@ -1,21 +1,20 @@
 import { connectDB } from '@/lib/db';
 import { Task, Project } from '@/lib/models/Task';
-import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { hasAccess } from '@/lib/rbac';
+import User from '@/lib/models/User';
+import { hasAccess, getManagedUserIds, canManageUser } from '@/lib/rbac';
+import { Notification } from '@/lib/models/index';
 
-async function getTeamUserIds(user) {
-  if (['super_admin', 'admin_full'].includes(user.role)) return null;
-  if (user.role === 'team_lead') {
-    const members = await User.find({ teamLeadId: user._id }).select('_id');
-    return members.map(m => m._id);
-  }
-  if (user.role === 'team_admin') {
-    const members = await User.find({ teamAdminId: user._id }).select('_id');
-    return members.map(m => m._id);
-  }
-  return [user._id];
+async function getTaskStakeholders(assigneeId, actorId) {
+  const [assignee, admins] = await Promise.all([
+    User.findById(assigneeId).select('teamLeadId teamAdminId').lean(),
+    User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean(),
+  ]);
+  const ids = [assigneeId, assignee?.teamLeadId, assignee?.teamAdminId, ...admins.map(admin => admin._id)]
+    .filter(Boolean)
+    .map(id => id.toString());
+  return [...new Set(ids)].filter(id => id !== actorId.toString());
 }
 
 export async function GET(req) {
@@ -35,7 +34,7 @@ export async function GET(req) {
     if (scope === 'my' || ['employee', 'intern', 'recruiter'].includes(user.role)) {
       query.assignedTo = user._id;
     } else {
-      const ids = await getTeamUserIds(user);
+      const ids = await getManagedUserIds(user);
       if (ids) query.assignedTo = { $in: ids };
     }
 
@@ -66,9 +65,9 @@ export async function POST(req) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: title is required', 'low', ip, null, user._id);
       return fail('Task title is required', 400);
     }
-    if (body.title.length > 30 || !/^[a-zA-Z0-9]+$/.test(body.title)) {
+    if (body.title.length > 30 || !body.title.trim()) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: invalid title', 'low', ip, null, user._id);
-      return fail('Task title must be at most 30 characters and contain only letters and numbers', 400);
+      return fail('Task title must be between 1 and 30 characters', 400);
     }
     if (!body.description) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: description is required', 'low', ip, null, user._id);
@@ -96,7 +95,12 @@ export async function POST(req) {
     }
 
     // Validate due date is within project's date range
-    const taskProject = await Project.findById(body.projectId).select('startDate endDate').lean();
+    const taskProject = await Project.findById(body.projectId).select('startDate endDate team').lean();
+    if (!taskProject) return fail('Project not found', 404);
+    const managedIds = await getManagedUserIds(user);
+    if (managedIds !== null && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
+      return fail('Access denied', 403);
+    }
     if (taskProject) {
       if (body.due < taskProject.startDate) {
         return fail(`Due date cannot be before project start date (${taskProject.startDate})`, 400);
@@ -106,15 +110,16 @@ export async function POST(req) {
       }
     }
 
-    if (user.role === 'team_lead') {
-      const member = await User.findOne({ _id: body.assignedTo, teamLeadId: user._id });
-      if (!member) {
+    if (!['super_admin', 'admin_full'].includes(user.role)) {
+      if (!await canManageUser(user, body.assignedTo)) {
         auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to non-team member (${body.assignedTo})`, 'low', ip, null, user._id);
         return fail('You can only assign tasks to your team members', 403);
       }
     }
 
-    const task = await Task.create({ ...body, assignedBy: user._id });
+    const task = await Task.create({ ...body, assignedBy: user._id, statusHistory: [{ status: body.status, changedAt: new Date(), changedBy: user._id }] });
+    const recipientIds = await getTaskStakeholders(body.assignedTo, user._id);
+    if (recipientIds.length) await Notification.insertMany(recipientIds.map(userId => ({ userId, title: 'New Task Assigned', message: `Task assigned: ${task.title}. Due ${task.due}.`, type: 'general', refId: task._id })));
     await task.populate('assignedTo', 'name avatar');
     const assignee = await User.findById(body.assignedTo).select('name').catch(() => null);
     auditLog('Task Created', 'Tasks', user._id, `Created task "${body.title}" assigned to ${assignee?.name || 'unknown'}`, 'low', ip, null, body.assignedTo);

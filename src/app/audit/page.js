@@ -23,6 +23,8 @@ export default function AuditPage() {
   const [loading, setLoading] = useState(true);
   const [filterModule, setFilterModule] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('');
+  const [filterEmployee, setFilterEmployee] = useState('');
+  const [employees, setEmployees] = useState([]);
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -30,7 +32,7 @@ export default function AuditPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [filterModule, filterSeverity, search]);
+  }, [filterModule, filterSeverity, filterEmployee, search]);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -40,6 +42,7 @@ export default function AuditPage() {
       const params = new URLSearchParams();
       if (filterModule) params.set('module', filterModule);
       if (filterSeverity) params.set('severity', filterSeverity);
+      if (filterEmployee) params.set('userId', filterEmployee);
       if (search) params.set('search', search);
       const data = await api.get(`/api/audit?${params}`);
       setLogs(Array.isArray(data?.logs) ? data.logs : []);
@@ -50,7 +53,12 @@ export default function AuditPage() {
     }
   };
 
-  useEffect(() => { if (user) load(); }, [user, filterModule, filterSeverity]);
+  useEffect(() => { if (user) load(); }, [user, filterModule, filterSeverity, filterEmployee]);
+
+  useEffect(() => {
+    if (!user || user.role !== 'super_admin') return;
+    api.get('/api/employees').then(data => setEmployees(Array.isArray(data) ? data : [])).catch(() => {});
+  }, [user]);
 
   if (user?.role !== 'super_admin') return (
     <AppShell title="Audit Logs">
@@ -95,13 +103,7 @@ export default function AuditPage() {
                 onKeyDown={e => e.key === 'Enter' && load()} />
             </div>
           </div>
-          <div className="col-md-3">
-            <select className="form-select" style={{ fontSize: 13 }} value={filterModule} onChange={e => setFilterModule(e.target.value)}>
-              <option value="">All Modules</option>
-              {modules.map(m => <option key={m}>{m}</option>)}
-            </select>
-          </div>
-          <div className="col-md-3">
+          <div className="col-md-2">
             <select className="form-select" style={{ fontSize: 13 }} value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}>
               <option value="">All Severity</option>
               <option value="high">High</option>
@@ -109,8 +111,20 @@ export default function AuditPage() {
               <option value="low">Low</option>
             </select>
           </div>
+          <div className="col-md-3">
+            <select className="form-select" style={{ fontSize: 13 }} value={filterEmployee} onChange={e => setFilterEmployee(e.target.value)}>
+              <option value="">All Employees</option>
+              {employees.map(employee => <option key={employee._id} value={employee.userId || employee._id}>{employee.name}</option>)}
+            </select>
+          </div>
           <div className="col-md-2">
-            <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setSearch(''); setFilterModule(''); setFilterSeverity(''); }}>Clear</button>
+            <select className="form-select" style={{ fontSize: 13 }} value={filterModule} onChange={e => setFilterModule(e.target.value)}>
+              <option value="">All Modules</option>
+              {modules.map(m => <option key={m}>{m}</option>)}
+            </select>
+          </div>
+          <div className="col-md-1">
+            <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setSearch(''); setFilterModule(''); setFilterSeverity(''); setFilterEmployee(''); }}>Clear</button>
           </div>
         </div>
       </div>

@@ -30,8 +30,32 @@ export function verifyToken(token) {
 export function getTokenFromRequest(req) {
   const auth = req.headers.get('authorization');
   if (auth?.startsWith('Bearer ')) return auth.slice(7);
-  return null;
+  return getCookieValue(req, 'hrms_access');
 }
+
+export function getRefreshTokenFromRequest(req) {
+  return getCookieValue(req, 'hrms_refresh');
+}
+
+function getCookieValue(req, name) {
+  const cookieHeader = req.headers.get('cookie') || '';
+  const prefix = `${name}=`;
+  const cookie = cookieHeader.split(';').map(value => value.trim()).find(value => value.startsWith(prefix));
+  if (!cookie) return null;
+  try {
+    return decodeURIComponent(cookie.slice(prefix.length));
+  } catch {
+    return null;
+  }
+}
+
+export const SESSION_COOKIE_OPTIONS = {
+  httpOnly: true,
+  sameSite: 'lax',
+  secure: process.env.NODE_ENV === 'production',
+  path: '/',
+  priority: 'high',
+};
 
 export const ok   = (data, status = 200) => Response.json({ success: true, data }, { status });
 export const fail = (msg,  status = 400) => Response.json({ success: false, error: msg }, { status });

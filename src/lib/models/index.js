@@ -9,6 +9,17 @@ const GoalSchema = new mongoose.Schema({
   progress:  { type: Number, default: 0 },
   status:    { type: String, enum: ['in_progress','achieved','missed'], default: 'in_progress' },
   cycle:     { type: String },
+  weeklyUpdates: [{
+    weekEnding: { type: String, required: true },
+    progress:   { type: Number, min: 0, max: 100, required: true },
+    remark:     { type: String, required: true },
+    submittedAt:{ type: Date, default: Date.now },
+  }],
+  validationStatus: { type: String, enum: ['pending', 'validated'], default: 'pending' },
+  validatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  validatedAt: { type: Date, default: null },
+  validationComment: { type: String, default: '' },
+  approvalStatus: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'approved' },
 }, { timestamps: true });
 
 const ReviewSchema = new mongoose.Schema({
@@ -20,6 +31,12 @@ const ReviewSchema = new mongoose.Schema({
   selfComment:  { type: String },
   peerScore:    { type: Number },
   peerComment:  { type: String },
+  peerReviews:  [{
+    userId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    score:       { type: Number, min: 0, max: 5, required: true },
+    comment:     { type: String, default: '' },
+    submittedAt: { type: Date, default: Date.now },
+  }],
   managerScore: { type: Number },
   managerComment:{ type: String },
   managerBy:    { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -55,6 +72,12 @@ const AnnouncementSchema = new mongoose.Schema({
   pinned:   { type: Boolean, default: false },
   likes:    [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   departments: [{ type: String }],
+  attachment: {
+    name: { type: String, default: '' },
+    url: { type: String, default: '' },
+    type: { type: String, default: '' },
+    size: { type: String, default: '' },
+  },
 }, { timestamps: true });
 
 // ── Absence ───────────────────────────────────────────────────────────────────
@@ -71,10 +94,13 @@ const AssetSchema = new mongoose.Schema({
   assetId:    { type: String, required: true, unique: true },
   name:       { type: String, required: true },
   category:   { type: String },
+  stockItem:  { type: mongoose.Schema.Types.ObjectId, ref: 'Stock', required: true },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   assignedOn: { type: String, default: null },
-  status:     { type: String, enum: ['assigned','available','maintenance'], default: 'available' },
-  condition:  { type: String, enum: ['good','fair','repair'], default: 'good' },
+  returnedOn: { type: String, default: null },
+  returnReason: { type: String, default: '' },
+  status:     { type: String, enum: ['assigned','available','maintenance','repair','damaged','retired'], default: 'available' },
+  condition:  { type: String, enum: ['New', 'Good', 'Fair', 'Repair', 'Damaged', 'Obsolete', 'In Maintenance'], default: 'New' },
   value:      { type: Number, default: 0 },
 }, { timestamps: true });
 
@@ -84,9 +110,49 @@ const StockSchema = new mongoose.Schema({
   stock:      { type: Number, default: 0 },
   reorderAt:  { type: Number, default: 5 },
   unit:       { type: String, default: 'units' },
+  unitPrice:  { type: Number, default: 0 },
 }, { timestamps: true });
 
+const AssetAssignmentSchema = new mongoose.Schema({
+  asset:      { type: mongoose.Schema.Types.ObjectId, ref: 'Asset', required: true },
+  employee:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  action:     { type: String, enum: ['assigned', 'returned', 'replaced', 'maintenance', 'repaired', 'retired'], required: true },
+  assignedOn: { type: String, default: null },
+  returnedOn: { type: String, default: null },
+  reason:     { type: String, default: '' },
+  condition:  { type: String, default: '' },
+  status:     { type: String, default: '' },
+  performedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+}, { timestamps: true });
+
+const StockMovementSchema = new mongoose.Schema({
+  stockItem:    { type: mongoose.Schema.Types.ObjectId, ref: 'Stock', required: true },
+  asset:        { type: mongoose.Schema.Types.ObjectId, ref: 'Asset', default: null },
+  employee:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  type:         { type: String, enum: ['stock_added', 'assigned', 'returned'], required: true },
+  quantity:     { type: Number, required: true },
+  balanceAfter: { type: Number, required: true },
+  unitPrice:    { type: Number, default: 0 },
+  note:         { type: String, default: '' },
+  performedBy:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+}, { timestamps: true });
+
+const CounterSchema = new mongoose.Schema({
+  _id: { type: String, required: true },
+  seq: { type: Number, default: 0 },
+});
+
 // ── Finance ───────────────────────────────────────────────────────────────────
+const ClientSchema = new mongoose.Schema({
+  name:          { type: String, required: true, trim: true, unique: true },
+  contactPerson: { type: String, default: '', trim: true },
+  email:         { type: String, default: '', trim: true, lowercase: true },
+  phone:         { type: String, default: '', trim: true },
+  address:       { type: String, default: '', trim: true },
+  gstin:         { type: String, default: '', trim: true, uppercase: true },
+  createdBy:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
 const InvoiceSchema = new mongoose.Schema({
   invoiceNo:  { type: String, required: true, unique: true },
   client:     { type: String, required: true },
@@ -107,9 +173,15 @@ const ExpenseSchema = new mongoose.Schema({
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
 }, { timestamps: true });
 
+const ExpenseCategorySchema = new mongoose.Schema({
+  name:      { type: String, required: true, trim: true, unique: true },
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+}, { timestamps: true });
+
 const BudgetSchema = new mongoose.Schema({
   department: { type: String, required: true },
   year:       { type: Number, required: true },
+  month:      { type: Number, min: 1, max: 12, default: null },
   allocated:  { type: Number, default: 0 },
   spent:      { type: Number, default: 0 },
 }, { timestamps: true });
@@ -302,7 +374,13 @@ const NotificationSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title:   { type: String, required: true },
   message: { type: String, required: true },
-  type:    { type: String, enum: ['leave','attendance','general','lifecycle','self_service','payroll','viewing'], default: 'general' },
+  type:    { type: String, enum: ['leave','attendance','announcement','general','performance','lifecycle','self_service','payroll','viewing'], default: 'general' },
+  attachment: {
+    name: { type: String, default: '' },
+    url: { type: String, default: '' },
+    type: { type: String, default: '' },
+    size: { type: String, default: '' },
+  },
   read:    { type: Boolean, default: false },
   refId:   { type: mongoose.Schema.Types.ObjectId, default: null }, // leave/request id
 }, { timestamps: true });
@@ -382,11 +460,20 @@ export const Document    = mongoose.models.Document    || mongoose.model('Docume
 if (mongoose.models.Announcement) delete mongoose.models.Announcement;
 export const Announcement = mongoose.model('Announcement', AnnouncementSchema);
 export const Absence     = mongoose.models.Absence     || mongoose.model('Absence', AbsenceSchema);
-export const Asset       = mongoose.models.Asset       || mongoose.model('Asset', AssetSchema);
-export const Stock       = mongoose.models.Stock       || mongoose.model('Stock', StockSchema);
+if (mongoose.models.Asset) delete mongoose.models.Asset;
+export const Asset       = mongoose.model('Asset', AssetSchema);
+if (mongoose.models.Stock) delete mongoose.models.Stock;
+export const Stock       = mongoose.model('Stock', StockSchema);
+if (mongoose.models.AssetAssignment) delete mongoose.models.AssetAssignment;
+export const AssetAssignment = mongoose.model('AssetAssignment', AssetAssignmentSchema);
+export const StockMovement   = mongoose.models.StockMovement   || mongoose.model('StockMovement', StockMovementSchema);
+export const Counter         = mongoose.models.Counter         || mongoose.model('Counter', CounterSchema);
+export const Client      = mongoose.models.Client      || mongoose.model('Client', ClientSchema);
 export const Invoice     = mongoose.models.Invoice     || mongoose.model('Invoice', InvoiceSchema);
 export const Expense     = mongoose.models.Expense     || mongoose.model('Expense', ExpenseSchema);
-export const Budget      = mongoose.models.Budget      || mongoose.model('Budget', BudgetSchema);
+export const ExpenseCategory = mongoose.models.ExpenseCategory || mongoose.model('ExpenseCategory', ExpenseCategorySchema);
+if (mongoose.models.Budget) delete mongoose.models.Budget;
+export const Budget      = mongoose.model('Budget', BudgetSchema);
 export const AuditLog    = mongoose.models.AuditLog    || mongoose.model('AuditLog', AuditLogSchema);
 export const Employee    = mongoose.models.Employee    || mongoose.model('Employee', EmployeeSchema);
 if (process.env.NODE_ENV === 'development' && mongoose.models.SME) { delete mongoose.models.SME; }
@@ -404,7 +491,8 @@ export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('
 export const Role          = mongoose.models.Role          || mongoose.model('Role', RoleSchema);
 export const Designation   = mongoose.models.Designation   || mongoose.model('Designation', DesignationSchema);
 export const AssetCategory = mongoose.models.AssetCategory || mongoose.model('AssetCategory', AssetCategorySchema);
-export const Notification= mongoose.models.Notification|| mongoose.model('Notification', NotificationSchema);
+if (mongoose.models.Notification) delete mongoose.models.Notification;
+export const Notification = mongoose.model('Notification', NotificationSchema);
 export const SmeExpertise= mongoose.models.SmeExpertise|| mongoose.model('SmeExpertise', SmeExpertiseSchema);
 
 // Re-import Leave model here to ensure the updated schema is always used

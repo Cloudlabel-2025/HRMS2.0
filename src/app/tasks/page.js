@@ -5,12 +5,38 @@ import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
+import ExcelJS from 'exceljs';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
-const STATUSES  = ['To Do', 'In Progress', 'Completed', 'Blocked'];
+const STATUSES  = ['To Do', 'In Progress', 'Pending', 'Completed', 'Blocked'];
 const PRIORITIES = ['low', 'medium', 'high'];
 const PRIORITY_COLORS = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
-const STATUS_COLORS   = { 'To Do': '#64748b', 'In Progress': '#3b82f6', 'Completed': '#10b981', 'Blocked': '#ef4444' };
+const STATUS_COLORS   = { 'To Do': '#64748b', 'In Progress': '#3b82f6', 'Pending': '#f59e0b', 'Completed': '#10b981', 'Blocked': '#ef4444' };
 const EMPTY_TASK = { title: '', description: '', projectId: '', assignedTo: '', priority: 'medium', status: 'To Do', due: '' };
+
+function formatProjectDuration(startDate, endDate) {
+  if (!startDate || !endDate) return '—';
+  const days = Math.max(0, Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000));
+  return days >= 30 ? `${Math.floor(days / 30)}m ${days % 30}d` : `${days} day${days === 1 ? '' : 's'}`;
+}
+
+function getCurrentStatusStartedAt(task) {
+  const history = Array.isArray(task.statusHistory) ? task.statusHistory : [];
+  return history[history.length - 1]?.changedAt || task.updatedAt || task.createdAt;
+}
+
+function formatStatusDuration(date) {
+  const start = new Date(date).getTime();
+  if (!date || Number.isNaN(start)) return 'just now';
+  const minutes = Math.max(0, Math.floor((Date.now() - start) / 60000));
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${mins}m`;
+  return `${Math.max(1, mins)}m`;
+}
 
 export default function TasksPage() {
   const { user } = useAuth();
@@ -25,7 +51,7 @@ export default function TasksPage() {
   const [selectedProjectObj, setSelectedProjectObj] = useState(null);
   const [infoProject, setInfoProject] = useState(null);
   const [departments, setDepartments] = useState([]);
-  const [projectForm, setProjectForm] = useState({ name: '', description: '', departments: [], startDate: '', endDate: '', team: [] });
+  const [projectForm, setProjectForm] = useState({ name: '', description: '', departments: [], startDate: '', endDate: '', team: [], responsibleTo: '' });
   const [filterProject, setFilterProject] = useState('');
   const [showProjectDocsModal, setShowProjectDocsModal] = useState(false);
   const [selectedDocProject, setSelectedDocProject] = useState(null);
@@ -38,8 +64,12 @@ export default function TasksPage() {
   const [loading, setLoading]           = useState(true);
   const [saving, setSaving]         = useState(false);
   const [toast, setToast]           = useState(null);
+  const [statusChange, setStatusChange] = useState(null);
+  const [activityComment, setActivityComment] = useState('');
+  const [activityDate, setActivityDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [listPage, setListPage] = useState(1);
   const [projPage, setProjPage] = useState(1);
+  const [expandedProjectId, setExpandedProjectId] = useState(null);
   const pageSize = 10;
 
   useEffect(() => {
@@ -97,13 +127,16 @@ export default function TasksPage() {
       due: task.due || '',
     });
     setSelectedProjectObj(projects.find(p => String(p._id) === String(pid)) || null);
+    setUploadForm({ name: '', fileUrl: '', fileSize: '', fileType: 'pdf', projectId: pid, taskId: task._id });
+    setSelectedFile(null);
+    loadProjectDocs(pid);
     setShowModal(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = async (confirmed = false) => {
     if (!form.title) { showToast('Task title is required', 'error'); return; }
     if (form.title.length > 30) { showToast('Task title must be at most 30 characters', 'error'); return; }
-    if (!/^[a-zA-Z0-9]+$/.test(form.title)) { showToast('Task title must contain only letters and numbers', 'error'); return; }
+    if (!form.title.trim()) { showToast('Task title cannot contain only spaces', 'error'); return; }
     if (!form.description) { showToast('Task description is required', 'error'); return; }
     if (!form.projectId) { showToast('Please select a project', 'error'); return; }
     if (!form.assignedTo) { showToast('Please select an assignee', 'error'); return; }
@@ -125,6 +158,7 @@ export default function TasksPage() {
     setSaving(true);
     try {
       if (editTask) {
+        if (form.status !== editTask.status && !confirmed) return setStatusChange({ task: editTask, newStatus: form.status, action: 'save' });
         await api.put(`/api/tasks/${editTask._id}`, form);
         showToast('Task updated');
       } else {
@@ -140,13 +174,48 @@ export default function TasksPage() {
     }
   };
 
-  const moveTask = async (id, newStatus) => {
+  const moveTask = async (id, newStatus, confirmed = false) => {
+    const task = tasks.find(item => item._id === id);
+    if (!task || task.status === newStatus) return;
+    if (!confirmed) return setStatusChange({ task, newStatus, action: 'move' });
     try {
       await api.put(`/api/tasks/${id}`, { status: newStatus });
       setTasks(prev => prev.map(t => t._id === id ? { ...t, status: newStatus } : t));
     } catch (e) {
       showToast(e.message, 'error');
     }
+  };
+
+  const addTaskActivity = async () => {
+    if (!activityComment.trim() || !editTask) return showToast('Comment is required', 'error');
+    setSaving(true);
+    try {
+      const updated = await api.put(`/api/tasks/${editTask._id}`, { action: 'add_activity', date: activityDate, comment: activityComment });
+      setEditTask(updated); setActivityComment(''); showToast('Comment added'); loadAll();
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setSaving(false); }
+  };
+
+  const downloadTaskActivity = () => {
+    if (!editTask) return;
+    const rows = [['Date', 'Project', 'Task', 'Comment'], ...(editTask.activityLog || []).map(item => [item.date, editTask.projectId?.name || '', editTask.title, item.comment])];
+    const csv = rows.map(row => row.map(value => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${editTask.title.replace(/[^a-z0-9]/gi, '-')}-activity.csv`; link.click(); URL.revokeObjectURL(link.href);
+  };
+
+  const downloadProjectProgress = async (project, projectTasks, format) => {
+    const headers = ['Task', 'Assignee', 'Priority', 'Status', 'Due Date'];
+    const rows = projectTasks.map(task => [task.title, task.assignedTo?.name || '', task.priority, task.status, task.due || '']);
+    const filename = `${project.name.replace(/[^a-z0-9]/gi, '-')}-progress`;
+    if (format === 'csv') {
+      const csv = [headers, ...rows].map(row => row.map(value => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${filename}.csv`; link.click(); URL.revokeObjectURL(link.href); return;
+    }
+    if (format === 'excel') {
+      const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('Project Progress'); sheet.addRow(headers); rows.forEach(row => sheet.addRow(row)); sheet.getRow(1).font = { bold: true }; sheet.columns.forEach(column => { column.width = 20; });
+      const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); link.download = `${filename}.xlsx`; link.click(); URL.revokeObjectURL(link.href); return;
+    }
+    const doc = new jsPDF({ orientation: 'landscape' }); doc.setFontSize(14); doc.text(`${project.name} - Project Progress`, 14, 16); autoTable(doc, { head: [headers], body: rows, startY: 22 }); doc.save(`${filename}.pdf`);
   };
 
   const loadProjectDocs = async (projectId) => {
@@ -177,6 +246,7 @@ export default function TasksPage() {
   const handleUploadDoc = async () => {
     if (!uploadForm.name || !uploadForm.taskId) { showToast('Name and task are required', 'error'); return; }
     if (!selectedFile && !uploadForm.fileUrl) { showToast('Please select a file', 'error'); return; }
+    if (selectedFile?.size > 3 * 1024 * 1024) { showToast('Document must be smaller than 3 MB', 'error'); return; }
     setSaving(true);
     try {
       let fileUrl = uploadForm.fileUrl;
@@ -184,7 +254,7 @@ export default function TasksPage() {
         setFileUploading(true);
         const fd = new FormData();
         fd.append('file', selectedFile);
-        const uploadRes = await fetch('/api/upload', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('hrms_token')}` }, body: fd });
+        const uploadRes = await fetch('/api/upload', { method: 'POST', credentials: 'same-origin', body: fd });
         const uploadJson = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadJson.error || 'Upload failed');
         fileUrl = uploadJson.data.url;
@@ -196,7 +266,7 @@ export default function TasksPage() {
       setSelectedFile(null);
       setSelectedFile(null);
       setUploadForm({ name: '', fileUrl: '', fileSize: '', fileType: 'pdf', projectId: '', taskId: null });
-      if (selectedDocProject) loadProjectDocs(selectedDocProject);
+      if (uploadForm.projectId) loadProjectDocs(uploadForm.projectId);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -219,8 +289,9 @@ export default function TasksPage() {
   const handleCreateProject = async () => {
     if (!projectForm.name) { showToast('Project name is required', 'error'); return; }
     if (projectForm.name.length > 30) { showToast('Project name must be at most 30 characters', 'error'); return; }
-    if (!/^[a-zA-Z0-9]+$/.test(projectForm.name)) { showToast('Project name must contain only letters and numbers', 'error'); return; }
+    if (!projectForm.name.trim()) { showToast('Project name cannot contain only spaces', 'error'); return; }
     if (!projectForm.description) { showToast('Description is required', 'error'); return; }
+    if (!projectForm.responsibleTo) { showToast('Project responsible person is required', 'error'); return; }
     if (!projectForm.departments || projectForm.departments.length === 0) { showToast('At least one department is required', 'error'); return; }
     if (!projectForm.startDate) { showToast('Start date is required', 'error'); return; }
     if (!projectForm.endDate) { showToast('End date is required', 'error'); return; }
@@ -232,7 +303,7 @@ export default function TasksPage() {
       await api.post('/api/projects', projectForm);
       showToast('Project created');
       setShowProjectModal(false);
-      setProjectForm({ name: '', description: '', departments: [], startDate: '', endDate: '', team: [] });
+      setProjectForm({ name: '', description: '', departments: [], startDate: '', endDate: '', team: [], responsibleTo: '' });
       loadAll();
     } catch (e) {
       showToast(e.message, 'error');
@@ -330,6 +401,10 @@ export default function TasksPage() {
                           </div>
                           <span style={{ fontSize: 11, color: '#94a3b8' }}>Due {task.due || '—'}</span>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: '#64748b', fontSize: 10.5, marginBottom: 9 }}>
+                          <i className="bi bi-stopwatch" />
+                          In {task.status} for {formatStatusDuration(getCurrentStatusStartedAt(task))}
+                        </div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {STATUSES.filter(s => s !== status).filter(s => s !== 'Blocked' || isAdmin).map(s => (
                             <button key={s} onClick={e => { e.stopPropagation(); moveTask(task._id, s); }}
@@ -351,10 +426,10 @@ export default function TasksPage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>Due</th>{isAdmin && <th>Edit</th>}</tr></thead>
+                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>In status</th><th>Due</th>{isAdmin && <th>Edit</th>}</tr></thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
+                      <tr><td colSpan={isAdmin ? 8 : 7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
                     ) : filtered.slice((listPage - 1) * pageSize, listPage * pageSize).map(task => (
                       <tr key={task._id}>
                         <td>
@@ -378,6 +453,7 @@ export default function TasksPage() {
                           <span style={{ fontSize: 12, textTransform: 'capitalize' }}>{task.priority}</span>
                         </td>
                         <td><span className="badge" style={{ background: STATUS_COLORS[task.status] + '20', color: STATUS_COLORS[task.status] }}>{task.status}</span></td>
+                        <td style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}><i className="bi bi-stopwatch me-1" />{formatStatusDuration(getCurrentStatusStartedAt(task))}</td>
                         <td style={{ fontSize: 12, color: '#64748b' }}>{task.due || '—'}</td>
                         {isAdmin && <td><button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(task)}><i className="bi bi-pencil" /></button></td>}
                       </tr>
@@ -406,8 +482,9 @@ export default function TasksPage() {
                 const projTasks = tasks.filter(t => t.projectId?._id === proj._id || t.projectId === proj._id);
                 const done = projTasks.filter(t => t.status === 'Completed').length;
                 const pct  = projTasks.length > 0 ? Math.round((done / projTasks.length) * 100) : proj.progress || 0;
+                const expanded = expandedProjectId === proj._id;
                 return (
-                  <div key={proj._id} className="col-md-6 col-xl-4">
+                  <div key={proj._id} className={expanded ? 'col-12' : 'col-md-6 col-xl-4'}>
                     <div className="card p-3">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                         <div>
@@ -431,6 +508,7 @@ export default function TasksPage() {
                         <span>{pct}% complete</span>
                         <span>{done}/{projTasks.length} tasks done</span>
                       </div>
+                      {proj.status === 'completed' && <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', marginBottom: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#15803d', fontSize: 11.5, fontWeight: 700 }}><i className="bi bi-stopwatch" />Total time taken: {formatProjectDuration(proj.startDate, proj.completedAt || proj.updatedAt || proj.endDate)}</div>}
                       {proj.team?.length > 0 && (
                         <div style={{ display: 'flex', gap: 4 }}>
                           {proj.team.map(m => (
@@ -440,6 +518,11 @@ export default function TasksPage() {
                           ))}
                         </div>
                       )}
+                      <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
+                        <button className="btn btn-sm btn-outline-primary" onClick={() => { setExpandedProjectId(expanded ? null : proj._id); if (!expanded) loadProjectDocs(proj._id); }}><i className={`bi ${expanded ? 'bi-chevron-up' : 'bi-chevron-down'} me-1`} />{expanded ? 'Hide Tasks' : 'View Progress'}</button>
+                        {expanded && <><button className="btn btn-sm btn-outline-secondary" onClick={() => downloadProjectProgress(proj, projTasks, 'csv')}>CSV</button><button className="btn btn-sm btn-outline-success" onClick={() => downloadProjectProgress(proj, projTasks, 'excel')}>Excel</button><button className="btn btn-sm btn-outline-danger" onClick={() => downloadProjectProgress(proj, projTasks, 'pdf')}>PDF</button><span style={{ width: 1, background: '#e2e8f0', margin: '0 4px' }} />{docsLoading ? <span style={{ fontSize: 12, color: '#64748b' }}>Loading documents...</span> : projectDocs.map(doc => <a key={doc._id} href={doc.fileUrl} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-secondary" title={doc.taskId?.title || 'Project document'}><i className="bi bi-paperclip me-1" />{doc.name}</a>)}</>}
+                      </div>
+                      {expanded && <div style={{ marginTop: 16, borderTop: '1px solid #e2e8f0', paddingTop: 14 }}><div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>Task Progress ({done}/{projTasks.length} completed)</div><div className="table-responsive"><table className="table table-sm mb-0"><thead><tr><th>Task</th><th>Assignee</th><th>Priority</th><th>Status</th><th>Due</th></tr></thead><tbody>{projTasks.length ? projTasks.map(task => <tr key={task._id}><td><strong>{task.title}</strong><div style={{ fontSize: 11, color: '#64748b' }}>{task.description}</div></td><td>{task.assignedTo?.name || '—'}</td><td style={{ textTransform: 'capitalize' }}>{task.priority}</td><td><span className="badge" style={{ background: STATUS_COLORS[task.status] + '20', color: STATUS_COLORS[task.status] }}>{task.status}</span></td><td>{task.due || '—'}</td></tr>) : <tr><td colSpan={5} style={{ color: '#64748b', textAlign: 'center' }}>No tasks have been created for this project.</td></tr>}</tbody></table></div></div>}
                     </div>
                   </div>
                 );
@@ -464,17 +547,18 @@ export default function TasksPage() {
       {/* Task Modal */}
       {showModal && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg" style={{ maxWidth: 940 }}>
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">{editTask ? 'Edit Task' : 'New Task'}</h5>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h5 className="modal-title">{editTask ? 'Edit Task' : 'New Task'}</h5>{editTask && <button className="btn btn-sm btn-outline-secondary" title="Download task comments" onClick={downloadTaskActivity}><i className="bi bi-download" /></button>}</div>
                 <button className="btn-close" onClick={() => setShowModal(false)} />
               </div>
-              <div className="modal-body">
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto', background: '#f8fafc' }}>
                 <div className="row g-3">
+                  <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-list-check me-2" />Task Details</div></div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task Title *</label>
-                    <input className="form-control" maxLength={30} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value.replace(/[^a-zA-Z0-9]/g, '') }))} />
+                    <input className="form-control" maxLength={30} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description *</label>
@@ -515,6 +599,8 @@ export default function TasksPage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
                     <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} />
                   </div>
+                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><div style={{ display: 'flex', gap: 8 }}><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /><button type="button" className="btn btn-outline-primary" onClick={addTaskActivity} disabled={saving} title="Add dated comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} /></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{item.date}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-paperclip me-2" />Documents</div></div></>}
+                  {editTask && <div className="col-12"><div className="row g-2"><div className="col-md-4"><input className="form-control" placeholder="Document name" value={uploadForm.name} onChange={e => setUploadForm(p => ({ ...p, name: e.target.value }))} /></div><div className="col-md-4"><input className="form-control" type="file" onChange={e => { const file = e.target.files?.[0]; if (file) { if (file.size > 3 * 1024 * 1024) { showToast('Document must be smaller than 3 MB', 'error'); e.target.value = ''; return; } setSelectedFile(file); setUploadForm(p => ({ ...p, name: p.name || file.name, fileType: file.name.split('.').pop() || p.fileType, fileSize: `${(file.size / 1024).toFixed(1)} KB` })); } }} /></div><div className="col-md-4"><input className="form-control" placeholder="Or paste document URL" value={uploadForm.fileUrl} onChange={e => setUploadForm(p => ({ ...p, fileUrl: e.target.value }))} /></div><div className="col-12"><small className="text-muted">Upload a document under 3 MB or provide a document URL.</small><button type="button" className="btn btn-sm btn-outline-primary ms-2" onClick={handleUploadDoc} disabled={saving || fileUploading}><i className="bi bi-upload me-1" />{fileUploading ? 'Uploading...' : 'Add Document'}</button></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginTop: 5, marginBottom: 4 }}>Uploaded Files</div><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 8 }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: '5px 3px', borderBottom: '1px solid #f1f5f9' }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a></div>) : <span style={{ color: '#64748b', fontSize: 12 }}>No files uploaded for this task.</span>}</div></div></div></div>}
                 </div>
               </div>
               <div className="modal-footer">
@@ -679,7 +765,7 @@ export default function TasksPage() {
                 <div className="row g-3">
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Name *</label>
-                    <input className="form-control" maxLength={30} value={projectForm.name} onChange={e => setProjectForm(p => ({ ...p, name: e.target.value.replace(/[^a-zA-Z0-9]/g, '') }))} />
+                    <input className="form-control" maxLength={30} value={projectForm.name} onChange={e => setProjectForm(p => ({ ...p, name: e.target.value }))} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description *</label>
@@ -698,13 +784,14 @@ export default function TasksPage() {
                           {projectForm.departments.map(d => (
                             <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', fontSize: 12, fontWeight: 600 }}>
                               {d}
-                              <button type="button" onClick={() => setProjectForm(p => ({ ...p, departments: p.departments.filter(x => x !== d) }))} style={{ border: 'none', background: 'none', padding: 0, color: '#2563eb', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex' }}>&times;</button>
+                              <button type="button" onClick={() => setProjectForm(p => ({ ...p, departments: p.departments.filter(x => x !== d), responsibleTo: p.departments.filter(x => x !== d).includes(employees.find(employee => String(employee.userId || employee._id) === String(p.responsibleTo))?.department) ? p.responsibleTo : '' }))} style={{ border: 'none', background: 'none', padding: 0, color: '#2563eb', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex' }}>&times;</button>
                             </span>
                           ))}
                         </div>
                       )}
                     </div>
                   </div>
+                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *</label><select className="form-select" value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} disabled={projectForm.departments.length === 0}><option value="">{projectForm.departments.length ? 'Select responsible person' : 'Select department first'}</option>{employees.filter(employee => projectForm.departments.includes(employee.department)).map(employee => <option key={employee.userId || employee._id} value={employee.userId || employee._id}>{employee.name} ({employee.department})</option>)}</select></div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Start Date *</label>
                     <DateInput className="form-control" value={projectForm.startDate} onChange={e => setProjectForm(p => ({ ...p, startDate: e.target.value }))} />
@@ -778,6 +865,13 @@ export default function TasksPage() {
         </div>
       )}
 
+      {statusChange && <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 16 }}>
+        <div className="card shadow-lg" style={{ width: '100%', maxWidth: 440, border: 'none', borderRadius: 20, overflow: 'hidden' }}>
+          <div style={{ padding: '24px 28px 20px', background: 'linear-gradient(135deg, #f8fbff, #ffffff)' }}><div style={{ display: 'flex', alignItems: 'center', gap: 12 }}><div style={{ width: 42, height: 42, borderRadius: 13, background: '#eaf2ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><i className="bi bi-arrow-left-right" style={{ fontSize: 19 }} /></div><div><div style={{ fontSize: 11, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: 0.7 }}>Task workflow</div><h5 style={{ fontWeight: 750, color: '#0f172a', margin: '2px 0 0' }}>Confirm progress change</h5></div></div></div>
+          <div style={{ padding: '20px 28px 24px' }}><div style={{ color: '#334155', fontSize: 14, fontWeight: 650, marginBottom: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{statusChange.task.title}</div><div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ padding: '7px 10px', borderRadius: 8, background: '#f1f5f9', color: '#475569', fontSize: 12, fontWeight: 700 }}>{statusChange.task.status}</span><i className="bi bi-arrow-right" style={{ color: '#94a3b8' }} /><span style={{ padding: '7px 10px', borderRadius: 8, background: `${STATUS_COLORS[statusChange.newStatus]}18`, color: STATUS_COLORS[statusChange.newStatus], fontSize: 12, fontWeight: 800 }}>{statusChange.newStatus}</span></div><p style={{ color: '#64748b', fontSize: 12.5, margin: '16px 0 0', lineHeight: 1.5 }}>This updates the task workflow and may notify the relevant reviewers.</p></div>
+          <div style={{ padding: '14px 28px', background: '#f8fafc', borderTop: '1px solid #eef2f7', display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button className="btn btn-light" style={{ border: '1px solid #cbd5e1', fontWeight: 650 }} onClick={() => setStatusChange(null)}>Cancel</button><button className="btn btn-primary" style={{ fontWeight: 700, paddingInline: 20 }} onClick={() => { const change = statusChange; setStatusChange(null); if (change.action === 'save') handleSave(true); else moveTask(change.task._id, change.newStatus, true); }}>Confirm change</button></div>
+        </div>
+      </div>}
     </AppShell>
   );
 }

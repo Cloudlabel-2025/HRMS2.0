@@ -6,6 +6,7 @@ export function calculatePayroll({
   sundaysInMonth,
   alternateSaturdaysInMonth,
   unpaidLeavesTaken,
+  workingDays,
 }) {
   const monthlyGross = round(grossLPA / 12);
 
@@ -20,7 +21,7 @@ export function calculatePayroll({
 
   const employeeESI = monthlyGross <= 21000 ? round(monthlyGross * 0.0075) : 0;
 
-  const totalWorkingDays = totalDaysInMonth - sundaysInMonth - alternateSaturdaysInMonth;
+  const totalWorkingDays = Number.isFinite(workingDays) ? workingDays : totalDaysInMonth - sundaysInMonth - alternateSaturdaysInMonth;
   const salaryPerDay = totalWorkingDays > 0 ? round(monthlyGross / totalWorkingDays) : 0;
   const lossOfPayDeduction = round(salaryPerDay * unpaidLeavesTaken);
 
@@ -43,5 +44,7 @@ export function calculatePayroll({
       totalDeductions,
     },
     netTakeHome,
+    workingDays: totalWorkingDays,
+    salaryPerDay,
   };
 }

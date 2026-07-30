@@ -22,7 +22,7 @@ export default function LoginPage() {
     if (!authLoading && user && !justLoggedIn.current) {
       fetch('/api/auth/logout', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${localStorage.getItem('hrms_token')}` },
+        credentials: 'same-origin',
       }).catch(() => {});
       logout();
     }
@@ -37,13 +37,12 @@ export default function LoginPage() {
     setSubmittingReason(true);
     setReasonError('');
     try {
-      const token = localStorage.getItem('hrms_token');
       const res = await fetch('/api/attendance/late-logout-reason', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
         },
+        credentials: 'same-origin',
         body: JSON.stringify({ date: lateLogoutDate, reason: lateLogoutReason.trim() }),
       });
       const json = await res.json();

@@ -19,6 +19,8 @@ const LeaveSchema = new mongoose.Schema({
 
   // Overall resolved status
   status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  // Guards balance movement against repeat approvals in legacy and policy workflows.
+  balanceApplied: { type: Boolean, default: false },
 
   // ── Legacy hardcoded approval fields (kept for backward compatibility) ──
   adminApproval:   { ...APPROVAL },

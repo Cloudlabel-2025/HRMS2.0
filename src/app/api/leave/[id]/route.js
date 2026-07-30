@@ -117,7 +117,7 @@ export async function PUT(req, { params }) {
       leave.status = newStatus;
 
       // Handle final approval — deduct balance
-      if (newStatus === 'approved') {
+      if (newStatus === 'approved' && !leave.balanceApplied) {
         const isPaid = policy.leaveTypeConfigs?.find(
           c => c.code === leave.typeCode
         )?.isPaid ?? true;
@@ -155,6 +155,7 @@ export async function PUT(req, { params }) {
           }
         }
 
+        leave.balanceApplied = true;
         await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
       }
 
@@ -337,7 +338,7 @@ export async function PUT(req, { params }) {
     const newStatus = resolveStatus(leave);
     leave.status = newStatus;
 
-    if (newStatus === 'approved') {
+    if (newStatus === 'approved' && !leave.balanceApplied) {
       // Look up isPaid from policy config for this leave type
       let isPaidLegacy = true;
       if (policy) {
@@ -376,6 +377,7 @@ export async function PUT(req, { params }) {
           }
         }
       }
+      leave.balanceApplied = true;
       await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
     }
 
@@ -448,7 +450,7 @@ export async function DELETE(req, { params }) {
     if (leave.typeCode === 'LOP') {
       isPaidDelete = false;
     }
-    if (leave.status === 'approved' && isPaidDelete && paidDays > 0) {
+    if (leave.status === 'approved' && leave.balanceApplied !== false && isPaidDelete && paidDays > 0) {
       const now = new Date();
       const cycleStart = new Date(now.getFullYear(), 0, 1);
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });

@@ -24,6 +24,9 @@ export async function requireAuth(req) {
   // serve the request as the impersonated user instead
   const impersonateId = req.headers.get('x-impersonate');
   if (impersonateId && user.role === 'super_admin') {
+    if (!['GET', 'HEAD'].includes(req.method)) {
+      return { error: fail('Impersonation sessions are read-only', 403) };
+    }
     const impersonated = await User.findById(impersonateId).select('-password');
     if (impersonated && impersonated.status === 'active') {
       return { user: impersonated, __isImpersonated: true };

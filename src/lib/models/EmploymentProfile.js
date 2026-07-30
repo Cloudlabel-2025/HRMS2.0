@@ -56,6 +56,7 @@ const EmpProfileSchema = new mongoose.Schema({
   hireDate:            { type: Date, default: null },
   probationStartDate:   { type: Date, default: null },
   probationEndDate:     { type: Date, default: null },
+  probationEndNotifiedAt:{ type: Date, default: null },
   confirmationDate:     { type: Date, default: null },
   rehireCount:          { type: Number, default: 0 },
   originalHireDate:     { type: Date, default: null },

@@ -198,6 +198,13 @@ export const LifecycleConfirmProbationSchema = z.object({
   confirmationNote: z.string().max(500).optional().or(z.literal('')),
 }).passthrough();
 
+export const LifecycleStartProbationSchema = z.object({
+  profileId: ObjectIdSchema,
+  effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
+  probationEndDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date()),
+  confirmationNote: z.string().min(1).max(500),
+}).passthrough();
+
 export const LifecycleTransferSchema = z.object({
   profileId: ObjectIdSchema,
   effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
@@ -256,6 +263,7 @@ export const LifecycleSeparationSchema = z.object({
 
 export const LifecycleActionSchema = z.union([
   z.object({ action: z.literal('confirm_probation'), data: LifecycleConfirmProbationSchema }),
+  z.object({ action: z.literal('start_probation'), data: LifecycleStartProbationSchema }),
   z.object({ action: z.literal('transfer'), data: LifecycleTransferSchema }),
   z.object({ action: z.literal('promotion'), data: LifecyclePromotionSchema }),
   z.object({ action: z.literal('rehire'), data: LifecycleRehireSchema }),

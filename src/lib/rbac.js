@@ -3,6 +3,7 @@
  * All permission logic lives here — no hardcoding in routes or frontend.
  */
 import { Department } from '@/lib/models/index';
+import User from '@/lib/models/User';
 
 // ── Module access matrix ──────────────────────────────────────────────────────
 // Values: 'full' | 'limited' | 'self' | 'dept' | 'team' | 'assigned' | false
@@ -124,4 +125,25 @@ export function canWrite(role, module) {
 /** True if the role has full (unrestricted) access */
 export function isFull(role, module) {
   return getAccess(role, module) === 'full';
+}
+
+/** IDs a user may manage for team-scoped work. Administrators receive null (unrestricted). */
+export async function getManagedUserIds(user) {
+  if (['super_admin', 'admin_full'].includes(user.role)) return null;
+  if (user.role === 'team_lead') {
+    const members = await User.find({ teamLeadId: user._id, status: 'active' }).select('_id').lean();
+    return [user._id, ...members.map(member => member._id)];
+  }
+  if (user.role === 'team_admin') {
+    const members = await User.find({ teamAdminId: user._id, status: 'active' }).select('_id').lean();
+    return [user._id, ...members.map(member => member._id)];
+  }
+  return [user._id];
+}
+
+/** True when a manager may assign or manage work for targetUserId. */
+export async function canManageUser(user, targetUserId) {
+  const managedIds = await getManagedUserIds(user);
+  if (managedIds === null) return true;
+  return managedIds.some(id => id.toString() === targetUserId.toString());
 }

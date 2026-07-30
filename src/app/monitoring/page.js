@@ -46,8 +46,10 @@ export default function MonitoringPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDept, setFilterDept] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [departments, setDepartments] = useState([]);
   const [workProgressEmp, setWorkProgressEmp] = useState(null);
+  const [patternFlags, setPatternFlags] = useState([]);
 
   const isSuperAdmin = user?.role === 'super_admin';
 
@@ -170,6 +172,9 @@ export default function MonitoringPage() {
 
       setTeam(teamArr);
       setAlerts(alertList.slice(0, 10));
+      api.get('/api/monitoring/patterns')
+        .then(data => setPatternFlags(Array.isArray(data?.flags) ? data.flags : []))
+        .catch(() => setPatternFlags([]));
     } catch (e) {
       console.error(e);
     } finally {
@@ -184,9 +189,11 @@ export default function MonitoringPage() {
   }, [user]);
 
   const depts = departments;
+  const normalizedSearch = searchTerm.trim().toLowerCase();
   const filtered = team.filter(e =>
     (!filterStatus || e.status === filterStatus) &&
-    (!filterDept   || e.dept === filterDept)
+    (!filterDept   || e.dept === filterDept) &&
+    (!normalizedSearch || [e.name, e.employeeNumber, e.dept, e.designation].some(value => String(value || '').toLowerCase().includes(normalizedSearch)))
   );
 
   const counts = {
@@ -228,13 +235,22 @@ export default function MonitoringPage() {
         ))}
       </div>
 
+      {patternFlags.length > 0 && <div className="card p-3 mb-4" style={{ border: '1px solid #fde68a', background: '#fffbeb' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}><i className="bi bi-flag-fill" style={{ color: '#d97706' }} /><span style={{ fontSize: 14, fontWeight: 750, color: '#92400e' }}>Attendance Pattern Review Flags</span><span style={{ fontSize: 11, color: '#a16207' }}>Evidence-based signals — not disciplinary findings</span></div>
+        <div className="row g-2">{patternFlags.map((flag, index) => <div key={`${flag.employee?.userId || flag.employee?._id}-${flag.type}-${index}`} className="col-md-6 col-xl-4"><div style={{ background: '#fff', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}>{flag.employee?.name}</div><div style={{ fontSize: 11.5, color: '#d97706', fontWeight: 700, marginTop: 3 }}>{flag.type}</div><div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>{flag.evidence}</div><div style={{ fontSize: 10.5, color: '#a16207', marginTop: 6 }}>{flag.reviewState}</div></div></div>)}</div>
+      </div>}
+
       {(loading && !refreshing) ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
         <div className="row g-3">
           <div className="col-lg-8">
             <div className="card p-3">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                 <div className="section-title" style={{ margin: 0 }}>Team Status</div>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                  <div style={{ position: 'relative', minWidth: 200, flex: '1 1 200px' }}>
+                    <i className="bi bi-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 12 }} />
+                    <input className="form-control" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search employees" style={{ paddingLeft: 30, fontSize: 12 }} aria-label="Search employees" />
+                  </div>
                   <select className="form-select" style={{ width: 160, fontSize: 12 }} value={filterDept} onChange={e => setFilterDept(e.target.value)}>
                     <option value="">All Departments</option>
                     {depts.map(d => <option key={d}>{d}</option>)}
@@ -246,7 +262,7 @@ export default function MonitoringPage() {
               </div>
 
               {filtered.length === 0 && (
-                <div className="empty-state"><i className="bi bi-people" /><h6>{filterStatus || filterDept ? 'No employees match current filters' : 'No employees found'}</h6></div>
+                <div className="empty-state"><i className="bi bi-people" /><h6>{filterStatus || filterDept || searchTerm ? 'No employees match current filters' : 'No employees found'}</h6></div>
               )}
 
               <div className="row g-2">

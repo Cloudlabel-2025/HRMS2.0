@@ -15,7 +15,8 @@ const NAV_ITEMS = [
   { module: 'tasks',         href: '/tasks',         icon: 'bi-check2-square',         label: 'Tasks & Projects',  section: 'WORK' },
   { module: 'monitoring',    href: '/monitoring',    icon: 'bi-activity',              label: 'Monitoring',         section: 'WORK' },
   { module: 'payroll',       href: '/payroll',       icon: 'bi-cash-stack',            label: 'Payroll',            section: 'FINANCE' },
-  { module: 'finance',       href: '/finance',       icon: 'bi-bar-chart-line',        label: 'Finance & Invoices', section: 'FINANCE' },
+  { module: 'finance',       href: '/finance',       icon: 'bi-bar-chart-line',        label: 'Finance', section: 'FINANCE' },
+  { module: 'invoicing',     href: '/invoicing',     icon: 'bi-receipt',               label: 'Invoices', section: 'FINANCE' },
   { module: 'inventory',     href: '/inventory',     icon: 'bi-box-seam',              label: 'Inventory',     section: 'FINANCE' },
   { module: 'performance',   href: '/performance',   icon: 'bi-graph-up-arrow',        label: 'Performance',   section: 'HR' },
   { module: 'documents',     href: '/documents',     icon: 'bi-folder2',               label: 'Documents',     section: 'HR' },
@@ -83,8 +84,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
 
         {/* User profile card */}
         <div className="sidebar-user">
-          <div className="sidebar-user-avatar" style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)` }}>
-            {user.avatar}
+          <div className="sidebar-user-avatar" style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)`, overflow: 'hidden' }}>
+            {user.profilePhoto ? <img src={user.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : user.avatar}
           </div>
           <div className="sidebar-user-info">
             <div className="sidebar-user-name">{user.name}</div>

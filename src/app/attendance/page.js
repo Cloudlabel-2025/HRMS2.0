@@ -102,13 +102,15 @@ export default function AttendancePage() {
   const [availableTasks, setAvailableTasks] = useState([]);
   const [showTaskPicker, setShowTaskPicker] = useState(false);
   const taskPickerRef = useRef(null);
+  const workProgressRef = useRef([]);
+  const workProgressSaveTimer = useRef(null);
 
   // Work progress save
   const [saveWorkLoading, setSaveWorkLoading] = useState(false);
   const handleSaveWork = async () => {
     setSaveWorkLoading(true);
     try {
-      await persistTodayRecord({ workProgress: todayRecord?.workProgress || [] });
+      await saveWorkProgress();
       showToast('Work progress saved');
     } catch (e) { showToast(e.message, 'error'); }
     finally { setSaveWorkLoading(false); }
@@ -400,6 +402,10 @@ export default function AttendancePage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [isDirty]);
 
+  useEffect(() => {
+    workProgressRef.current = todayRecord?.workProgress || [];
+  }, [todayRecord?.workProgress]);
+
   // Auto-save work progress every 2 minutes if dirty
   useEffect(() => {
     if (!workProgressDirty) return;
@@ -409,14 +415,10 @@ export default function AttendancePage() {
     return () => clearInterval(timer);
   }, [workProgressDirty]);
 
-  // Debounced auto-save: 3s after last edit
-  const debounceTimer = useRef(null);
+  // Clear a pending task-detail save if the page is closed.
   useEffect(() => {
-    if (!workProgressDirty) return;
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(() => saveWorkProgress(), 3000);
-    return () => { if (debounceTimer.current) clearTimeout(debounceTimer.current); };
-  }, [workProgressDirty]);
+    return () => { if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current); };
+  }, []);
 
   const handleClock = async (action) => {
     setClockLoading(true);
@@ -515,18 +517,26 @@ export default function AttendancePage() {
   };
 
   const updateWorkRow = (idx, patch) => {
-    setTodayRecord(prev => ({
-      ...prev,
-      workProgress: (prev?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row),
-    }));
+    setTodayRecord(prev => {
+      const workProgress = (prev?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row);
+      workProgressRef.current = workProgress;
+      return { ...prev, workProgress };
+    });
     setIsDirty(true);
     setWorkProgressDirty(true);
+    if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
+    workProgressSaveTimer.current = setTimeout(() => saveWorkProgress(), 800);
   };
 
-  const saveWorkProgress = async (rows = todayRecord?.workProgress || []) => {
+  const saveWorkProgress = async (rows = workProgressRef.current) => {
     try {
-      await persistTodayRecord({ workProgress: rows });
-      setWorkProgressDirty(false);
+      const updated = await api.put('/api/attendance', { date: today, workProgress: rows });
+      // A user may keep typing while a request is in flight. Never replace their newer text.
+      if (workProgressRef.current === rows) {
+        setTodayRecord(updated);
+        setIsDirty(false);
+        setWorkProgressDirty(false);
+      }
     } catch (e) { showToast(e.message, 'error'); }
   };
 
@@ -544,6 +554,7 @@ export default function AttendancePage() {
 
     if (activeIdx !== -1 && rows[activeIdx].type === 'task') {
       const updatedRows = rows.map((row, i) => i === activeIdx ? { ...row, taskDetails: taskTitle } : row);
+      workProgressRef.current = updatedRows;
       setTodayRecord(prev => ({
         ...prev,
         workProgress: updatedRows,

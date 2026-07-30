@@ -97,6 +97,10 @@ export async function POST(req) {
       return fail(`Validation failed: ${validation.error}`, 400);
     }
 
+    if (user.role === 'super_admin' && body.requestType === 'permission') {
+      return fail('Super administrators cannot submit permission requests', 403);
+    }
+
     const identityId = user.identityId;
     if (!identityId) {
       auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Identity link not found', 'low', ip, null, user._id);

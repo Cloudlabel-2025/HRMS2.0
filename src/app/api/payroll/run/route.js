@@ -2,7 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { getGlobalConfig, getPayrollDay, getCycleRange, countWorkingDays, getCycleLabel, getCycleCalendarStats } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats } from '@/lib/payroll-cycle';
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -31,7 +31,8 @@ export async function POST(req) {
       return fail(`Payroll can only be processed after the cycle end date (${toDate})`, 400);
     }
 
-    const workingDays = await countWorkingDays(fromDate, toDate, config);
+    const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
+    const workingDays = workingCalendar.workingDays;
     const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
 
     const calendarStats = getCycleCalendarStats(fromDate, toDate);
@@ -73,6 +74,7 @@ export async function POST(req) {
         sundaysInMonth: calendarStats.sundays,
         alternateSaturdaysInMonth: calendarStats.alternateSaturdays,
         unpaidLeavesTaken: lopDays,
+        workingDays,
       });
 
       const payroll = await Payroll.findOneAndUpdate(
@@ -91,6 +93,9 @@ export async function POST(req) {
           netPay: result.netTakeHome,
           presentDays,
           lopDays,
+          workingDays,
+          salaryPerDay: result.salaryPerDay,
+          holidayDates: workingCalendar.holidays,
           cycleLabel,
           status: 'draft',
           processedBy: user._id,
