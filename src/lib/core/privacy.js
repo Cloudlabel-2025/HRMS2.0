@@ -89,19 +89,19 @@ export function sanitizeSensitiveIdentifier(value) {
   };
 }
 
-export function sanitizeIdentityRecord(record, viewerRole) {
+export function sanitizeIdentityRecord(record, viewerRole, { isOwner = false } = {}) {
   if (!record) return null;
   const plain = typeof record.toObject === 'function' ? record.toObject({ virtuals: true }) : { ...record };
   const isAdmin = ['super_admin', 'admin_full'].includes(viewerRole);
   if (plain.identifiers) {
-    if (isAdmin) {
-      // Admins see masked values; encrypted/hash fields are already excluded by select:false
+    if (isAdmin || isOwner) {
+      // Owners/admins see masked values; encrypted/hash fields are already excluded by select:false
       plain.identifiers = {
         pan:     sanitizeSensitiveIdentifier(plain.identifiers.pan),
         aadhaar: sanitizeSensitiveIdentifier(plain.identifiers.aadhaar),
       };
     } else {
-      // Non-admins get no identifier data at all
+      // Others get no identifier data at all
       delete plain.identifiers;
     }
   }

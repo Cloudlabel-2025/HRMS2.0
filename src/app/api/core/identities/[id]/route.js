@@ -66,7 +66,7 @@ export async function GET(req, { params }) {
       return fail('Access denied', 403);
     }
 
-    return ok({ identity: sanitizeIdentityRecord(identity, user.role) });
+    return ok({ identity: sanitizeIdentityRecord(identity, user.role, { isOwner: isSelf(identity, user) }) });
   } catch (e) {
     return fail(e.message, 500);
   }
@@ -152,7 +152,7 @@ export async function PUT(req, { params }) {
 
     await auditLog('Core Identity Updated', 'Identity', user._id, `Updated identity ${existing.legalName} (${existing.primaryEmail})`, 'low', ip);
 
-    return ok({ identity: sanitizeIdentityRecord(existing, user.role) });
+    return ok({ identity: sanitizeIdentityRecord(existing, user.role, { isOwner: isSelf(existing, user) }) });
   } catch (e) {
     if (e.code === 11000) return fail('Identity already exists', 409);
     return fail(e.message, 500);

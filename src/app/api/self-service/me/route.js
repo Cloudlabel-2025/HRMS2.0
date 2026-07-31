@@ -23,7 +23,7 @@ export async function GET(req) {
     const requests = await SelfServiceRequest.find({ identityId: identity._id }).sort({ createdAt: -1 }).limit(20);
 
     return ok({
-      identity: sanitizeIdentityRecord(identity),
+      identity: sanitizeIdentityRecord(identity, user.role, { isOwner: true }),
       profile: sanitizeProfileRecord(profile),
       requests,
     });
