@@ -498,7 +498,7 @@ export default function CoreHrProfilePage() {
                   </Field><Field label="Role *">
                     <select className="form-select" style={{ fontSize: 13 }} value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
                       <option value="">Select role</option>
-                      {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                      {Object.entries(ROLE_LABELS).filter(([key]) => ['super_admin', 'admin_full'].includes(user?.role) || ['employee', 'intern', 'sme'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
                   </Field></>
                 )}

@@ -4,7 +4,7 @@ import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { CORE_HR_WRITE_ROLES, CORE_HR_ADMIN_ROLES, CORE_HR_MANAGER_ROLES } from '@/lib/core/constants';
+import { CORE_HR_WRITE_ROLES, CORE_HR_ADMIN_ROLES, CORE_HR_MANAGER_ROLES, CORE_HR_PRIVILEGED_ROLES } from '@/lib/core/constants';
 import { buildChangeSet, sanitizeProfileRecord } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { UpdateEmploymentProfileSchema, validateRequest } from '@/lib/validation';
@@ -21,6 +21,7 @@ function syncAuthUserFromProfile(identity, profile) {
     designation: profile.designation,
     shift: profile.shift,
     status: mappedStatus,
+    role: profile.rbacRole,
     ...(profile.hireDate ? { joinDate: profile.hireDate } : {}),
   });
 }
@@ -75,6 +76,10 @@ export async function PUT(req, { params }) {
     const validation = validateRequest(UpdateEmploymentProfileSchema, body);
     if (!validation.valid) return fail(`Validation failed: ${validation.error}`, 400);
 
+    if (validation.data.rbacRole && !['super_admin', 'admin_full'].includes(user.role) && CORE_HR_PRIVILEGED_ROLES.includes(validation.data.rbacRole)) {
+      return fail('Only full admins can set this role', 403);
+    }
+
     const before = profile.toObject();
     const next = {
       ...before,
@@ -112,6 +117,7 @@ export async function PUT(req, { params }) {
       'businessUnit',
       'workLocation',
       'shift',
+      'rbacRole',
       'hireDate',
       'probationStartDate',
       'probationEndDate',

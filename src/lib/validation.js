@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ROLES } from '@/lib/models/User';
 import {
   ADDRESS_TYPES,
   EMPLOYMENT_STATUSES,
@@ -172,6 +173,7 @@ export const CreateEmploymentProfileSchema = z.object({
   employmentStatus: z.enum(EMPLOYMENT_STATUSES).default('onboarding'),
   department: z.string().min(1, 'Department required').max(120),
   designation: z.string().min(1, 'Designation required').max(120),
+  rbacRole: z.enum(ROLES).optional(),
   businessUnit: z.string().max(120).optional().or(z.literal('')),
   workLocation: z.string().max(120).optional().or(z.literal('')),
   shift: z.string().max(120).optional().or(z.literal('')),
@@ -223,6 +225,7 @@ export const LifecycleTransferSchema = z.object({
 export const LifecyclePromotionSchema = z.object({
   profileId: ObjectIdSchema,
   effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
+  role: z.enum(ROLES),
   designation: z.string().min(1).max(120),
   businessUnit: z.string().max(120).optional().or(z.literal('')),
   grade: z.string().max(50).optional().or(z.literal('')),

@@ -20,6 +20,7 @@ function syncAuthUserFromProfile(identity, profile) {
     designation: profile.designation,
     shift: profile.shift,
     status: profile.employmentStatus === 'retired' ? 'alumni' : profile.employmentStatus === 'resigned' || profile.employmentStatus === 'terminated' ? 'inactive' : 'active',
+    role: profile.rbacRole,
   });
 }
 
@@ -136,7 +137,7 @@ export async function POST(req) {
       eventType: 'create',
       action: 'Create employment profile',
       toState: profile.employmentStatus,
-      changes: buildChangeSet({}, profile.toObject(), ['employeeNumber', 'employmentType', 'employmentStatus', 'department', 'designation', 'businessUnit', 'workLocation', 'shift']),
+      changes: buildChangeSet({}, profile.toObject(), ['employeeNumber', 'employmentType', 'employmentStatus', 'department', 'designation', 'businessUnit', 'workLocation', 'shift', 'rbacRole']),
       reason: 'Initial employment profile creation',
       actorUserId: user._id,
       actorRole: user.role,

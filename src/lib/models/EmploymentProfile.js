@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { ROLES } from '@/lib/models/User';
 import {
   EMPLOYMENT_STATUSES,
   EMPLOYMENT_TYPES,
@@ -53,6 +54,7 @@ const EmpProfileSchema = new mongoose.Schema({
   workLocation:        { type: String, default: '' },
   shift:               { type: String, default: 'Morning (9AM-6PM)' },
   shiftId:             { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+  rbacRole:            { type: String, enum: ROLES, default: 'employee' },
 
   hireDate:            { type: Date, default: null },
   probationStartDate:   { type: Date, default: null },

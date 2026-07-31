@@ -5,7 +5,7 @@ import EmpProfile from '@/lib/models/EmploymentProfile';
 import { Department, Employee } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { CORE_HR_MANAGER_ROLES } from '@/lib/core/constants';
+import { CORE_HR_MANAGER_ROLES, CORE_HR_PRIVILEGED_ROLES } from '@/lib/core/constants';
 import { canAccessDepartment } from '@/lib/rbac';
 import { buildChangeSet } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
@@ -76,6 +76,7 @@ async function syncAll(profile, identity, actor, changes, eventType, action, fro
       designation: profile.designation,
       shift: profile.shift,
       status: userStatus,
+      role: profile.rbacRole,
       teamLeadId: reportingUserIds.teamLeadId,
       teamAdminId: reportingUserIds.teamAdminId,
     });
@@ -212,6 +213,8 @@ export async function POST(req) {
 
     if (action === 'promotion') {
       if (!data.role) return fail('Promoted role is required', 400);
+      if (!['super_admin', 'admin_full'].includes(user.role) && CORE_HR_PRIVILEGED_ROLES.includes(data.role)) return fail('Only full admins can grant this role', 403);
+      profile.rbacRole = data.role;
       profile.designation = data.designation;
       profile.businessUnit = data.businessUnit || profile.businessUnit;
       profile.compensationSnapshot = {
@@ -222,8 +225,6 @@ export async function POST(req) {
       };
       actionLabel = 'Promote employee';
       reason = data.reason;
-      const authUserId = getIdentityUserId(identity);
-      if (authUserId) await User.findByIdAndUpdate(authUserId, { role: data.role });
     }
 
     if (action === 'rehire') {
@@ -304,6 +305,7 @@ export async function POST(req) {
       'businessUnit',
       'workLocation',
       'shift',
+      'rbacRole',
       'hireDate',
       'probationStartDate',
       'probationEndDate',
