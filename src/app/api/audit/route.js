@@ -20,7 +20,7 @@ export async function GET(req) {
     const query = {};
 
     if (scope === 'my') {
-      query.userId = user._id;
+      query.$or = [{ userId: user._id }, { targetUserId: user._id }];
     } else if (userId) {
       if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
       query.userId = userId;
@@ -30,10 +30,18 @@ export async function GET(req) {
 
     if (module)   query.module   = module;
     if (severity) query.severity = severity;
-    if (search)   query.$or = [
-      { action:  { $regex: search, $options: 'i' } },
-      { details: { $regex: search, $options: 'i' } },
-    ];
+    if (search) {
+      const searchOr = [
+        { action:  { $regex: search, $options: 'i' } },
+        { details: { $regex: search, $options: 'i' } },
+      ];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchOr }];
+        delete query.$or;
+      } else {
+        query.$or = searchOr;
+      }
+    }
     if (date) {
       const start = new Date(date + 'T00:00:00.000Z');
       const end   = new Date(date + 'T23:59:59.999Z');
