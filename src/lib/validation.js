@@ -63,6 +63,7 @@ export const CreateEmployeeSchema = z.object({
   designation: z.string().min(1, 'Designation required').max(100),
   role: z.enum(['super_admin', 'admin_full', 'recruiter', 'team_lead', 'team_admin', 'employee', 'intern', 'sme']).default('employee'),
   shift: z.string().optional().default('Morning (9AM-6PM)'),
+  shiftId: ObjectIdSchema.optional().or(z.literal('')).or(z.null()).transform(v => v === '' || v == null ? undefined : v),
   skills: z.array(z.string().max(50)).optional().default([]),
   joinDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date({ required_error: 'Join date required' })),
   status: z.enum(['active', 'inactive', 'alumni']).default('active'),
@@ -349,7 +350,7 @@ export const AttendanceRegularizeSchema = z.object({
   requestedOut: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:MM').optional().or(z.literal('')),
   requestedOutNotYet: z.boolean().optional(),
   requestedBreaks: z.array(z.object({
-    type: z.enum(['break', 'lunch']),
+    type: z.string().min(1, 'Break type required'),
     start: z.string().optional().or(z.literal('')),
     end: z.string().optional().or(z.literal('')),
     notYet: z.boolean().optional(),
@@ -414,7 +415,12 @@ export const CreateDocumentSchema = z.object({
   access: z.enum(['all', 'admin', 'employee']).default('all'),
   employeeId: ObjectIdSchema.optional(),
   expiry: DateSchema.optional(),
-}).strict().omit({ uploadedBy: true, _id: true, createdAt: true, updatedAt: true });
+}).strict().omit({ uploadedBy: true, _id: true, createdAt: true, updatedAt: true })
+  .superRefine((data, ctx) => {
+    if (data.access === 'employee' && !data.employeeId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'employeeId is required when access is employee', path: ['employeeId'] });
+    }
+  });
 
 export const UpdateDocumentSchema = z.object({
   name: z.string().min(2).max(255).optional(),

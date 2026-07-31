@@ -256,6 +256,7 @@ export default function TasksPage() {
         setFileUploading(true);
         const fd = new FormData();
         fd.append('file', selectedFile);
+        fd.append('projectId', uploadForm.projectId);
         const uploadRes = await fetch('/api/upload', { method: 'POST', credentials: 'same-origin', body: fd });
         const uploadJson = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadJson.error || 'Upload failed');

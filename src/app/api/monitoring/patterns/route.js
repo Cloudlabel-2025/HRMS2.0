@@ -4,7 +4,7 @@ import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { hasAccess, getAccessibleDepartments } from '@/lib/rbac';
+import { hasAccess, getDepartmentUserIds } from '@/lib/rbac';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const toDate = date => new Date(`${date}T00:00:00`);
@@ -22,7 +22,8 @@ export async function GET(req) {
     const endDate = toKey(end);
     const startDate = toKey(new Date(end.getTime() - 60 * DAY_MS));
     const employeeQuery = { status: 'active' };
-    if (!['super_admin', 'admin_full'].includes(user.role)) employeeQuery.department = { $in: await getAccessibleDepartments(user) };
+    const scopedIds = await getDepartmentUserIds(user);
+    if (scopedIds !== null) employeeQuery.userId = { $in: scopedIds };
     const employees = await Employee.find(employeeQuery).select('userId name department').lean();
     const ids = employees.map(employee => employee.userId);
     const [attendance, leaves, holidays] = await Promise.all([

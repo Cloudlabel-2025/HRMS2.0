@@ -7,6 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { notify } from '@/lib/notify';
 import { isWorkingDay, getGlobalConfig } from '@/lib/payroll-cycle';
 import { z } from 'zod';
+import { canViewUser } from '@/lib/rbac';
 
 const ActionSchema = z.object({
   action:     z.enum(['approved', 'rejected', 'held']),
@@ -59,7 +60,7 @@ export async function PUT(req, { params }) {
     }
     const { action, holdReason } = result.data;
 
-    const leave = await Leave.findById(id).populate('userId', 'name email _id');
+    const leave = await Leave.findById(id).populate('userId', 'name email _id department');
     if (!leave) return fail('Leave not found', 404);
 
     if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
@@ -105,6 +106,8 @@ export async function PUT(req, { params }) {
       } else {
         approveStep(approverStep, action, user, holdReason);
       }
+
+      if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
 
       function approveStep(stepObj, act, actor, reason) {
         stepObj.action = act;
@@ -300,6 +303,7 @@ export async function PUT(req, { params }) {
       }
 
     } else if (isTeamAdmin) {
+      if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
       if (leave.adminApproval !== 'approved') return fail('Waiting for Admin to approve first', 400);
       if (leave.teamAdminApproval && leave.teamAdminApproval !== 'pending') return fail('You have already actioned this leave', 400);
       leave.teamAdminApproval = action;
@@ -316,6 +320,7 @@ export async function PUT(req, { params }) {
       }
 
     } else if (isTeamLead) {
+      if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
       if (leave.adminApproval !== 'approved') return fail('Waiting for Admin to approve first', 400);
       if (leave.tlApproval && leave.tlApproval !== 'pending') return fail('You have already actioned this leave', 400);
       leave.tlApproval = action;

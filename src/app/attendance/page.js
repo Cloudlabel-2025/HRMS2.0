@@ -11,6 +11,7 @@ import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
+import { getBreakAllowance, getBreakMaxCount, calculateBreakDeduction, isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import Pagination from '@/components/Pagination';
 import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
@@ -18,16 +19,10 @@ import autoTable from 'jspdf-autotable';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-const getBreakAllowance = (type, shiftConfig) => {
-  const rules = (shiftConfig?.breaks || []).filter(b => b.type === type);
-  if (rules.length === 0) return type === 'lunch' ? 60 : 30;
-  return rules.reduce((sum, b) => sum + (b.maxDuration ?? 0), 0);
-};
-const getBreakMaxCount = (type, shiftConfig) => {
-  const rules = (shiftConfig?.breaks || []).filter(b => b.type === type);
-  if (rules.length === 0) return 1;
-  return rules.reduce((sum, b) => sum + (b.maxCount ?? 1), 0);
-};
+const DEFAULT_BREAK_RULES = [
+  { type: 'break', maxDuration: 30, maxCount: 1 },
+  { type: 'lunch', maxDuration: 60, maxCount: 1 },
+];
 const WORK_STATUSES = [
   { value: 'pending', label: 'Pending' },
   { value: 'work_in_progress', label: 'Work in Progress' },
@@ -87,7 +82,7 @@ export default function AttendancePage() {
   }, [tab]);
 
   // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
-  const [breakTab, setBreakTab]         = useState('break'); // 'break' | 'lunch'
+  const [breakRuleIdx, setBreakRuleIdx] = useState(0);
   const [breakLoading, setBreakLoading] = useState(false);
 
   const [shifts, setShifts] = useState([]);
@@ -381,7 +376,7 @@ export default function AttendancePage() {
     api.get('/api/settings?type=shifts').then(d => {
       const allShifts = Array.isArray(d) ? d : [];
       setShifts(allShifts);
-      const matched = allShifts.find(s => s.name === user?.shift);
+      const matched = allShifts.find(s => (user?.shiftId && s._id === user.shiftId) || s.name === user?.shift);
       setShiftConfig(matched || null);
     }).catch(() => {});
     Promise.all([
@@ -501,9 +496,11 @@ export default function AttendancePage() {
     feedback: '',
   });
 
+  const breakLabel = (type) => (shiftConfig?.breaks || []).find(b => b.type === type)?.name || type || 'Break';
+
   const buildBreakRow = (type, startTime) => ({
     type,
-    taskDetails: type === 'lunch' ? 'Lunch break' : 'Break',
+    taskDetails: breakLabel(type),
     startTime,
     endTime: null,
     status: 'work_in_progress',
@@ -601,7 +598,7 @@ export default function AttendancePage() {
     getBreaks(type).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
 
   const overMins = (type) => {
-    const allowance = getBreakAllowance(type, shiftConfig);
+    const allowance = getBreakAllowance(type, shiftConfig?.breaks);
     return Math.max(0, totalBreakMins(type) - allowance);
   };
 
@@ -610,21 +607,23 @@ export default function AttendancePage() {
     try {
       const now = nowTimeStr();
       const active = activeBreak(type);
+      const label = breakLabel(type);
       let updatedBreaks = [...(todayRecord?.breaks || [])];
 
       let updatedWorkProgress = [...(todayRecord?.workProgress || [])];
 
       if (!active) {
         // Start break/lunch
-        if (getBreaks(type).length >= getBreakMaxCount(type, shiftConfig)) {
-          showToast(`You have already taken the maximum ${getBreakMaxCount(type, shiftConfig)} ${type === 'break' ? 'break(s)' : 'lunch(es)'} for today.`, 'error');
+        const maxCount = getBreakMaxCount(type, shiftConfig?.breaks);
+        if (getBreaks(type).length >= maxCount) {
+          showToast(`You have already taken the maximum ${maxCount} ${label}(s) for today.`, 'error');
           setBreakLoading(false);
           return;
         }
         updatedBreaks.push({ type, start: now, end: null });
         updatedWorkProgress = closeActiveWork(updatedWorkProgress, now, 'stopped');
         updatedWorkProgress.push(buildBreakRow(type, now));
-        showToast(`${type === 'break' ? 'Break' : 'Lunch'} started at ${now}`);
+        showToast(`${label} started at ${now}`);
       } else {
         // End break/lunch
         const idx = updatedBreaks.findIndex(b => b.type === type && b.start && !b.end);
@@ -633,26 +632,18 @@ export default function AttendancePage() {
         if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
         if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
-        const elapsed = diffMins(active.start, now);
-        const allowance = getBreakAllowance(type, shiftConfig);
-        const over = Math.max(0, elapsed - allowance);
+        const typeMins = updatedBreaks.filter(b => b.type === type && b.end)
+          .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
+        const over = Math.max(0, typeMins - getBreakAllowance(type, shiftConfig?.breaks));
         if (over > 0) {
-          showToast(`${type === 'break' ? 'Break' : 'Lunch'} ended — exceeded by ${over} min(s). Working hours reduced.`, 'error');
+          showToast(`${label} ended — ${over} min over allowance. Working hours reduced.`, 'error');
         } else {
-          showToast(`${type === 'break' ? 'Break' : 'Lunch'} ended at ${now}`);
+          showToast(`${label} ended at ${now}`);
         }
       }
 
       // Recalculate deduction: total over-time for all break types
-      const allBreaks = updatedBreaks;
-      const calcOver = (type) => {
-        const total = allBreaks.filter(b => b.type === type && b.end)
-          .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
-        return Math.max(0, total - getBreakAllowance(type, shiftConfig));
-      };
-      const breakOver = calcOver('break');
-      const lunchOver = calcOver('lunch');
-      const totalDeduction = breakOver + lunchOver;
+      const totalDeduction = calculateBreakDeduction(updatedBreaks, shiftConfig?.breaks || []);
 
       // Recalculate effective hours (base hoursWorked minus deductions)
       const baseHours = todayRecord?.baseHoursWorked ?? todayRecord?.hoursWorked ?? 0;
@@ -757,37 +748,49 @@ export default function AttendancePage() {
   const clockedIn  = !!todayRecord?.clockIn;
   const clockedOut = !!todayRecord?.clockOut;
   const todayStr = new Date().toLocaleDateString('en-CA');
+  const breakRules = useMemo(() => (shiftConfig?.breaks?.length ? shiftConfig.breaks : DEFAULT_BREAK_RULES), [shiftConfig]);
+  const activeRule = breakRules[breakRuleIdx] || breakRules[0];
+
   const breakInstances = useMemo(() => {
-    const rules = shiftConfig?.breaks || [];
     const result = [];
-    for (const rule of rules) {
+    for (const rule of breakRules) {
       const count = rule.maxCount || 1;
+      const style = breakStyle(rule.type);
       for (let i = 0; i < count; i++) {
         result.push({
           key: `${rule.type}-${i}`,
           type: rule.type,
-          label: rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break'),
-          icon: rule.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot',
-          color: rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b',
-          bgColor: rule.type === 'lunch' ? '#f5f3ff' : '#fffbeb',
-          borderColor: rule.type === 'lunch' ? '#8b5cf630' : '#f59e0b30',
+          label: rule.name || rule.type || 'Break',
+          icon: style.icon,
+          color: style.color,
+          bgColor: style.bg,
+          borderColor: style.borderColor,
           index: i,
         });
       }
     }
     return result;
-  }, [shiftConfig]);
+  }, [breakRules]);
 
   const tabs = useMemo(() => ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])], [isAdmin]);
   const tabLabels = { today: 'Today', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
 
+  const regBreakTypes = useMemo(
+    () => [...new Set(regRequests.flatMap(r => (r.requestedBreaks || []).map(b => b.type).filter(Boolean)))],
+    [regRequests]
+  );
+
   // Break/Lunch UI helpers
-  const renderBreakLunchPanel = (type) => {
-    const label     = type === 'break' ? 'Break' : 'Lunch';
-    const allowance = getBreakAllowance(type, shiftConfig);
-    const color     = type === 'break' ? '#f59e0b' : '#8b5cf6';
-    const bgColor   = type === 'break' ? '#fffbeb' : '#f5f3ff';
-    const icon      = type === 'break' ? 'bi-cup-hot' : 'bi-egg-fried';
+  const renderBreakPanel = (rule) => {
+    const type      = rule.type;
+    const label     = rule.name || type || 'Break';
+    const style     = breakStyle(type);
+    const allowance = getBreakAllowance(type, breakRules);
+    const maxCount  = getBreakMaxCount(type, breakRules);
+    const taken     = getBreaks(type).length;
+    const color     = style.color;
+    const bgColor   = style.bg;
+    const icon      = style.icon;
     const active    = activeBreak(type);
     const totalMins = totalBreakMins(type);
     const over      = overMins(type);
@@ -802,7 +805,7 @@ export default function AttendancePage() {
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: 14, color: '#1e293b' }}>{label}</div>
-              <div style={{ fontSize: 11, color: '#64748b' }}>Allowance: {allowance} min</div>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Allowance: {allowance} min · Taken: {taken}/{maxCount}</div>
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -943,8 +946,8 @@ export default function AttendancePage() {
               </thead>
               <tbody>
                 {rows.map((row, idx) => {
-                  const isBreakRow = row.type === 'break' || row.type === 'lunch';
                   const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
+                  const isBreakRow = !isVirtual && isBreakType(row.type);
                   const active = row.startTime && !row.endTime;
                   return (
                     <tr key={idx} style={{ background: isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
@@ -961,8 +964,8 @@ export default function AttendancePage() {
                             </span>
                           )
                         ) : isBreakRow ? (
-                          <span className="badge" style={{ background: row.type === 'lunch' ? '#f5f3ff' : '#fffbeb', color: row.type === 'lunch' ? '#7c3aed' : '#d97706' }}>
-                            <i className={`bi ${row.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{row.taskDetails || (row.type === 'lunch' ? 'Lunch break' : 'Break')}
+                          <span className="badge" style={{ background: breakStyle(row.type).bg, color: breakStyle(row.type).color }}>
+                            <i className={`bi ${breakStyle(row.type).icon} me-1`} />{row.taskDetails || breakLabel(row.type)}
                           </span>
                         ) : (
                           <div style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
@@ -1071,7 +1074,7 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td>
-                        {isVirtual ? null : row.type === 'break' || row.type === 'lunch' ? null : (
+                        {isVirtual ? null : isBreakRow ? null : (
                           row.dbIdx === 0 && row.type === 'task' ? (
                             <i className="bi bi-lock-fill" style={{ color: '#94a3b8', fontSize: 14 }} title="First task cannot be deleted" />
                           ) : deleteConfirmIdx === row.dbIdx ? (
@@ -1359,26 +1362,22 @@ export default function AttendancePage() {
                 <div className="col-lg-6">
                   <div className="card" style={{ borderRadius: 14, overflow: 'hidden' }}>
                     <div style={{ display: 'flex', background: '#f8fafc', borderBottom: '1px solid #f1f5f9' }}>
-                      {((shiftConfig?.breaks && shiftConfig.breaks.length > 0) || [
-                        { type: 'break', maxDuration: 30, maxCount: 1 },
-                        { type: 'lunch', maxDuration: 60, maxCount: 1 },
-                      ]).map((rule, idx) => {
-                        const sameTypeCount = (shiftConfig?.breaks || []).filter(b => b.type === rule.type).length;
+                      {breakRules.map((rule, idx) => {
+                        const style = breakStyle(rule.type);
+                        const sameTypeCount = breakRules.filter(b => b.type === rule.type).length;
                         const key = rule.type + '-' + idx;
-                        const label = (rule.name || (rule.type === 'lunch' ? 'Lunch' : 'Break')) + (sameTypeCount > 1 ? ` #${idx + 1}` : '');
-                        const icon = rule.type === 'lunch' ? 'bi-cup-hot' : 'bi-clock';
-                        const color = rule.type === 'lunch' ? '#8b5cf6' : '#f59e0b';
+                        const label = (rule.name || rule.type || 'Break') + (sameTypeCount > 1 ? ` #${idx + 1}` : '');
                         return (
-                           <button key={key} onClick={() => setBreakTab(rule.type)}
+                           <button key={key} onClick={() => setBreakRuleIdx(idx)}
                           style={{
                             flex: 1, padding: '12px 8px', border: 'none', fontWeight: 700, fontSize: 13, cursor: 'pointer',
                             background: 'transparent',
-                            color: breakTab === rule.type ? color : '#94a3b8',
-                            borderBottom: breakTab === rule.type ? `3px solid ${color}` : '3px solid transparent',
+                            color: breakRuleIdx === idx ? style.color : '#94a3b8',
+                            borderBottom: breakRuleIdx === idx ? `3px solid ${style.color}` : '3px solid transparent',
                             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                             transition: 'all 0.15s',
                           }}>
-                          <i className={`bi ${icon}`} style={{ fontSize: 14 }} />{label}
+                          <i className={`bi ${style.icon}`} style={{ fontSize: 14 }} />{label}
                           {overMins(rule.type) > 0 && (
                             <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
                               −{overMins(rule.type)}m
@@ -1389,7 +1388,7 @@ export default function AttendancePage() {
                     })}
                     </div>
                     <div style={{ padding: 16 }}>
-                      {renderBreakLunchPanel(breakTab)}
+                      {renderBreakPanel(activeRule)}
                     </div>
                   </div>
                 </div>
@@ -1626,7 +1625,9 @@ export default function AttendancePage() {
                     <thead>
                       <tr>
                         {canReview && <th>Employee</th>}
-                        <th>Date</th><th>Req. In</th><th>Req. Out</th><th>Req. Break</th><th>Req. Lunch</th><th>Reason</th><th>Status</th>
+                        <th>Date</th><th>Req. In</th><th>Req. Out</th>
+                        {regBreakTypes.map(type => <th key={type}>Req. {type}</th>)}
+                        <th>Reason</th><th>Status</th>
                         {canReview && <th>Actions</th>}
                       </tr>
                     </thead>
@@ -1646,20 +1647,20 @@ export default function AttendancePage() {
                           <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                           <td style={{ fontSize: 13 }}>
                             {(() => {
-                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === 'break');
+                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === type);
                               if (typeBreaks.length === 0) return '—';
                               return typeBreaks.map((b, i) => {
-                                if (b.notYet) return <span key={i} style={{ color: '#f59e0b', fontStyle: 'italic' }}>Not yet</span>;
+                                if (b.notYet) return <span key={i} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span>;
                                 return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
                               }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
                             })()}
                           </td>
                           <td style={{ fontSize: 13 }}>
                             {(() => {
-                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === 'lunch');
+                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === type);
                               if (typeBreaks.length === 0) return '—';
                               return typeBreaks.map((b, i) => {
-                                if (b.notYet) return <span key={i} style={{ color: '#8b5cf6', fontStyle: 'italic' }}>Not yet</span>;
+                                if (b.notYet) return <span key={i} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span>;
                                 return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
                               }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
                             })()}
@@ -1703,8 +1704,9 @@ export default function AttendancePage() {
                     <div className="row g-2 mb-2">
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{formatTime(r.requestedIn) || '—'}</div></div>
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'break'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).join(', '); })()}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'lunch'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).join(', '); })()}</div></div>
+                      {regBreakTypes.map(type => (
+                        <div className="col-6" key={type}><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. {type}</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === type); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? <span key={b._idx} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span> : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []); })()}</div></div>
+                      ))}
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
                     {canReview && regScope === 'approvals' && r.status === 'pending' && (
@@ -2090,8 +2092,8 @@ export default function AttendancePage() {
                           }
 
                           return rows.map((row, idx) => {
-                            const isBreakRow = row.type === 'break' || row.type === 'lunch';
                             const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
+                            const isBreakRow = !isVirtual && isBreakType(row.type);
                             return (
                               <tr key={idx} style={{ background: isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
                                 <td style={{ fontSize: 13, fontWeight: 700 }}>{idx + 1}</td>
@@ -2107,8 +2109,8 @@ export default function AttendancePage() {
                                       </span>
                                     )
                                   ) : isBreakRow ? (
-                                    <span className="badge" style={{ background: row.type === 'lunch' ? '#f5f3ff' : '#fffbeb', color: row.type === 'lunch' ? '#7c3aed' : '#d97706' }}>
-                                      <i className={`bi ${row.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{row.taskDetails || (row.type === 'lunch' ? 'Lunch break' : 'Break')}
+                                    <span className="badge" style={{ background: breakStyle(row.type).bg, color: breakStyle(row.type).color }}>
+                                      <i className={`bi ${breakStyle(row.type).icon} me-1`} />{row.taskDetails || breakLabel(row.type)}
                                     </span>
                                   ) : (
                                     <span style={{ fontSize: 12 }}>{row.taskDetails || '—'}</span>

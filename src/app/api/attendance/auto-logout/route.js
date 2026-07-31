@@ -7,6 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { getShiftEndMinutes } from '@/lib/shift-utils';
 
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -93,25 +94,18 @@ export async function POST(req) {
       }).lean();
 
       for (const record of records) {
-        const nowTimeStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
-
-        // Calculate hours worked
         const [ih, im] = record.clockIn.split(':').map(Number);
-        const [oh, om] = nowTimeStr.split(':').map(Number);
-        let elapsedMins = (oh * 60 + om) - (ih * 60 + im);
-        if (elapsedMins < 0) elapsedMins += 24 * 60;
-
-        let finalClockOut = nowTimeStr;
-        let finalMinutes = elapsedMins;
+        const clockInMins = ih * 60 + im;
 
         const recordShiftCfg = getShiftConfig(shift, {});
-        if (elapsedMins >= recordShiftCfg.hardCapHours) {
-          const clockOutMinutes = ih * 60 + im + recordShiftCfg.hardCapHours;
-          const foh = Math.floor(clockOutMinutes / 60) % 24;
-          const fom = clockOutMinutes % 60;
-          finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
-          finalMinutes = recordShiftCfg.hardCapHours;
-        }
+        const endMins = getShiftEndMinutes(shift, {});
+        const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);
+        if (deadlineMins <= clockInMins) continue;
+
+        const foh = Math.floor(deadlineMins / 60) % 24;
+        const fom = deadlineMins % 60;
+        const finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
+        const finalMinutes = deadlineMins - clockInMins;
 
         const deduction = record.breakDeduction || 0;
         const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
@@ -154,7 +148,7 @@ export async function POST(req) {
           userId: record.userId,
           date: record.date,
           clockIn: record.clockIn,
-          clockOut: nowTimeStr,
+          clockOut: finalClockOut,
         });
       }
     }

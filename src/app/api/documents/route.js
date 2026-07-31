@@ -21,7 +21,6 @@ export async function GET(req) {
       query.$or = [
         { access: 'all' },
         { employeeId: user._id },
-        { access: 'employee', employeeId: null }
       ];
     }
 

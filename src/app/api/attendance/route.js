@@ -8,8 +8,10 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { getShiftConfig, determineStatus, calculateHoursWorked } from '@/lib/attendance-constants';
-import { getAccessibleDepartments } from '@/lib/rbac';
+import { resolveShift } from '@/lib/shift-utils';
+import { getShiftConfig, determineStatus } from '@/lib/attendance-constants';
+import { getBreakMaxCount, getBreakTypes } from '@/lib/attendance-breaks';
+import { getDepartmentUserIds } from '@/lib/rbac';
 import { notify } from '@/lib/notify';
 
 async function getShiftAwareToday(targetUserId) {
@@ -22,21 +24,6 @@ async function getShiftAwareToday(targetUserId) {
   } catch {
     return null;
   }
-}
-
-async function getTeamUserIds(user) {
-  if (['super_admin', 'admin_full'].includes(user.role)) return null;
-  if (user.role === 'team_lead') {
-    const depts = await getAccessibleDepartments(user);
-    const members = await User.find({ department: { $in: depts }, status: 'active', role: { $ne: 'super_admin' } }).select('_id');
-    return members.map(m => m._id);
-  }
-  if (user.role === 'team_admin') {
-    const depts = await getAccessibleDepartments(user);
-    const members = await User.find({ department: { $in: depts }, role: { $nin: ['super_admin', 'team_lead'] }, status: 'active' }).select('_id');
-    return members.map(m => m._id);
-  }
-  return [user._id];
 }
 
 function canViewDailyProgress(user) {
@@ -60,7 +47,7 @@ export async function GET(req) {
       query.userId = user._id;
     } else if (scope === 'team') {
       if (!canViewDailyProgress(user)) return fail('Access denied', 403);
-      const ids = await getTeamUserIds(user);
+      const ids = await getDepartmentUserIds(user);
       if (userId) {
         if (ids && !ids.some(id => id.toString() === userId)) return fail('Access denied', 403);
         query.userId = userId;
@@ -93,13 +80,27 @@ export async function GET(req) {
     }
 
     const raw = await Attendance.find(query)
-      .populate('userId', 'name avatar department role shift')
+      .populate('userId', 'name avatar department role shift shiftId')
       .sort({ date: -1 })
       .lean();
 
     const now = await getTzTime();
+    const config = await getGlobalConfig();
+
+    const clockedUsers = raw.filter(r => r.clockIn && r.userId?._id).map(r => r.userId);
+    const uniqueUsers = [...new Map(clockedUsers.map(u => [u._id.toString(), u])).values()];
+    const shiftByUserId = {};
+    for (const u of uniqueUsers) {
+      const sd = await resolveShift(u);
+      if (sd) shiftByUserId[u._id.toString()] = sd;
+    }
+
+    // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer)
     for (const rec of raw) {
-      if (await checkAndApplyAutoLogout(rec, now)) {
+      if (!rec.clockIn || rec.clockOut) continue;
+      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      const cfg = getShiftConfig(shiftDoc, config);
+      if (await checkAndApplyAutoLogout(rec, now, cfg, shiftDoc)) {
         await Attendance.findByIdAndUpdate(rec._id, {
           clockOut: rec.clockOut,
           autoLoggedOut: rec.autoLoggedOut,
@@ -114,17 +115,9 @@ export async function GET(req) {
 
     // Recompute lateFlag/status based on actual shift start time
     // so that records created by previous buggy clock logic get corrected
-    const config = await getGlobalConfig();
-
-    const shiftNames = [...new Set(raw.filter(r => r.clockIn).map(r => r.userId?.shift || 'Morning (9AM-6PM)'))];
-    const shiftDocs = shiftNames.length ? await Shift.find({ name: { $in: shiftNames } }).lean() : [];
-    const shiftMap = {};
-    for (const s of shiftDocs) shiftMap[s.name] = s;
-
     for (const rec of raw) {
       if (!rec.clockIn) continue;
-      const shiftName = rec.userId?.shift || 'Morning (9AM-6PM)';
-      const shiftDoc = shiftMap[shiftName];
+      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
       const cfg = getShiftConfig(shiftDoc, config);
 
       let shiftHour = 9, shiftMin = 0;
@@ -135,7 +128,7 @@ export async function GET(req) {
         shiftFound = true;
       }
       if (!shiftFound) {
-        const parsed = parseShiftStartTime(shiftName);
+        const parsed = parseShiftStartTime(rec.userId?.shift);
         if (parsed) {
           const [sh, sm] = parsed.split(':').map(Number);
           shiftHour = sh; shiftMin = sm;
@@ -308,13 +301,11 @@ export async function PUT(req) {
       const shiftCfg = getShiftConfig(shiftDoc, cfg);
 
       const typeLabels = { break: 'break(s)', lunch: 'lunch(es)' };
-      for (const [type, label] of Object.entries(typeLabels)) {
-        const allowed = (shiftCfg.breaks || [])
-          .filter(b => b.type === type)
-          .reduce((sum, b) => sum + (b.maxCount ?? 1), 0);
+      for (const type of getBreakTypes(shiftCfg.breaks)) {
+        const allowed = getBreakMaxCount(type, shiftCfg.breaks);
         const count = body.breaks.filter(b => b.type === type).length;
         if (count > allowed) {
-          return fail(`You can only take ${allowed} ${label} per day.`, 400);
+          return fail(`You can only take ${allowed} ${type}(s) per day.`, 400);
         }
       }
     }

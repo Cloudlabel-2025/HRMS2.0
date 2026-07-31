@@ -7,6 +7,8 @@ import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
+import { MANAGER_ROLES } from '@/lib/permissions';
+import { getDepartmentUserIds } from '@/lib/rbac';
 
 export async function GET(req) {
   try {
@@ -31,18 +33,21 @@ export async function GET(req) {
     if (scope === 'all') {
       if (!isAdmin) return fail('Access denied', 403);
     } else if (scope === 'approvals') {
+      if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
       if (isAdmin) {
         query = { $or: [
           { 'workflowApprovals.action': { $in: ['pending', null] } },
           { status: 'pending' },
         ]};
       } else {
-        // Find leaves where any workflow step matches this user's role
+        // Find leaves where any workflow step matches this user's role, scoped to their department
         query = {
           $or: [
             { 'workflowApprovals.action': { $in: ['pending', null] } },
           ],
         };
+        const ids = await getDepartmentUserIds(user);
+        if (ids !== null) query.userId = { $in: ids };
       }
     } else if (scope === 'my' && userIdParam && isAdmin) {
       query.userId = userIdParam;

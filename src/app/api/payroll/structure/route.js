@@ -18,7 +18,8 @@ export async function GET(req) {
       return ok(all);
     }
 
-    const structure = await SalaryStructure.findOne({ userId: userId || user._id })
+    const targetUserId = userId && ['super_admin', 'admin_full'].includes(user.role) ? userId : user._id;
+    const structure = await SalaryStructure.findOne({ userId: targetUserId })
       .populate('userId', 'name avatar department designation');
     if (!structure) return fail('Salary structure not found', 404);
     return ok(structure);

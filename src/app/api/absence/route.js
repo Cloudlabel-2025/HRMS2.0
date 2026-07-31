@@ -3,6 +3,7 @@ import { Absence, Employee, Leave } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { getDepartmentUserIds } from '@/lib/rbac';
 
 export async function GET(req) {
   try {
@@ -14,7 +15,13 @@ export async function GET(req) {
     const month = searchParams.get('month');
     const query = {};
     if (month) query.date = { $regex: `^${month}` };
-    if (!['super_admin','admin_full','team_admin','team_lead'].includes(user.role)) query.userId = user._id;
+    if (['super_admin', 'admin_full'].includes(user.role)) {
+      // no userId filter — org-wide view
+    } else if (['team_lead', 'team_admin'].includes(user.role)) {
+      query.userId = { $in: await getDepartmentUserIds(user) };
+    } else {
+      query.userId = user._id;
+    }
 
     const absences = await Absence.find(query)
       .populate('userId', 'name avatar department')

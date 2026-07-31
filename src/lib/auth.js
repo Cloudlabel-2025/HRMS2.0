@@ -1,5 +1,7 @@
 'use client';
 import { createContext, useContext, useState, useEffect } from 'react';
+import { hasAccess } from '@/lib/permissions';
+export { hasAccess };
 
 const AuthContext = createContext(null);
 
@@ -141,39 +143,6 @@ export function getRefreshToken() {
 
 export function setToken(token) {
   // Access tokens intentionally remain HTTP-only cookies and are never exposed to client code.
-}
-
-// Module access matrix — mirrors server-side rbac.js
-const MODULE_ACCESS = {
-  dashboard:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:'self' },
-  employees:     { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:false,      sme:false },
-  recruitment:   { super_admin:'full', admin_full:'full', recruiter:'full',    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  timecard:      { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
-  attendance:    { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
-  absence:       { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:false },
-  leave:         { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
-  payroll:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:'self',     intern:false,      sme:'self' },
-  payslip:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:'self',     intern:false,      sme:false },
-  tasks:         { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
-  projects:      { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'assigned', intern:'assigned', sme:'assigned' },
-  performance:   { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:false },
-  documents:     { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:'limited',  sme:false },
-  finance:       { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  invoicing:     { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  inventory:     { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:false,      intern:false,      sme:false },
-  reports:       { super_admin:'full', admin_full:'full', recruiter:'limited', team_lead:'dept',   team_admin:'team', employee:'self',     intern:false,      sme:false },
-  communication: { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:'view',     intern:'view',     sme:false },
-  calendar:      { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'dept',   team_admin:'team', employee:'self',     intern:'self',     sme:'self' },
-  monitoring:    { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:false,      intern:false,      sme:false },
-  core_hr:       { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:false,      intern:false,      sme:false },
-  self_service:  { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'self',   team_admin:'self', employee:'self',     intern:'self',     sme:'self' },
-  settings:      { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-  sme:           { super_admin:'full', admin_full:false,   recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
-};
-
-export function hasAccess(role, module) {
-  return !!(MODULE_ACCESS[module]?.[role]);
 }
 
 /** Client-side helper: can the given user view employees in targetDepartment? */

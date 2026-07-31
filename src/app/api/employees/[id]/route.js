@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog, Employee } from '@/lib/models/index';
+import { AuditLog, Employee, Shift } from '@/lib/models/index';
 import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
 import { canAccessDepartment } from '@/lib/rbac';
 
@@ -83,7 +83,12 @@ export async function PUT(req, { params }) {
   if ('role' in validated) syncFields.role = validated.role;
   if ('status' in validated) syncFields.status = validated.status;
   if ('shift' in validated) syncFields.shift = validated.shift;
+  if ('shiftId' in validated) syncFields.shiftId = validated.shiftId;
   if ('joinDate' in validated) syncFields.joinDate = validated.joinDate;
+  if ('shift' in validated && !('shiftId' in validated)) {
+    const shiftDoc = await Shift.findOne({ name: validated.shift || 'Morning (9AM-6PM)' }).lean();
+    if (shiftDoc) syncFields.shiftId = shiftDoc._id;
+  }
   if (Object.keys(syncFields).length > 0) {
     await User.findByIdAndUpdate(emp.userId, syncFields);
   }

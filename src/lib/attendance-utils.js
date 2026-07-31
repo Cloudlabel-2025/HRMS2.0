@@ -1,4 +1,6 @@
-import { getShiftConfig, calculateHoursWorked, calculateBreakDeduction } from './attendance-constants';
+import { calculateHoursWorked } from './attendance-constants';
+import { calculateBreakDeduction } from './attendance-breaks';
+import { getShiftEndMinutes } from './shift-utils';
 import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
 import { Holiday, Employee } from './models/index';
 import User from './models/User';
@@ -10,66 +12,71 @@ import { getTzTime } from '@/lib/timezone';
 
 export { toMinutes, diffMins } from './attendance-constants';
 
-export async function checkAndApplyAutoLogout(record, now, cfg) {
+export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc) {
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
 
-  const shiftCfg = cfg || { hardCapHours: 600, expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
+  const shiftCfg = cfg || { expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
 
   const [ih, im] = record.clockIn.split(':').map(Number);
-  const recordDate = new Date(record.date + 'T' + record.clockIn + ':00');
-  const hardCapMs = shiftCfg.hardCapHours * 60 * 1000;
+  const clockInMinutes = ih * 60 + im;
+  const recordDateMs = new Date(record.date + 'T00:00:00').getTime();
 
-  if (now - recordDate >= hardCapMs) {
-    const clockOutMinutes = ih * 60 + im + shiftCfg.hardCapHours;
-    const oh = Math.floor(clockOutMinutes / 60) % 24;
-    const om = clockOutMinutes % 60;
-    const clockOutTime = String(oh).padStart(2, '0') + ':' + String(om).padStart(2, '0');
+  const endMins = getShiftEndMinutes(shiftDoc, shiftCfg);
+  const deadlineMins = endMins + (shiftCfg.autoLogoutBuffer ?? 360);
+  if (deadlineMins <= clockInMinutes) return false;
 
-    record.clockOut = clockOutTime;
-    record.autoLoggedOut = true;
+  const deadlineMs = recordDateMs + deadlineMins * 60 * 1000;
+  if (now.getTime() < deadlineMs) return false;
 
-    if (record.breaks) {
-      record.breaks = record.breaks.map(b => {
-        if (b.start && !b.end) {
-          return { type: b.type, start: b.start, end: clockOutTime };
-        }
-        return b;
-      });
-    }
+  const clockOutMinutes = deadlineMins;
+  const oh = Math.floor(clockOutMinutes / 60) % 24;
+  const om = clockOutMinutes % 60;
+  const clockOutTime = String(oh).padStart(2, '0') + ':' + String(om).padStart(2, '0');
 
-    if (record.workProgress) {
-      record.workProgress = record.workProgress.map(w => {
-        if (w.startTime && !w.endTime) {
-          return {
-            type: w.type,
-            taskDetails: w.taskDetails,
-            startTime: w.startTime,
-            endTime: clockOutTime,
-            status: w.status === 'work_in_progress' ? 'stopped' : w.status,
-            remarks: w.remarks || '',
-            feedback: w.feedback || ''
-          };
-        }
-        return w;
-      });
-    }
+  record.clockOut = clockOutTime;
+  record.autoLoggedOut = true;
 
-    const deduction = calculateBreakDeduction(record.breaks, shiftCfg.breaks);
-    const { baseHours, hoursWorked } = calculateHoursWorked(shiftCfg.hardCapHours, deduction, shiftCfg);
-    record.baseHoursWorked = baseHours;
-    record.breakDeduction = deduction;
-    record.hoursWorked = hoursWorked;
-
-    if (hoursWorked < shiftCfg.absentThreshold) {
-      record.status = 'absent';
-    } else {
-      record.status = 'present';
-    }
-
-    return true;
+  if (record.breaks) {
+    record.breaks = record.breaks.map(b => {
+      if (b.start && !b.end) {
+        return { type: b.type, start: b.start, end: clockOutTime };
+      }
+      return b;
+    });
   }
-  return false;
+
+  if (record.workProgress) {
+    record.workProgress = record.workProgress.map(w => {
+      if (w.startTime && !w.endTime) {
+        return {
+          type: w.type,
+          taskDetails: w.taskDetails,
+          startTime: w.startTime,
+          endTime: clockOutTime,
+          status: w.status === 'work_in_progress' ? 'stopped' : w.status,
+          remarks: w.remarks || '',
+          feedback: w.feedback || ''
+        };
+      }
+      return w;
+    });
+  }
+
+  const elapsedMins = Math.max(0, clockOutMinutes - clockInMinutes);
+  const deduction = calculateBreakDeduction(record.breaks, shiftCfg.breaks);
+  const { baseHours, hoursWorked } = calculateHoursWorked(elapsedMins, deduction, shiftCfg);
+  record.baseHoursWorked = baseHours;
+  record.breakDeduction = deduction;
+  record.hoursWorked = hoursWorked;
+
+  if (hoursWorked < shiftCfg.absentThreshold) {
+    record.status = 'absent';
+  } else {
+    record.status = 'present';
+  }
+
+  return true;
 }
 
 export async function markAbsentEmployees(dateStr) {

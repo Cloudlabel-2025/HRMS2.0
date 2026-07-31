@@ -9,12 +9,12 @@ const AttendanceSchema = new mongoose.Schema({
   baseHoursWorked: { type: Number, default: 0 },
   breakDeduction: { type: Number, default: 0 },
   breaks: [{
-    type: { type: String, enum: ['break', 'lunch'], required: true },
+    type: { type: String, required: true },
     start: { type: String, default: '' },
     end: { type: String, default: null },
   }],
   workProgress: [{
-    type: { type: String, enum: ['task', 'break', 'lunch'], default: 'task' },
+    type: { type: String, default: 'task' },
     taskDetails: { type: String, default: '' },
     startTime: { type: String, default: '' },
     endTime: { type: String, default: null },

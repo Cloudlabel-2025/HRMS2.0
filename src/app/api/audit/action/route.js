@@ -1,5 +1,6 @@
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { fail, ok } from '@/lib/jwt';
+import { MANAGER_ROLES, MODULE_ACCESS } from '@/lib/permissions';
 
 const VALID_SEVERITIES = ['low', 'medium', 'high'];
 
@@ -10,9 +11,15 @@ export async function POST(req) {
 
     const body = await req.json();
     const action = String(body.action || '').trim();
-    const module = String(body.module || 'General').trim();
     const details = String(body.details || '').trim();
-    const severity = VALID_SEVERITIES.includes(body.severity) ? body.severity : 'low';
+
+    const isManager = MANAGER_ROLES.includes(user.role);
+    let module = String(body.module || 'General').trim();
+    let severity = isManager && VALID_SEVERITIES.includes(body.severity) ? body.severity : 'low';
+    if (!isManager) {
+      const normalized = module.toLowerCase().replace(/[^a-z0-9_]/g, '');
+      module = MODULE_ACCESS[normalized] ? normalized : 'general';
+    }
 
     if (!action) return fail('action is required', 400);
 

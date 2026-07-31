@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Asset, AssetAssignment, Counter, Employee, Stock, StockMovement } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { hasAccess, getDepartmentUserIds } from '@/lib/rbac';
 
 const ADMIN_ROLES = ['super_admin', 'admin_full'];
 const RETURN_STATUSES = ['available', 'maintenance', 'repair', 'damaged', 'retired'];
@@ -166,18 +167,27 @@ export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
+    if (!hasAccess(user.role, 'inventory')) return fail('Access denied', 403);
     await connectDB();
     await repairLegacyEmployeeReferences();
 
+    const userIds = await getDepartmentUserIds(user);
     const { searchParams } = new URL(req.url);
     const type = searchParams.get('type');
     if (type === 'stock') {
-      const stock = await Stock.find().sort({ item: 1 });
+      const stockQuery = userIds === null
+        ? {}
+        : { _id: { $in: await Asset.distinct('stockItem', { assignedTo: { $in: userIds }, stockItem: { $ne: null } }) } };
+      const stock = await Stock.find(stockQuery).sort({ item: 1 });
       return ok({ stock });
     }
     if (type === 'history') {
       const assetId = searchParams.get('assetId');
       if (!assetId) return fail('Asset ID is required');
+      const asset = await Asset.findById(assetId).select('assignedTo');
+      if (userIds !== null && asset && !userIds.some(id => id.toString() === asset.assignedTo?.toString())) {
+        return fail('Access denied', 403);
+      }
       const [assignments, movements] = await Promise.all([
         AssetAssignment.find({ asset: assetId }).populate('employee', 'name').populate('performedBy', 'name').sort({ createdAt: -1 }),
         StockMovement.find({ asset: assetId }).populate('performedBy', 'name').sort({ createdAt: -1 }),
@@ -185,7 +195,7 @@ export async function GET(req) {
       return ok({ assignments, movements });
     }
 
-    const assets = await Asset.find()
+    const assets = await Asset.find(userIds === null ? {} : { assignedTo: { $in: userIds } })
       .populate('assignedTo', 'name avatar department')
       .populate('stockItem', 'item unit unitPrice')
       .sort({ createdAt: -1 });

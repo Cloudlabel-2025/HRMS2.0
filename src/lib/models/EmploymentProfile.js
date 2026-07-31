@@ -52,6 +52,7 @@ const EmpProfileSchema = new mongoose.Schema({
   businessUnit:        { type: String, default: '' },
   workLocation:        { type: String, default: '' },
   shift:               { type: String, default: 'Morning (9AM-6PM)' },
+  shiftId:             { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
 
   hireDate:            { type: Date, default: null },
   probationStartDate:   { type: Date, default: null },

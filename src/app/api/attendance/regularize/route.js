@@ -5,9 +5,10 @@ import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
-import { getAccessibleDepartments } from '@/lib/rbac';
+import { getDepartmentUserIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
-import { getShiftConfig, calculateHoursWorked, calculateBreakDeduction } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 
 export async function GET(req) {
   try {
@@ -26,21 +27,8 @@ export async function GET(req) {
         const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
         const excludeIds = excludeUsers.map(u => u._id);
         query = { userId: { $nin: excludeIds } };
-      } else if (user.role === 'team_lead') {
-        const depts = await getAccessibleDepartments(user);
-        const deptMembers = await User.find({
-          department: { $in: depts },
-          status: 'active'
-        }).select('_id');
-        query = { userId: { $in: deptMembers.map(m => m._id) } };
-      } else if (user.role === 'team_admin') {
-        const depts = await getAccessibleDepartments(user);
-        const deptMembers = await User.find({
-          department: { $in: depts },
-          role: { $in: ['intern', 'employee', 'team_admin'] },
-          status: 'active'
-        }).select('_id');
-        query = { userId: { $in: deptMembers.map(m => m._id) } };
+      } else if (['team_lead', 'team_admin'].includes(user.role)) {
+        query = { userId: { $in: await getDepartmentUserIds(user) } };
       } else {
         query = { userId: user._id };
       }
@@ -54,22 +42,8 @@ export async function GET(req) {
         const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
         const excludeIds = excludeUsers.map(u => u._id);
         query = { userId: { $nin: excludeIds }, status: 'pending' };
-      } else if (user.role === 'team_lead') {
-        const depts = await getAccessibleDepartments(user);
-        const deptMembers = await User.find({
-          department: { $in: depts },
-          role: { $in: ['intern', 'employee', 'team_admin'] },
-          status: 'active'
-        }).select('_id');
-        query = { userId: { $in: deptMembers.map(m => m._id) }, status: 'pending' };
-      } else if (user.role === 'team_admin') {
-        const depts = await getAccessibleDepartments(user);
-        const deptMembers = await User.find({
-          department: { $in: depts },
-          role: { $in: ['intern', 'employee'] },
-          status: 'active'
-        }).select('_id');
-        query = { userId: { $in: deptMembers.map(m => m._id) }, status: 'pending' };
+      } else if (['team_lead', 'team_admin'].includes(user.role)) {
+        query = { userId: { $in: await getDepartmentUserIds(user) }, status: 'pending' };
       }
     } else {
       query = { userId: user._id };
@@ -187,26 +161,9 @@ export async function PUT(req) {
       if (!requester || requester.role === 'admin_full' || reg.userId.toString() === user._id.toString()) {
         return fail('Access denied', 403);
       }
-    } else if (user.role === 'team_lead') {
-      const depts = await getAccessibleDepartments(user);
-      const deptMembers = await User.find({
-        department: { $in: depts },
-        role: { $in: ['intern', 'employee', 'team_admin'] },
-        status: 'active'
-      }).select('_id');
-      const allowedIds = deptMembers.map(m => m._id.toString());
-      if (!allowedIds.includes(reg.userId.toString())) {
-        return fail('Access denied', 403);
-      }
-    } else if (user.role === 'team_admin') {
-      const depts = await getAccessibleDepartments(user);
-      const deptMembers = await User.find({
-        department: { $in: depts },
-        role: { $in: ['intern', 'employee'] },
-        status: 'active'
-      }).select('_id');
-      const allowedIds = deptMembers.map(m => m._id.toString());
-      if (!allowedIds.includes(reg.userId.toString())) {
+    } else if (['team_lead', 'team_admin'].includes(user.role)) {
+      const ids = await getDepartmentUserIds(user);
+      if (!ids.some(id => id.toString() === reg.userId.toString())) {
         return fail('Access denied', 403);
       }
     }

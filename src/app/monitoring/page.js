@@ -6,6 +6,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
+import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present', icon: 'bi-check-circle' },
@@ -110,7 +111,7 @@ export default function MonitoringPage() {
 
         // Determine this employee's shift-aware today
         const empShiftName = emp.shift || 'Morning (9AM-6PM)';
-        const matchedShift = allShifts.find(s => s.name === empShiftName);
+        const matchedShift = allShifts.find(s => (emp.shiftId && s._id === emp.shiftId) || s.name === empShiftName);
         const empToday = (matchedShift?.startTime && matchedShift?.endTime)
           ? getAttendanceDate(now, matchedShift.startTime, matchedShift.endTime)
           : calToday;
@@ -125,8 +126,13 @@ export default function MonitoringPage() {
         let workProgress = [];
         let lateFlag = false;
         let onBreak = false;
-        let onLunch = false;
+        let activeBreakType = '';
         let autoLoggedOut = false;
+
+        const breakLabels = {};
+        for (const b of (matchedShift?.breaks || [])) {
+          if (b.type) breakLabels[b.type] = b.name || b.type;
+        }
 
         if (isOnLeave) {
           status = 'leave';
@@ -138,8 +144,9 @@ export default function MonitoringPage() {
           autoLoggedOut = attRecord.autoLoggedOut === true;
           breaks = Array.isArray(attRecord.breaks) ? attRecord.breaks : [];
           workProgress = Array.isArray(attRecord.workProgress) ? attRecord.workProgress : [];
-          onBreak = breaks.some(b => b.type === 'break' && b.start && !b.end);
-          onLunch = breaks.some(b => b.type === 'lunch' && b.start && !b.end);
+          const openBreak = breaks.find(b => b.start && !b.end);
+          onBreak = !!openBreak;
+          activeBreakType = openBreak?.type || '';
         }
 
         const hasClockOut = clockOut !== '—' && clockOut !== null;
@@ -159,7 +166,8 @@ export default function MonitoringPage() {
           workProgress,
           lateFlag,
           onBreak,
-          onLunch,
+          activeBreakType,
+          breakLabels,
           autoLoggedOut,
           isLoggedOut: hasClockOut,
         };
@@ -271,9 +279,17 @@ export default function MonitoringPage() {
               <div className="row g-2">
                 {filtered.map(emp => {
                   const style = STATUS_STYLE[emp.status] || STATUS_STYLE.absent;
-                  const dotColor = emp.isLoggedOut ? '#64748b' : emp.onBreak ? '#d97706' : emp.onLunch ? '#2563eb' : style.color;
-                  const breakTotal = totalBreakDuration(emp.breaks, 'break');
-                  const lunchTotal = totalBreakDuration(emp.breaks, 'lunch');
+                  const activeBreakStyle = emp.onBreak ? breakStyle(emp.activeBreakType) : null;
+                  const dotColor = emp.isLoggedOut ? '#64748b' : emp.onBreak ? activeBreakStyle.color : style.color;
+                  const breakChips = [];
+                  const seenTypes = new Set();
+                  for (const b of emp.breaks) {
+                    if (b.start && b.end && !seenTypes.has(b.type)) {
+                      seenTypes.add(b.type);
+                      const total = totalBreakDuration(emp.breaks, b.type);
+                      if (total !== '--') breakChips.push({ type: b.type, total, label: emp.breakLabels?.[b.type] || b.type, style: breakStyle(b.type) });
+                    }
+                  }
                   return (
                     <div key={emp._id} className="col-md-6">
                       <div
@@ -319,18 +335,18 @@ export default function MonitoringPage() {
                                 <i className="bi bi-clock-history me-1" />Auto Logged Out
                               </span>
                             )}
-                            {emp.onBreak && (
-                              <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}>On Break</span>
-                            )}
-                            {emp.onLunch && (
-                              <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>On Lunch</span>
+                            {emp.onBreak && activeBreakStyle && (
+                              <span className="badge" style={{ background: activeBreakStyle.bg, color: activeBreakStyle.color, fontSize: 10 }}>
+                                <i className={`bi ${activeBreakStyle.icon} me-1`} />{emp.breakLabels?.[emp.activeBreakType] || emp.activeBreakType || 'On Break'}
+                              </span>
                             )}
                           </div>
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: '#64748b' }}>
                           <span><i className="bi bi-box-arrow-in-right me-1" />Login: {formatTime(emp.clockIn)}</span>
-                          <span><i className="bi bi-cup-hot me-1" />Break: {breakTotal}</span>
-                          <span><i className="bi bi-egg-fried me-1" />Lunch: {lunchTotal}</span>
+                          {breakChips.map(c => (
+                            <span key={c.type}><i className={`bi ${c.style.icon} me-1`} style={{ color: c.style.color }} />{c.label}: {c.total}</span>
+                          ))}
                           <span><i className="bi bi-box-arrow-right me-1" />Logout: {formatTime(emp.clockOut)}</span>
                         </div>
                         {emp.lateFlag && (
@@ -408,7 +424,15 @@ export default function MonitoringPage() {
                       {workProgressEmp.workProgress.map((wp, i) => (
                         <tr key={i}>
                           <td>{i + 1}</td>
-                          <td><span className={`badge ${wp.type === 'break' ? 'bg-warning' : wp.type === 'lunch' ? 'bg-info' : 'bg-primary'}`} style={{ fontSize: 10 }}>{wp.type}</span></td>
+                          <td>
+                            {isBreakType(wp.type) ? (
+                              <span className="badge" style={{ background: breakStyle(wp.type).bg, color: breakStyle(wp.type).color, fontSize: 10 }}>
+                                {workProgressEmp.breakLabels?.[wp.type] || wp.type}
+                              </span>
+                            ) : (
+                              <span className="badge bg-primary" style={{ fontSize: 10 }}>{wp.type}</span>
+                            )}
+                          </td>
                           <td style={{ maxWidth: 200, wordBreak: 'break-word' }}>{wp.taskDetails || '—'}</td>
                           <td><Time value={wp.startTime} fallback="—" /></td>
                           <td><Time value={wp.endTime} fallback="—" /></td>

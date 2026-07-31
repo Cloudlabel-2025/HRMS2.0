@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Time from '@/components/Time';
+import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -277,7 +278,11 @@ export default function DayActivityPage() {
                       }} />
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
-                          {wp.type === 'break' ? 'Break' : wp.type === 'lunch' ? 'Lunch' : wp.taskDetails || 'Task'}
+                          {isBreakType(wp.type) ? (
+                            <span className="badge" style={{ background: breakStyle(wp.type).bg, color: breakStyle(wp.type).color }}>
+                              <i className={`bi ${breakStyle(wp.type).icon} me-1`} />{wp.taskDetails || wp.type}
+                            </span>
+                          ) : (wp.taskDetails || 'Task')}
                         </div>
                         <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: '#64748b' }}>
                           {wp.startTime && <span>{formatTime(wp.startTime)}{wp.endTime ? ` - ${formatTime(wp.endTime)}` : ''}</span>}

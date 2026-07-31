@@ -1,7 +1,7 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Leave, Shift, Absence, SelfServiceRequest } from '@/lib/models/index';
+import { Leave, Absence, SelfServiceRequest } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
@@ -9,7 +9,9 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { getShiftConfig, calculateHoursWorked, determineStatus, calculateBreakDeduction, diffMins, getBreakAllowance } from '@/lib/attendance-constants';
+import { resolveShift } from '@/lib/shift-utils';
+import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
+import { calculateBreakDeduction, getBreakAllowance } from '@/lib/attendance-breaks';
 import { notify } from '@/lib/notify';
 
 export async function POST(req) {
@@ -32,10 +34,13 @@ export async function POST(req) {
     const now   = await getTzTime();
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
+    const shiftDoc = await resolveShift(user);
+    const config = await getGlobalConfig();
+    const cfg = getShiftConfig(shiftDoc, config);
+
     // Resolve shift-aware attendance date
     let today;
     try {
-      const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
       today = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
     } catch {
       today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
@@ -48,7 +53,7 @@ export async function POST(req) {
     if (action === 'in') {
       const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null });
       if (openRecord) {
-        if (await checkAndApplyAutoLogout(openRecord, now)) {
+        if (await checkAndApplyAutoLogout(openRecord, now, cfg, shiftDoc)) {
           await openRecord.save();
         } else {
           auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active`, 'low', ip, null, user._id);
@@ -72,10 +77,6 @@ export async function POST(req) {
         isOnLeave = true;
         auditLog('Clock In (Leave Day)', 'Attendance', user._id, `On approved ${onLeave.type} (${onLeave.from} to ${onLeave.to})`, 'medium', ip, null, user._id);
       }
-
-      const config = await getGlobalConfig();
-      const shiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
-      const cfg = getShiftConfig(shiftDoc, config);
 
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
@@ -266,10 +267,6 @@ export async function POST(req) {
         return fail('Already clocked out today', 400);
       }
 
-      const outConfig = await getGlobalConfig();
-      const outShiftDoc = await Shift.findOne({ name: user.shift || 'Morning (9AM-6PM)' }).lean();
-      const outCfg = getShiftConfig(outShiftDoc, outConfig);
-
       const [ih, im] = record.clockIn.split(':').map(Number);
       const [oh, om] = timeStr.split(':').map(Number);
       let elapsedMins = (oh * 60 + om) - (ih * 60 + im);
@@ -279,21 +276,12 @@ export async function POST(req) {
       let isAutoLogout = false;
       let finalMinutes = elapsedMins;
 
-      if (elapsedMins >= outCfg.hardCapHours) {
-        const clockOutMinutes = ih * 60 + im + outCfg.hardCapHours;
-        const foh = Math.floor(clockOutMinutes / 60) % 24;
-        const fom = clockOutMinutes % 60;
-        finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
-        isAutoLogout = true;
-        finalMinutes = outCfg.hardCapHours;
-      }
-
       // Recalculate break deduction from actual break records
       const updatedBreaks = (record.breaks || []).map(row => (
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
-      const deduction = calculateBreakDeduction(updatedBreaks, outCfg.breaks);
-      const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, outCfg);
+      const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
+      const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, cfg);
       deductionBreakdown = {
         totalDeduction: deduction,
         breakLog: updatedBreaks.map(b => ({
@@ -301,11 +289,11 @@ export async function POST(req) {
           start: b.start,
           end: b.end,
           duration: diffMins(b.start, b.end),
-          exceeded: diffMins(b.start, b.end) > getBreakAllowance(b.type, outCfg),
+          exceeded: diffMins(b.start, b.end) > getBreakAllowance(b.type, cfg.breaks),
         })),
       };
       let status = record.status;
-      if (hoursWorked < outCfg.absentThreshold) {
+      if (hoursWorked < cfg.absentThreshold) {
         status = 'absent';
       }
 

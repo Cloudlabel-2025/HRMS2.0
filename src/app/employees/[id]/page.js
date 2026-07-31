@@ -11,6 +11,7 @@ import { formatMins } from '@/lib/format';
 import { canAccessDepartment } from '@/lib/auth';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
+import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -1099,7 +1100,7 @@ export default function EmployeeProfilePage() {
                                           </thead>
                                           <tbody>
                                             {dateEntry.workProgress.map((wp, idx) => {
-                                              const isBreak = wp.type === 'break' || wp.type === 'lunch';
+                                              const isBreak = isBreakType(wp.type);
                                               const st = WP_STATUS_STYLE[wp.status] || WP_STATUS_STYLE.pending;
                                               return (
                                                 <tr key={idx} style={{ background: isBreak ? '#f8fafc' : 'transparent', transition: 'background 0.15s' }}
@@ -1108,8 +1109,8 @@ export default function EmployeeProfilePage() {
                                                   <td style={{ padding: '8px 12px', color: '#94a3b8', fontWeight: 700, fontSize: 12, borderBottom: '1px solid #f1f5f9' }}>{idx + 1}</td>
                                                   <td style={{ padding: '8px 12px', borderBottom: '1px solid #f1f5f9' }}>
                                                     {isBreak ? (
-                                                      <span className="badge" style={{ background: wp.type === 'lunch' ? '#f5f3ff' : '#fffbeb', color: wp.type === 'lunch' ? '#7c3aed' : '#d97706', fontSize: 11, fontWeight: 700, borderRadius: 8 }}>
-                                                        <i className={`bi ${wp.type === 'lunch' ? 'bi-egg-fried' : 'bi-cup-hot'} me-1`} />{wp.type === 'lunch' ? 'Lunch break' : 'Break'}
+                                                      <span className="badge" style={{ background: breakStyle(wp.type).bg, color: breakStyle(wp.type).color, fontSize: 11, fontWeight: 700, borderRadius: 8 }}>
+                                                        <i className={`bi ${breakStyle(wp.type).icon} me-1`} />{wp.taskDetails || wp.type}
                                                       </span>
                                                     ) : (
                                                       <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{wp.taskDetails || '—'}</span>

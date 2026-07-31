@@ -498,7 +498,7 @@ export default function SettingsPage() {
             <div className="card p-3 p-md-4">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
                 <div className="section-title" style={{ margin: 0 }}>Shift Management</div>
-                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, hardCapHours: 600, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShowModal('shift'); }}>
+                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShowModal('shift'); }}>
                   <i className="bi bi-plus-lg me-1" />Add Shift
                 </button>
               </div>
@@ -528,7 +528,7 @@ export default function SettingsPage() {
                               const hrs = Math.floor((b.maxDuration || 0) / 60);
                               const mins = (b.maxDuration || 0) % 60;
                               const durStr = hrs > 0 ? (mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`) : `${mins}m`;
-                              return `${b.maxCount || 1}x ${durStr}${b.type === 'lunch' ? ' lunch' : ''}`;
+                              return `${b.name || b.type || 'Break'} ${b.maxCount || 1}x ${durStr}`;
                             }).join(', ')}
                           </div>
                         )}
@@ -856,19 +856,6 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Hard Cap (max)</label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.hardCapHours ?? 600).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.hardCapHours ?? 600); setModalForm(p => ({ ...p, hardCapHours: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.hardCapHours ?? 600).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.hardCapHours ?? 600); setModalForm(p => ({ ...p, hardCapHours: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-                  <div className="col-md-4">
                     <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Absent Threshold <span className="text-muted" style={{ fontSize: 10 }}>(below = absent)</span></label>
                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                       <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
@@ -950,11 +937,9 @@ export default function SettingsPage() {
                             <input className="form-control form-control-sm" style={{ fontSize: 13, fontWeight: 600, maxWidth: 160 }}
                               value={br.name || ''} placeholder="Break name"
                               onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], name: e.target.value }; setModalForm({ ...modalForm, breaks }); }} />
-                            <select className="form-select form-select-sm" style={{ fontSize: 12, maxWidth: 110 }}
-                              value={br.type} onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], type: e.target.value }; setModalForm({ ...modalForm, breaks }); }}>
-                              <option value="break">Break</option>
-                              <option value="lunch">Lunch</option>
-                            </select>
+                            <input className="form-control form-control-sm" style={{ fontSize: 12, maxWidth: 120 }}
+                              value={br.type || ''} placeholder="Type (e.g. tea, snack)"
+                              onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], type: e.target.value }; setModalForm({ ...modalForm, breaks }); }} />
                           </div>
                           <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 12, padding: '4px 8px' }}
                             onClick={() => { const breaks = [...(modalForm.breaks || [])]; breaks.splice(idx, 1); setModalForm({ ...modalForm, breaks }); }}>
@@ -989,7 +974,7 @@ export default function SettingsPage() {
                       </div>
                     ))}
                     <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12, padding: '8px 16px', borderRadius: 8, marginTop: 4 }}
-                      onClick={() => setModalForm({ ...modalForm, breaks: [...(modalForm.breaks || []), { name: '', type: 'break', maxDuration: 0, maxCount: 1 }] })}>
+                      onClick={() => setModalForm({ ...modalForm, breaks: [...(modalForm.breaks || []), { name: '', type: '', maxDuration: 0, maxCount: 1 }] })}>
                       <i className="bi bi-plus-lg me-1" />Add Break
                     </button>
                   </div>

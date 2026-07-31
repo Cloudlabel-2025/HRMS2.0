@@ -35,7 +35,7 @@ export async function POST(req) {
     const dept = await Department.findOneAndUpdate(
       { name: 'Techno-Functional' },
       {
-        $set: { visibleDepartments: ['Technical', 'Functional'] },
+        $set: { visibleDepartments: [] },
         $setOnInsert: { name: 'Techno-Functional', head: '', members: 0 },
       },
       { upsert: true, new: true }

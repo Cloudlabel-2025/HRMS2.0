@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog, Employee, Department, Applicant } from '@/lib/models/index';
+import { AuditLog, Employee, Department, Applicant, Shift } from '@/lib/models/index';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { hasAccess, getAccessibleDepartments } from '@/lib/rbac';
@@ -104,6 +104,11 @@ export async function POST(req) {
       validated.password = generatedPassword;
     }
 
+    const shiftDoc = await Shift.findOne(
+      validated.shiftId ? { _id: validated.shiftId } : { name: validated.shift || 'Morning (9AM-6PM)' }
+    ).lean();
+    const shiftId = shiftDoc?._id || null;
+
     // 1. Create User record for authentication
     const authUser = await User.create({
       name:     validated.name,
@@ -113,6 +118,7 @@ export async function POST(req) {
       department:  validated.department,
       designation: validated.designation,
       shift:       validated.shift || 'Morning (9AM-6PM)',
+      shiftId:     shiftId,
       joinDate:    validated.joinDate || null,
       isFirstLogin: true,
     });
@@ -135,6 +141,7 @@ export async function POST(req) {
       designation: validated.designation || '',
       role:        validated.role,
       shift:       validated.shift || 'Morning (9AM-6PM)',
+      shiftId:     shiftId,
       skills:      validated.skills || [],
       joinDate:    validated.joinDate || null,
       status:      validated.status || 'active',
@@ -215,6 +222,7 @@ export async function POST(req) {
         department:       validated.department,
         designation:      validated.designation || '',
         shift:            validated.shift || 'Morning (9AM-6PM)',
+        shiftId:          shiftId,
         hireDate:         validated.joinDate || null,
         sourceSystem:     sourceApplicant ? 'recruitment' : 'manual',
       });
