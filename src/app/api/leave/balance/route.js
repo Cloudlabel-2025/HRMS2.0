@@ -4,6 +4,7 @@ import User from '@/lib/models/User';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { EMPLOYER_ROLES, isEmployer } from '@/lib/permissions';
 
 const ADMIN_ROLES = ['super_admin', 'admin_full'];
 
@@ -97,6 +98,9 @@ function isEligibleForType(config, employeeContext) {
 /** Get or create a user's balance for the current cycle */
 export async function getOrCreateBalance(userId, policy) {
   await dbConnect();
+  const user = await User.findById(userId).select('role');
+  if (!user || isEmployer(user.role)) return null;
+
   const now = new Date();
   const cycleStart = new Date(now.getFullYear(), 0, 1);
   const cycleEnd = new Date(now.getFullYear(), 11, 31);
@@ -186,6 +190,16 @@ export async function GET(req) {
     const targetUser = await User.findById(targetUserId).select('-password');
     if (!targetUser) return fail('User not found', 404);
 
+    if (isEmployer(targetUser.role)) {
+      const now = new Date();
+      return ok({
+        policy: null,
+        cycleStart: new Date(now.getFullYear(), 0, 1),
+        cycleEnd: new Date(now.getFullYear(), 11, 31),
+        balances: [],
+      });
+    }
+
     const policy = await resolvePolicyForUser(targetUser);
     if (!policy) {
       // Diagnostic: surface why no policy matched
@@ -268,6 +282,13 @@ export async function POST(req) {
     const targetUser = await User.findById(userId).select('-password');
     if (!targetUser) return fail('User not found', 404);
 
+    if (isEmployer(targetUser.role)) {
+      const now = new Date();
+      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      await UserLeaveBalance.deleteOne({ userId, cycleStart });
+      return ok({ message: 'Employer accounts do not track leave balances', balance: null });
+    }
+
     const policy = await resolvePolicyForUser(targetUser);
     if (!policy) return fail('No active leave policy found', 400);
 
@@ -286,10 +307,13 @@ export async function POST(req) {
   if (action === 'monthly-accrual') {
     const now = new Date();
     const currentMonth = now.getMonth();
+    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
+    const employerIds = employers.map(u => u._id.toString());
     const allBalances = await UserLeaveBalance.find();
     let processed = 0;
 
     for (const bal of allBalances) {
+      if (employerIds.includes(bal.userId.toString())) continue;
       if (now < bal.cycleStart || now > bal.cycleEnd) continue;
 
       // Idempotency: skip if already accrued this month
@@ -368,9 +392,12 @@ export async function POST(req) {
     const nextCycleEnd = new Date(now.getFullYear() + 1, 11, 31);
 
     const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart });
+    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
+    const employerIds = employers.map(u => u._id.toString());
 
     let processed = 0;
     for (const bal of allBalances) {
+      if (employerIds.includes(bal.userId.toString())) continue;
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
 

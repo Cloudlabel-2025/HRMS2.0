@@ -12,7 +12,8 @@ import { getTzTime } from '@/lib/timezone';
 
 export { toMinutes, diffMins } from './attendance-constants';
 
-export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc) {
+export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmployerUser = false) {
+  if (isEmployerUser) return false;
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
 

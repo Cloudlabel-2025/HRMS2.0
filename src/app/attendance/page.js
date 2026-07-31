@@ -773,7 +773,7 @@ export default function AttendancePage() {
   }, [breakRules]);
 
   const tabs = useMemo(() => ['today', 'team', 'regularize', ...(isAdmin ? ['progress'] : [])], [isAdmin]);
-  const tabLabels = { today: 'Today', team: 'Team', regularize: 'Regularize', progress: 'View Daily Progress' };
+  const tabLabels = { today: 'Today', team: 'Team', regularize: 'Timing requests', progress: 'View Daily Progress' };
 
   const regBreakTypes = useMemo(
     () => [...new Set(regRequests.flatMap(r => (r.requestedBreaks || []).map(b => b.type).filter(Boolean)))],

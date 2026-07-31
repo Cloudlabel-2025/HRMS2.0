@@ -74,8 +74,8 @@ export async function GET(req) {
   let monitoring = null;
   if (isAdminRole || isTeamRole) {
     const employeeFilter = isAdminRole
-      ? { status: 'active' }
-      : { [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active' };
+      ? { status: 'active', role: { $ne: 'super_admin' } }
+      : { [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active', role: { $ne: 'super_admin' } };
     const monitoredEmployees = await Employee.find(employeeFilter).select('userId name department').lean();
     const monitoredIds = monitoredEmployees.map(employee => employee.userId);
     const [attendanceRecords, approvedLeaves] = await Promise.all([

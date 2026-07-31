@@ -8,6 +8,7 @@ import { notify } from '@/lib/notify';
 import { isWorkingDay, getGlobalConfig } from '@/lib/payroll-cycle';
 import { z } from 'zod';
 import { canViewUser } from '@/lib/rbac';
+import { isEmployer } from '@/lib/permissions';
 
 const ActionSchema = z.object({
   action:     z.enum(['approved', 'rejected', 'held']),
@@ -60,13 +61,14 @@ export async function PUT(req, { params }) {
     }
     const { action, holdReason } = result.data;
 
-    const leave = await Leave.findById(id).populate('userId', 'name email _id department');
+    const leave = await Leave.findById(id).populate('userId', 'name email _id department role');
     if (!leave) return fail('Leave not found', 404);
 
     if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
 
     const applicantId = leave.userId._id || leave.userId;
     const applicantName = leave.userId.name || 'Employee';
+    const applicantIsEmployer = !!leave.userId?.role && isEmployer(leave.userId.role);
 
     // Try to use dynamic workflow first
     const policy = leave.policyId
@@ -200,7 +202,7 @@ export async function PUT(req, { params }) {
       await leave.save();
 
       // Create attendance records for each working day of the leave
-      if (newStatus === 'approved') {
+      if (newStatus === 'approved' && !applicantIsEmployer) {
         try {
           const config = await getGlobalConfig();
           const fromDate = new Date(leave.from + 'T00:00:00');
@@ -393,7 +395,7 @@ export async function PUT(req, { params }) {
     await leave.save();
 
     // Create attendance records for each working day of the leave
-    if (newStatus === 'approved') {
+    if (newStatus === 'approved' && !applicantIsEmployer) {
       try {
         const config = await getGlobalConfig();
         const fromDate = new Date(leave.from + 'T00:00:00');

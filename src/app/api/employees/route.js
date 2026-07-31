@@ -90,6 +90,11 @@ export async function POST(req) {
 
     const validated = validation.data;
 
+    if (validated.role === 'super_admin' && user.role !== 'super_admin') {
+      auditLog('Employee Create Failed', 'Employees', user._id, 'Attempted to create a super_admin account', 'medium', ip, null, user._id);
+      return fail('Only the employer can create employer accounts', 403);
+    }
+
     const existingUser = await User.findOne({ email: validated.email });
     if (existingUser) {
       auditLog('Employee Create Failed', 'Employees', user._id, `Email already exists: ${validated.email}`, 'medium', ip, null, user._id);

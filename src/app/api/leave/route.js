@@ -7,7 +7,7 @@ import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
-import { MANAGER_ROLES } from '@/lib/permissions';
+import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
 import { getDepartmentUserIds } from '@/lib/rbac';
 
 export async function GET(req) {
@@ -116,6 +116,34 @@ export async function POST(req) {
     if (holidayOverlap) {
       auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
       return fail(`Cannot apply leave from ${fmtDate(from)} to ${fmtDate(to)} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${fmtDate(holidayOverlap.date)}.`, 400);
+    }
+
+    // ── Employer Flow (auto-approved; no policy/balance/workflow) ──
+    if (isEmployer(user.role)) {
+      const leaveDays = halfDay ? 0.5 : days;
+
+      const leave = await Leave.create({
+        userId: user._id,
+        typeCode,
+        type: typeCode,
+        from,
+        to,
+        days: leaveDays,
+        paidDays: leaveDays,
+        unpaidDays: 0,
+        halfDay,
+        halfDayType: halfDay ? halfDayType : null,
+        reason,
+        documents,
+        status: 'approved',
+        balanceApplied: true,
+        adminApproval: 'approved',
+        teamAdminApproval: 'approved',
+        tlApproval: 'approved',
+      });
+
+      await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${leaveDays} days of ${typeCode} (${from} to ${to})`, 'low', ip, null, user._id);
+      return ok(leave, 201);
     }
 
     // ── SME Flow ──

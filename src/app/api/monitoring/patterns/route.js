@@ -21,7 +21,7 @@ export async function GET(req) {
     const end = new Date();
     const endDate = toKey(end);
     const startDate = toKey(new Date(end.getTime() - 60 * DAY_MS));
-    const employeeQuery = { status: 'active' };
+    const employeeQuery = { status: 'active', role: { $ne: 'super_admin' } };
     const scopedIds = await getDepartmentUserIds(user);
     if (scopedIds !== null) employeeQuery.userId = { $in: scopedIds };
     const employees = await Employee.find(employeeQuery).select('userId name department').lean();

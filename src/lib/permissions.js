@@ -3,6 +3,8 @@
  */
 export const ADMIN_ROLES = ['super_admin', 'admin_full'];
 export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_admin'];
+export const EMPLOYER_ROLES = ['super_admin'];
+export const isEmployer = role => EMPLOYER_ROLES.includes(role);
 
 // ── Module access matrix ──────────────────────────────────────────────────────
 // Values: 'full' | 'limited' | 'self' | 'dept' | 'team' | 'assigned' | false

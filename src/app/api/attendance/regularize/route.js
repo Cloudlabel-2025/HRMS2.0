@@ -9,6 +9,7 @@ import { getDepartmentUserIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
+import { isEmployer } from '@/lib/permissions';
 
 export async function GET(req) {
   try {
@@ -64,6 +65,7 @@ export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
+    if (isEmployer(user.role)) return fail('Employer accounts do not track attendance', 403);
     await connectDB();
 
     const body = await req.json();

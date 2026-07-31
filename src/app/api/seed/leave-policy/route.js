@@ -3,6 +3,7 @@ import User from '@/lib/models/User';
 import { LeavePolicy, UserLeaveBalance } from '@/lib/models';
 import { ok, fail } from '@/lib/jwt';
 import { requireAuth } from '@/lib/middleware';
+import { EMPLOYER_ROLES } from '@/lib/permissions';
 
 export async function POST(req) {
   try {
@@ -76,7 +77,7 @@ export async function POST(req) {
     );
 
     // Create UserLeaveBalance for all active users who don't have one yet
-    const users = await User.find({ status: 'active' }).select('_id');
+    const users = await User.find({ status: 'active', role: { $nin: EMPLOYER_ROLES } }).select('_id');
     const now = new Date();
     const cycleStart = new Date(now.getFullYear(), 0, 1);
     const cycleEnd = new Date(now.getFullYear(), 11, 31);

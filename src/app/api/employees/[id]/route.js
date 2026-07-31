@@ -64,6 +64,11 @@ export async function PUT(req, { params }) {
     validated = validation.data;
   }
 
+  if (validated.role === 'super_admin' && user.role !== 'super_admin') {
+    auditLog('Employee Update Failed', 'Employees', user._id, 'Attempted to set role to super_admin', 'medium', ip, null, existing.userId);
+    return fail('Only the employer can create employer accounts', 403);
+  }
+
   // Track changes for audit log
   const changes = [];
   Object.keys(validated).forEach(key => {

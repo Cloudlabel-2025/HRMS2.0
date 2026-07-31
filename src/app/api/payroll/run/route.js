@@ -6,6 +6,7 @@ import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, g
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { isEmployer } from '@/lib/permissions';
 
 export async function POST(req) {
   try {
@@ -47,33 +48,43 @@ export async function POST(req) {
       const structure = await SalaryStructure.findOne({ userId: emp._id });
       if (!structure) continue;
 
-      const records = await Attendance.find({
-        userId: emp._id,
-        date: { $gte: fromDate, $lte: toDate },
-      });
-      const presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
+      let presentDays;
+      let lopDays;
+      let unpaidLeaves;
 
-      const { default: Leave } = await import('@/lib/models/Leave');
-      const approvedLeaves = await Leave.find({
-        userId: emp._id,
-        status: 'approved',
-        from: { $lte: toDate },
-        to: { $gte: fromDate },
-      });
+      if (isEmployer(emp.role)) {
+        presentDays = workingDays;
+        lopDays = 0;
+        unpaidLeaves = 0;
+      } else {
+        const records = await Attendance.find({
+          userId: emp._id,
+          date: { $gte: fromDate, $lte: toDate },
+        });
+        presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
 
-      const paidLeaveDays = approvedLeaves
-        .filter(l => l.typeCode !== 'LOP' && l.type !== 'Loss of Pay')
-        .reduce((sum, l) => sum + (l.paidDays || l.days), 0);
+        const { default: Leave } = await import('@/lib/models/Leave');
+        const approvedLeaves = await Leave.find({
+          userId: emp._id,
+          status: 'approved',
+          from: { $lte: toDate },
+          to: { $gte: fromDate },
+        });
 
-      const autoLopDays = approvedLeaves.reduce((sum, l) => sum + (l.unpaidDays || 0), 0);
-      const lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays)) + autoLopDays;
+        const paidLeaveDays = approvedLeaves
+          .filter(l => l.typeCode !== 'LOP' && l.type !== 'Loss of Pay')
+          .reduce((sum, l) => sum + (l.paidDays || l.days), 0);
+
+        const autoLopDays = approvedLeaves.reduce((sum, l) => sum + (l.unpaidDays || 0), 0);
+        lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays)) + autoLopDays;
+      }
 
       const result = calculatePayroll({
         grossLPA: structure.grossLPA,
         totalDaysInMonth: calendarStats.totalDays,
         sundaysInMonth: calendarStats.sundays,
         alternateSaturdaysInMonth: calendarStats.alternateSaturdays,
-        unpaidLeavesTaken: lopDays,
+        unpaidLeavesTaken: unpaidLeaves,
         workingDays,
       });
 

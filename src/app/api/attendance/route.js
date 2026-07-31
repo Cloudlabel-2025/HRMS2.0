@@ -12,6 +12,7 @@ import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, determineStatus } from '@/lib/attendance-constants';
 import { getBreakMaxCount, getBreakTypes } from '@/lib/attendance-breaks';
 import { getDepartmentUserIds } from '@/lib/rbac';
+import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 
 async function getShiftAwareToday(targetUserId) {
@@ -41,9 +42,13 @@ export async function GET(req) {
     const month  = searchParams.get('month');
     const scope  = searchParams.get('scope');
 
+    const employerIds = (await User.find({ role: 'super_admin' }).select('_id').lean()).map(u => u._id);
+    const employerIdSet = new Set(employerIds.map(id => id.toString()));
+
     const query = {};
 
     if (scope === 'my') {
+      if (isEmployer(user.role)) return ok({ items: [], summary: {} });
       query.userId = user._id;
     } else if (scope === 'team') {
       if (!canViewDailyProgress(user)) return fail('Access denied', 403);
@@ -53,6 +58,12 @@ export async function GET(req) {
         query.userId = userId;
       } else if (ids) {
         query.userId = { $in: ids };
+      }
+      if (query.userId) {
+        query.$and = [{ userId: query.userId }, { userId: { $nin: employerIds } }];
+        delete query.userId;
+      } else {
+        query.userId = { $nin: employerIds };
       }
       // admins (ids === null) see all — no userId filter
     } else if (userId) {
@@ -98,9 +109,10 @@ export async function GET(req) {
     // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer)
     for (const rec of raw) {
       if (!rec.clockIn || rec.clockOut) continue;
+      if (employerIdSet.has(rec.userId?._id?.toString())) continue;
       const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
       const cfg = getShiftConfig(shiftDoc, config);
-      if (await checkAndApplyAutoLogout(rec, now, cfg, shiftDoc)) {
+      if (await checkAndApplyAutoLogout(rec, now, cfg, shiftDoc, employerIdSet.has(rec.userId?._id?.toString()))) {
         await Attendance.findByIdAndUpdate(rec._id, {
           clockOut: rec.clockOut,
           autoLoggedOut: rec.autoLoggedOut,
@@ -117,6 +129,7 @@ export async function GET(req) {
     // so that records created by previous buggy clock logic get corrected
     for (const rec of raw) {
       if (!rec.clockIn) continue;
+      if (employerIdSet.has(rec.userId?._id?.toString())) continue;
       const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
       const cfg = getShiftConfig(shiftDoc, config);
 
@@ -207,6 +220,9 @@ export async function POST(req) {
 
     const body = await req.json();
     const targetUserId = body.userId || user._id;
+    if (isEmployer(user.role) && targetUserId.toString() === user._id.toString()) {
+      return fail('Employer accounts do not track attendance', 403);
+    }
     let today = await getShiftAwareToday(targetUserId);
     if (!today) {
       const now = await getTzTime();

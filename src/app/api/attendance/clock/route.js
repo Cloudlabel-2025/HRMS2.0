@@ -12,12 +12,14 @@ import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
 import { calculateBreakDeduction, getBreakAllowance } from '@/lib/attendance-breaks';
+import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 
 export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
+    if (isEmployer(user.role)) return fail('Employer accounts do not track attendance', 403);
     await connectDB();
 
     const body = await req.json();
@@ -53,7 +55,7 @@ export async function POST(req) {
     if (action === 'in') {
       const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null });
       if (openRecord) {
-        if (await checkAndApplyAutoLogout(openRecord, now, cfg, shiftDoc)) {
+        if (await checkAndApplyAutoLogout(openRecord, now, cfg, shiftDoc, isEmployer(user.role))) {
           await openRecord.save();
         } else {
           auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active`, 'low', ip, null, user._id);

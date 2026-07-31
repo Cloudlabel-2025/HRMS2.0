@@ -25,9 +25,11 @@ export async function GET(req) {
     if (status) query.status = status;
 
     let records = await Attendance.find(query)
-      .populate('userId', 'name email department designation shift')
+      .populate('userId', 'name email department designation shift role')
       .sort({ date: -1 })
       .lean();
+
+    records = records.filter(r => r.userId?.role !== 'super_admin');
 
     if (department) {
       records = records.filter(r => r.userId?.department === department);

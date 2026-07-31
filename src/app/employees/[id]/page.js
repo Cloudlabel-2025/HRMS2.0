@@ -17,7 +17,7 @@ const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
   { key: 'personal',    label: 'Personal Info',  icon: 'bi-card-personal' },
   { key: 'attendance',  label: 'Attendance',     icon: 'bi-clock-history' },
-  { key: 'workprogress',label: 'Work Progress',  icon: 'bi-list-check' },
+  { key: 'workprogress',label: 'Daily Work Sheet',icon: 'bi-list-check' },
   { key: 'assets',      label: 'Assets & Docs',  icon: 'bi-box-seam' },
   { key: 'payroll',     label: 'Payroll',        icon: 'bi-cash-stack' },
   { key: 'audit',       label: 'Audit Log',      icon: 'bi-shield-check' },
@@ -980,7 +980,7 @@ export default function EmployeeProfilePage() {
                 <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #6366f115, #4f46e508)', border: '1px solid #6366f110', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <i className="bi bi-list-check" style={{ color: '#6366f1', fontSize: 15 }} />
                 </div>
-                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>Work Progress</span>
+                <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>Daily Work Sheet</span>
               </div>
               <button className="btn btn-sm" style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 600 }}
                 onClick={handleWpDownload} disabled={filteredCycles.length === 0}>

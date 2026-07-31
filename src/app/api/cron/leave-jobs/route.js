@@ -1,7 +1,9 @@
 import dbConnect from '@/lib/db';
 import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
+import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
 import { notifyExpiredProbations } from '@/lib/core/probation';
+import { EMPLOYER_ROLES } from '@/lib/permissions';
 
 export async function POST(req) {
   const cronSecret = process.env.CRON_SECRET;
@@ -24,7 +26,9 @@ export async function POST(req) {
     const now = new Date();
     const cycleStart = new Date(now.getFullYear(), 0, 1);
     const currentMonth = now.getMonth();
-    const allBalances = await UserLeaveBalance.find({ cycleStart });
+    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
+    const employerIds = employers.map(u => u._id);
+    const allBalances = await UserLeaveBalance.find({ cycleStart, userId: { $nin: employerIds } });
     let processed = 0;
 
     for (const bal of allBalances) {
@@ -77,7 +81,7 @@ export async function POST(req) {
     const nextCycleStart = new Date(now.getFullYear() + 1, 0, 1);
     const nextCycleEnd = new Date(now.getFullYear() + 1, 11, 31);
 
-    const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart });
+    const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart, userId: { $nin: employerIds } });
 
     let processed = 0;
     for (const bal of allBalances) {
