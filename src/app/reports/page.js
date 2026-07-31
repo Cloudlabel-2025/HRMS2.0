@@ -4,6 +4,7 @@ import { useAuth, canAccessDepartment } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import { Chart, registerables } from 'chart.js';
+import { useSettings } from '@/lib/settings';
 Chart.register(...registerables);
 
 const REPORT_TYPES = [
@@ -18,6 +19,7 @@ const REPORT_TYPES = [
 
 const SHOW_DEPT = { attendance: true, leave: true, payroll: true, tasks: true, performance: true };
 const SHOW_MONTH = { attendance: true, leave: true, payroll: true, performance: true, finance: true };
+const DATE_COLS = new Set(['Start', 'End', 'Hire Date', 'Issued', 'Due', 'Due Date']);
 
 function BarChart({ labels, datasets }) {
   const ref = useRef(null);
@@ -59,6 +61,7 @@ function LineChart({ labels, datasets }) {
 
 export default function ReportsPage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [activeReport, setActiveReport] = useState('attendance');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -226,7 +229,7 @@ export default function ReportsPage() {
                   <thead><tr>{data.columns?.map(c => <th key={c}>{c}</th>)}</tr></thead>
                   <tbody>
                     {data.rows.map((row, i) => (
-                      <tr key={i}>{data.columns?.map(c => <td key={c} style={{ fontSize: 13 }}>{row[c] ?? '—'}</td>)}</tr>
+                      <tr key={i}>{data.columns?.map(c => <td key={c} style={{ fontSize: 13 }}>{DATE_COLS.has(c) && /^\d{4}-\d{2}-\d{2}$/.test(row[c]) ? formatDate(row[c]) : (row[c] ?? '—')}</td>)}</tr>
                     ))}
                   </tbody>
                 </table>

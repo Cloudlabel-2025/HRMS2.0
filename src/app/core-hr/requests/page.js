@@ -22,7 +22,7 @@ const STATUS_STYLE = {
   cancelled: { bg: '#f1f5f9', color: '#64748b' },
 };
 
-function PayloadView({ requestType, payload }) {
+function PayloadView({ requestType, payload, formatTime }) {
   if (!payload) return <p className="text-muted small">No payload data.</p>;
 
   if (requestType === 'profile_update') {
@@ -104,8 +104,8 @@ function PayloadView({ requestType, payload }) {
         <div className="row g-2">
           {[
             ['Permission Date', payload.date],
-            ['Start Time', payload.startTime],
-            ['End Time', payload.endTime],
+            ['Start Time', formatTime(payload.startTime) || null],
+            ['End Time', formatTime(payload.endTime) || null],
             ['Duration', `${payload.duration} mins`],
             ['Requests this cycle', `${payload.permissionCountInCycle || 1}`],
           ].map(([label, val]) => (
@@ -129,7 +129,7 @@ function PayloadView({ requestType, payload }) {
 
 export default function CoreHrRequestsPage() {
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatTime } = useSettings();
   const [requests, setRequests] = useState([]);
   const [filterStatus, setFilterStatus] = useState('pending');
   const [selected, setSelected] = useState(null);
@@ -302,7 +302,7 @@ export default function CoreHrRequestsPage() {
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>REQUESTED CHANGES</div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <PayloadView requestType={selected.requestType} payload={selected.payload} />
+                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} />
                 </div>
               </div>
 

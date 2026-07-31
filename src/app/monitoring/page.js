@@ -2,7 +2,9 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 
 const STATUS_STYLE = {
@@ -40,6 +42,7 @@ function totalBreakDuration(breaks, type) {
 
 export default function MonitoringPage() {
   const { user } = useAuth();
+  const { formatTime } = useSettings();
   const [team, setTeam] = useState([]);
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -166,8 +169,8 @@ export default function MonitoringPage() {
 
       const alertList = [];
       for (const emp of teamArr) {
-        if (emp.lateFlag) alertList.push({ type: 'late', icon: 'bi-clock', color: '#f59e0b', text: `${emp.name} logged in late (${emp.clockIn})`, time: emp.clockIn });
-        if (emp.autoLoggedOut) alertList.push({ type: 'auto_logout', icon: 'bi-clock-history', color: '#f59e0b', text: `${emp.name} was auto-logged out at ${emp.clockOut}`, time: emp.clockOut });
+        if (emp.lateFlag) alertList.push({ type: 'late', icon: 'bi-clock', color: '#f59e0b', text: `${emp.name} logged in late (${formatTime(emp.clockIn)})`, time: emp.clockIn });
+        if (emp.autoLoggedOut) alertList.push({ type: 'auto_logout', icon: 'bi-clock-history', color: '#f59e0b', text: `${emp.name} was auto-logged out at ${formatTime(emp.clockOut)}`, time: emp.clockOut });
       }
 
       setTeam(teamArr);
@@ -325,10 +328,10 @@ export default function MonitoringPage() {
                           </div>
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, fontSize: 11, color: '#64748b' }}>
-                          <span><i className="bi bi-box-arrow-in-right me-1" />Login: {emp.clockIn}</span>
+                          <span><i className="bi bi-box-arrow-in-right me-1" />Login: {formatTime(emp.clockIn)}</span>
                           <span><i className="bi bi-cup-hot me-1" />Break: {breakTotal}</span>
                           <span><i className="bi bi-egg-fried me-1" />Lunch: {lunchTotal}</span>
-                          <span><i className="bi bi-box-arrow-right me-1" />Logout: {emp.clockOut}</span>
+                          <span><i className="bi bi-box-arrow-right me-1" />Logout: {formatTime(emp.clockOut)}</span>
                         </div>
                         {emp.lateFlag && (
                           <div style={{ marginTop: 8, fontSize: 11, color: '#d97706', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -407,8 +410,8 @@ export default function MonitoringPage() {
                           <td>{i + 1}</td>
                           <td><span className={`badge ${wp.type === 'break' ? 'bg-warning' : wp.type === 'lunch' ? 'bg-info' : 'bg-primary'}`} style={{ fontSize: 10 }}>{wp.type}</span></td>
                           <td style={{ maxWidth: 200, wordBreak: 'break-word' }}>{wp.taskDetails || '—'}</td>
-                          <td>{wp.startTime || '—'}</td>
-                          <td>{wp.endTime || '—'}</td>
+                          <td><Time value={wp.startTime} fallback="—" /></td>
+                          <td><Time value={wp.endTime} fallback="—" /></td>
                           <td>
                             <span className={`badge ${
                               wp.status === 'completed' ? 'bg-success' :

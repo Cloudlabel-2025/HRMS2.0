@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Time from '@/components/Time';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
@@ -16,19 +17,19 @@ function formatDuration(seconds) {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-function toCsvRows(cycles) {
+function toCsvRows(cycles, formatTime) {
   const rows = [['Cycle', 'Date', 'Status', 'Clock In', 'Clock Out', 'Hours', '#', 'Type', 'Task Details', 'Start Time', 'End Time', 'Task Status', 'Remarks', 'Feedback']];
   for (const cycle of cycles) {
     for (const d of cycle.dates) {
       if (!d.workProgress?.length) {
-        rows.push([cycle.label, d.date, d.status, d.clockIn || '', d.clockOut || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']);
+        rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']);
         continue;
       }
       for (let i = 0; i < d.workProgress.length; i++) {
         const wp = d.workProgress[i];
         rows.push([
-          cycle.label, d.date, d.status, d.clockIn || '', d.clockOut || '', formatMins(d.hoursWorked),
-          String(i + 1), wp.type || 'task', wp.taskDetails || '', wp.startTime || '', wp.endTime || '',
+          cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked),
+          String(i + 1), wp.type || 'task', wp.taskDetails || '', formatTime(wp.startTime) || '', formatTime(wp.endTime) || '',
           wp.status || '', wp.remarks || '', wp.feedback || '',
         ]);
       }
@@ -93,7 +94,7 @@ export default function WorkProgressPage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatTime } = useSettings();
 
   const [cycles, setCycles] = useState([]);
   const [employee, setEmployee] = useState(null);
@@ -207,7 +208,7 @@ export default function WorkProgressPage() {
   }, [filteredCycles]);
 
   const handleDownload = () => {
-    const rows = toCsvRows(filteredCycles);
+    const rows = toCsvRows(filteredCycles, formatTime);
     const entryCount = rows.length - 1; // minus header
 
     if (entryCount <= 5) {
@@ -393,10 +394,10 @@ export default function WorkProgressPage() {
                               {dateEntry.status}
                             </span>
                             <div style={{ fontSize: 13, color: '#64748b' }}>
-                              <i className="bi bi-box-arrow-in-right me-1" />{dateEntry.clockIn || '--'}
+                              <i className="bi bi-box-arrow-in-right me-1" />{formatTime(dateEntry.clockIn) || '--'}
                             </div>
                             <div style={{ fontSize: 13, color: '#64748b' }}>
-                              <i className="bi bi-box-arrow-right me-1" />{dateEntry.clockOut || '--'}
+                              <i className="bi bi-box-arrow-right me-1" />{formatTime(dateEntry.clockOut) || '--'}
                             </div>
                             <div style={{ fontSize: 13, color: '#64748b' }}>
                               <i className="bi bi-clock me-1" />{formatMins(dateEntry.hoursWorked)}
@@ -450,8 +451,8 @@ export default function WorkProgressPage() {
                                                   </span>
                                                 )}
                                               </td>
-                                              <td style={{ fontSize: 13, fontWeight: 600 }}>{wp.startTime || '--'}</td>
-                                              <td style={{ fontSize: 13, fontWeight: 600 }}>{wp.endTime || '--'}</td>
+                                              <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={wp.startTime} fallback="--" /></td>
+                                              <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={wp.endTime} fallback="--" /></td>
                                               <td>
                                                 <span style={{
                                                   fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,

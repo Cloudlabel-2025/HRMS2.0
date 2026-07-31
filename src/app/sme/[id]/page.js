@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import { useSettings } from '@/lib/settings';
 
 function InfoRow({ icon, label, value }) {
   if (!value && value !== 0) return null;
@@ -37,6 +38,7 @@ export default function SMEProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [sme, setSme] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
@@ -137,7 +139,7 @@ export default function SMEProfilePage() {
             <InfoRow icon="bi-person" label="Full Name" value={sme.name} />
             <InfoRow icon="bi-envelope" label="Email" value={sme.email} />
             <InfoRow icon="bi-telephone" label="Phone" value={sme.phone} />
-            <InfoRow icon="bi-cake" label="Date of Birth" value={sme.dob ? new Date(sme.dob).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null} />
+            <InfoRow icon="bi-cake" label="Date of Birth" value={sme.dob ? formatDate(sme.dob) : null} />
             <InfoRow icon="bi-credit-card-2-front" label="PAN Number" value={sme.pan} />
             <InfoRow icon="bi-stars" label="Expertise" value={Array.isArray(sme.expertise) && sme.expertise.length ? sme.expertise.join(', ') : null} />
             <InfoRow icon="bi-building" label="Departments" value={Array.isArray(sme.departments) && sme.departments.length ? sme.departments.join(', ') : null} />
@@ -153,9 +155,9 @@ export default function SMEProfilePage() {
 
           <Section title="Contract & Rate">
             <InfoRow icon="bi-cash-stack" label="Rate" value={sme.rate?.amount > 0 ? `₹${sme.rate.amount}/${sme.rate.type === 'hourly' ? 'hr' : sme.rate.type === 'daily' ? 'day' : sme.rate.type}` : null} />
-            <InfoRow icon="bi-calendar-check" label="Contract Start" value={sme.contractStart ? new Date(sme.contractStart).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null} />
-            <InfoRow icon="bi-calendar-x" label="Contract End" value={sme.contractEnd ? new Date(sme.contractEnd).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null} />
-            <InfoRow icon="bi-clock" label="Created" value={sme.createdAt ? new Date(sme.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) : null} />
+            <InfoRow icon="bi-calendar-check" label="Contract Start" value={sme.contractStart ? formatDate(sme.contractStart) : null} />
+            <InfoRow icon="bi-calendar-x" label="Contract End" value={sme.contractEnd ? formatDate(sme.contractEnd) : null} />
+            <InfoRow icon="bi-clock" label="Created" value={sme.createdAt ? formatDate(sme.createdAt) : null} />
           </Section>
         </div>
       </div>

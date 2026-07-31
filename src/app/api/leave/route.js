@@ -5,6 +5,7 @@ import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
+import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
 
 export async function GET(req) {
@@ -78,6 +79,14 @@ export async function POST(req) {
 
     const { typeCode, from, to, halfDay, halfDayType, reason, documents } = validation.data;
 
+    const config = await getGlobalConfig();
+    const fmtDate = t => {
+      if (!t) return '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+      const [y, m, d] = t.split('-');
+      return config?.dateFormat === 'MM/DD/YYYY' ? `${m}/${d}/${y}` : config?.dateFormat === 'YYYY-MM-DD' ? `${y}-${m}-${d}` : `${d}/${m}/${y}`;
+    };
+
     // Calculate days
     let fromDate = new Date(from);
     let toDate = new Date(to);
@@ -92,7 +101,7 @@ export async function POST(req) {
     });
     if (overlap) {
       auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
-      return fail(`You already have a ${overlap.status} leave from ${overlap.from} to ${overlap.to} that overlaps with the requested dates.`, 400);
+      return fail(`You already have a ${overlap.status} leave from ${fmtDate(overlap.from)} to ${fmtDate(overlap.to)} that overlaps with the requested dates.`, 400);
     }
 
     // Check holiday overlap
@@ -101,7 +110,7 @@ export async function POST(req) {
     });
     if (holidayOverlap) {
       auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
-      return fail(`Cannot apply leave from ${from} to ${to} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${holidayOverlap.date}.`, 400);
+      return fail(`Cannot apply leave from ${fmtDate(from)} to ${fmtDate(to)} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${fmtDate(holidayOverlap.date)}.`, 400);
     }
 
     // ── SME Flow ──
@@ -111,7 +120,7 @@ export async function POST(req) {
       if (!sme) return fail('SME profile not found', 404);
       if (sme.status !== 'active') return fail('Your account is inactive. Contact admin.', 400);
       if (sme.contractEnd && new Date(to) > new Date(sme.contractEnd)) {
-        return fail(`Cannot apply leave beyond contract end date (${new Date(sme.contractEnd).toLocaleDateString()})`, 400);
+        return fail(`Cannot apply leave beyond contract end date (${fmtDate(sme.contractEnd)})`, 400);
       }
 
       const existing = await Leave.findOne({ userId: user._id, status: 'pending' });

@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import Time from '@/components/Time';
 import { formatMins } from '@/lib/format';
 import { canAccessDepartment } from '@/lib/auth';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
@@ -69,7 +70,7 @@ export default function EmployeeProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate, formatDateTime, formatTime } = useSettings();
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -257,10 +258,10 @@ export default function EmployeeProfilePage() {
     const rows = [['Cycle', 'Date', 'Status', 'Clock In', 'Clock Out', 'Hours', '#', 'Type', 'Task Details', 'Start Time', 'End Time', 'Task Status', 'Remarks', 'Feedback']];
     for (const cycle of cycles) {
       for (const d of cycle.dates) {
-        if (!d.workProgress?.length) { rows.push([cycle.label, d.date, d.status, d.clockIn || '', d.clockOut || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']); continue; }
+        if (!d.workProgress?.length) { rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']); continue; }
         for (let i = 0; i < d.workProgress.length; i++) {
           const wp = d.workProgress[i];
-          rows.push([cycle.label, d.date, d.status, d.clockIn || '', d.clockOut || '', formatMins(d.hoursWorked), String(i + 1), wp.type || 'task', wp.taskDetails || '', wp.startTime || '', wp.endTime || '', wp.status || '', wp.remarks || '', wp.feedback || '']);
+          rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), String(i + 1), wp.type || 'task', wp.taskDetails || '', formatTime(wp.startTime) || '', formatTime(wp.endTime) || '', wp.status || '', wp.remarks || '', wp.feedback || '']);
         }
       }
     }
@@ -737,8 +738,8 @@ export default function EmployeeProfilePage() {
                           onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                           <td style={{ padding: '12px 16px', fontSize: 13.5, fontWeight: 600, color: '#0f172a', borderBottom: '1px solid #f1f5f9' }}>{l.type}</td>
-                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{l.from}</td>
-                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{l.to}</td>
+                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{formatDate(l.from)}</td>
+                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{formatDate(l.to)}</td>
                           <td style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9' }}><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b', fontSize: 12, padding: '4px 10px', borderRadius: 8 }}>{l.days}d</span></td>
                           <td style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9' }}><span className={`badge status-${l.status}`} style={{ borderRadius: 8, fontSize: 12, padding: '4px 10px' }}>{l.status}</span></td>
                         </tr>
@@ -778,8 +779,8 @@ export default function EmployeeProfilePage() {
                           onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
                           <td style={{ padding: '12px 16px', fontSize: 13.5, fontWeight: 600, color: '#0f172a', borderBottom: '1px solid #f1f5f9' }}>{formatDate(a.date)}</td>
-                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{a.clockIn || <span style={{ color: '#cbd5e1' }}>—</span>}</td>
-                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{a.clockOut || <span style={{ color: '#cbd5e1' }}>—</span>}</td>
+                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={a.clockIn} fallback={<span style={{ color: '#cbd5e1' }}>—</span>} /></td>
+                          <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={a.clockOut} fallback={<span style={{ color: '#cbd5e1' }}>—</span>} /></td>
                           <td style={{ padding: '12px 16px', fontSize: 13, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{a.hoursWorked ? `${Math.floor(a.hoursWorked / 60)}h ${a.hoursWorked % 60}m` : <span style={{ color: '#cbd5e1' }}>—</span>}</td>
                           <td style={{ padding: '12px 16px', borderBottom: '1px solid #f1f5f9' }}>
                             <span className={`badge status-${a.status}`} style={{ borderRadius: 8, fontSize: 12, padding: '4px 10px' }}>{a.status}</span>
@@ -1071,8 +1072,8 @@ export default function EmployeeProfilePage() {
                                 <span className="badge" style={{ background: (STATUS_STYLE[dateEntry.status] || STATUS_STYLE.present).bg, color: (STATUS_STYLE[dateEntry.status] || STATUS_STYLE.present).color, fontSize: 10.5, fontWeight: 600, borderRadius: 8 }}>
                                   {dateEntry.status}
                                 </span>
-                                <span style={{ fontSize: 12.5, color: '#64748b' }}><i className="bi bi-box-arrow-in-right me-1" />{dateEntry.clockIn || '--'}</span>
-                                <span style={{ fontSize: 12.5, color: '#64748b' }}><i className="bi bi-box-arrow-right me-1" />{dateEntry.clockOut || '--'}</span>
+                                <span style={{ fontSize: 12.5, color: '#64748b' }}><i className="bi bi-box-arrow-in-right me-1" />{formatTime(dateEntry.clockIn) || '--'}</span>
+                                <span style={{ fontSize: 12.5, color: '#64748b' }}><i className="bi bi-box-arrow-right me-1" />{formatTime(dateEntry.clockOut) || '--'}</span>
                                 <span style={{ fontSize: 12.5, color: '#64748b' }}><i className="bi bi-clock me-1" />{formatMins(dateEntry.hoursWorked)}</span>
                                 <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                                   <span style={{ fontSize: 12, color: '#94a3b8' }}>{dateEntry.workProgress?.length || 0} task{dateEntry.workProgress?.length !== 1 ? 's' : ''}</span>
@@ -1114,8 +1115,8 @@ export default function EmployeeProfilePage() {
                                                       <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b' }}>{wp.taskDetails || '—'}</span>
                                                     )}
                                                   </td>
-                                                  <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{wp.startTime || '--'}</td>
-                                                  <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{wp.endTime || '--'}</td>
+                                                  <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={wp.startTime} fallback="--" /></td>
+                                                  <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={wp.endTime} fallback="--" /></td>
                                                   <td style={{ padding: '8px 12px', borderBottom: '1px solid #f1f5f9' }}>
                                                     <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: st.bg, color: st.color, textTransform: 'capitalize' }}>
                                                       {wp.status?.replace(/_/g, ' ') || 'pending'}
@@ -1254,7 +1255,7 @@ export default function EmployeeProfilePage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Shift</label>
                     <select className="form-select" value={editForm.shift || ''} onChange={e => setEditForm(p => ({ ...p, shift: e.target.value }))}>
                       <option value="">Select Shift</option>
-                      {shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${s.startTime}–${s.endTime})` : ''}</option>)}
+                      {shifts.map(s => <option key={s._id} value={s.name}>{s.name}{s.startTime && s.endTime ? ` (${formatTime(s.startTime)}–${formatTime(s.endTime)})` : ''}</option>)}
                     </select>
                   </div>
                   <div className="col-md-6">

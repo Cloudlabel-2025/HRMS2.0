@@ -71,7 +71,7 @@ function hrMinToMinutes(hours, minutes) {
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const { formatDate, updateSettings } = useSettings();
+  const { formatDate, formatTime, updateSettings } = useSettings();
   const [tab, setTab]               = useState('general');
   const [departments, setDepartments] = useState([]);
   const [roles, setRoles]           = useState([]);
@@ -519,7 +519,7 @@ export default function SettingsPage() {
                         </div>
                         <div style={{ fontSize: 13, color: '#64748b' }}>
                           <i className="bi bi-clock me-2" />
-                          {s.startTime && s.endTime ? `${s.startTime} – ${s.endTime}` : 'No timing set'}
+                          {s.startTime && s.endTime ? `${formatTime(s.startTime)} – ${formatTime(s.endTime)}` : 'No timing set'}
                         </div>
                         {Array.isArray(s.breaks) && s.breaks.length > 0 && (
                           <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>

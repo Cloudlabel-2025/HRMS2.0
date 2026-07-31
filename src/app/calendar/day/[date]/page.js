@@ -3,17 +3,15 @@ import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Time from '@/components/Time';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-function formatTime(d) {
-  if (!d) return null;
-  return new Date(d).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-}
-
 export default function DayActivityPage() {
   const { user } = useAuth();
+  const { formatTime, formatDate, formatDateTime } = useSettings();
   const router = useRouter();
   const { date } = useParams();
   const [loading, setLoading] = useState(true);
@@ -192,7 +190,7 @@ export default function DayActivityPage() {
                           {a.createdAt && (
                             <span style={{ fontSize: 10, color: '#94a3b8' }}>
                               <i className="bi bi-clock me-1" />
-                              {new Date(a.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                              {formatDateTime(a.createdAt)}
                             </span>
                           )}
                         </div>
@@ -235,11 +233,11 @@ export default function DayActivityPage() {
                   <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
                     <div>
                       <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>Clock In</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginTop: 2 }}>{data.attendance.clockIn || '—'}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginTop: 2 }}><Time value={data.attendance.clockIn} fallback="—" /></div>
                     </div>
                     <div>
                       <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>Clock Out</div>
-                      <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginTop: 2 }}>{data.attendance.clockOut || '—'}</div>
+                      <div style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', marginTop: 2 }}><Time value={data.attendance.clockOut} fallback="—" /></div>
                     </div>
                     <div>
                       <div style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600 }}>Hours Worked</div>
@@ -282,7 +280,7 @@ export default function DayActivityPage() {
                           {wp.type === 'break' ? 'Break' : wp.type === 'lunch' ? 'Lunch' : wp.taskDetails || 'Task'}
                         </div>
                         <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: '#64748b' }}>
-                          {wp.startTime && <span>{wp.startTime}{wp.endTime ? ` - ${wp.endTime}` : ''}</span>}
+                          {wp.startTime && <span>{formatTime(wp.startTime)}{wp.endTime ? ` - ${formatTime(wp.endTime)}` : ''}</span>}
                         </div>
                         <span className="badge" style={{
                           background: wp.status === 'completed' ? '#dcfce7' :
@@ -388,7 +386,7 @@ export default function DayActivityPage() {
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>{l.type} Leave</div>
                         <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                          {l.from === l.to ? l.from : `${l.from} to ${l.to}`} ({l.days} day{l.days > 1 ? 's' : ''})
+                          {l.from === l.to ? formatDate(l.from) : `${formatDate(l.from)} to ${formatDate(l.to)}`} ({l.days} day{l.days > 1 ? 's' : ''})
                         </div>
                         {l.reason && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{l.reason}</div>}
                         <span className="badge" style={{
@@ -545,7 +543,7 @@ export default function DayActivityPage() {
           </>
         )}
       </div>
-      {selectedEmployeeActivity && <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{selectedEmployeeActivity.employee.name} — {d}</h5><button className="btn-close" onClick={() => setSelectedEmployeeActivity(null)} /></div><div className="modal-body"><div className="row g-3 mb-3"><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Hours worked</div><strong>{((selectedEmployeeActivity.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>8-hour target</div><strong style={{ color: (selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? '#16a34a' : '#dc2626' }}>{(selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? 'Met' : 'Not met'}</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Clock times</div><strong>{selectedEmployeeActivity.attendance?.clockIn || '—'} – {selectedEmployeeActivity.attendance?.clockOut || '—'}</strong></div></div><div style={{ fontWeight: 700, marginBottom: 8 }}>Audit log</div>{selectedEmployeeActivity.logs.length ? selectedEmployeeActivity.logs.map(log => <div key={log._id} style={{ padding: '10px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</div><div style={{ fontSize: 12, color: '#64748b' }}>{log.details}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div></div>) : <div style={{ fontSize: 13, color: '#94a3b8' }}>No audit activity recorded for this day.</div>}</div></div></div></div>}
+      {selectedEmployeeActivity && <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{selectedEmployeeActivity.employee.name} — {d}</h5><button className="btn-close" onClick={() => setSelectedEmployeeActivity(null)} /></div><div className="modal-body"><div className="row g-3 mb-3"><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Hours worked</div><strong>{((selectedEmployeeActivity.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>8-hour target</div><strong style={{ color: (selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? '#16a34a' : '#dc2626' }}>{(selectedEmployeeActivity.attendance?.hoursWorked || 0) >= 480 ? 'Met' : 'Not met'}</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Clock times</div><strong>{formatTime(selectedEmployeeActivity.attendance?.clockIn) || '—'} – {formatTime(selectedEmployeeActivity.attendance?.clockOut) || '—'}</strong></div></div><div style={{ fontWeight: 700, marginBottom: 8 }}>Audit log</div>{selectedEmployeeActivity.logs.length ? selectedEmployeeActivity.logs.map(log => <div key={log._id} style={{ padding: '10px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</div><div style={{ fontSize: 12, color: '#64748b' }}>{log.details}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDateTime(log.createdAt)}</div></div>) : <div style={{ fontSize: 13, color: '#94a3b8' }}>No audit activity recorded for this day.</div>}</div></div></div></div>}
     </AppShell>
   );
 }

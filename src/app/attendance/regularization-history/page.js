@@ -15,7 +15,7 @@ const STATUS_STYLE = {
 
 export default function RegularizationHistoryPage() {
   const { user } = useAuth();
-  const { formatDate } = useSettings();
+  const { formatDate, formatTime, formatDateTime } = useSettings();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -261,16 +261,16 @@ export default function RegularizationHistoryPage() {
                         </td>
                       )}
                       <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
-                      <td style={{ fontSize: 13 }}>{r.requestedIn || '—'}</td>
-                      <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</td>
+                      <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn) || '—'}</td>
+                      <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                       <td style={{ fontSize: 13 }}>
                         {r.requestedBreakStart || r.requestedBreakEnd
-                          ? `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}`
+                          ? `${formatTime(r.requestedBreakStart) || '—'} → ${formatTime(r.requestedBreakEnd) || '—'}`
                           : '—'}
                       </td>
                       <td style={{ fontSize: 13 }}>
                         {r.requestedLunchStart || r.requestedLunchEnd
-                          ? `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}`
+                          ? `${formatTime(r.requestedLunchStart) || '—'} → ${formatTime(r.requestedLunchEnd) || '—'}`
                           : '—'}
                       </td>
                       <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason}</td>
@@ -281,7 +281,7 @@ export default function RegularizationHistoryPage() {
                         </span>
                       </td>
                       <td style={{ fontSize: 13 }}>{r.reviewedBy?.name || '—'}</td>
-                      <td style={{ fontSize: 13 }}>{r.reviewedAt ? new Date(r.reviewedAt).toLocaleString() : '—'}</td>
+                      <td style={{ fontSize: 13 }}>{r.reviewedAt ? formatDateTime(r.reviewedAt) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -303,15 +303,15 @@ export default function RegularizationHistoryPage() {
                   </span>
                 </div>
                 <div className="row g-2 mb-2">
-                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div></div>
-                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</div></div>
-                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedBreakStart || r.requestedBreakEnd ? `${r.requestedBreakStart || '—'} → ${r.requestedBreakEnd || '—'}` : '—'}</div></div>
-                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedLunchStart || r.requestedLunchEnd ? `${r.requestedLunchStart || '—'} → ${r.requestedLunchEnd || '—'}` : '—'}</div></div>
+                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{formatTime(r.requestedIn) || '—'}</div></div>
+                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</div></div>
+                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedBreakStart || r.requestedBreakEnd ? `${formatTime(r.requestedBreakStart) || '—'} → ${formatTime(r.requestedBreakEnd) || '—'}` : '—'}</div></div>
+                  <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedLunchStart || r.requestedLunchEnd ? `${formatTime(r.requestedLunchStart) || '—'} → ${formatTime(r.requestedLunchEnd) || '—'}` : '—'}</div></div>
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>{r.reason}</div>
                 <div style={{ fontSize: 12, color: '#94a3b8' }}>
                   {r.reviewedBy?.name ? <>Reviewed by <strong>{r.reviewedBy.name}</strong></> : 'Not reviewed yet'}
-                  {r.reviewedAt && <> &middot; {new Date(r.reviewedAt).toLocaleString()}</>}
+                  {r.reviewedAt && <> &middot; {formatDateTime(r.reviewedAt)}</>}
                 </div>
               </div>
             ))}
@@ -367,17 +367,17 @@ export default function RegularizationHistoryPage() {
                   </div>
                   <div className="col-6">
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requested Clock In</label>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{selectedRequest.requestedIn || '—'}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{formatTime(selectedRequest.requestedIn) || '—'}</div>
                   </div>
                   <div className="col-6">
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requested Clock Out</label>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{selectedRequest.requestedOutNotYet ? 'Not yet' : (selectedRequest.requestedOut || '—')}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{selectedRequest.requestedOutNotYet ? 'Not yet' : (formatTime(selectedRequest.requestedOut) || '—')}</div>
                   </div>
                   <div className="col-6">
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Break</label>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>
                       {selectedRequest.requestedBreakStart || selectedRequest.requestedBreakEnd
-                        ? `${selectedRequest.requestedBreakStart || '—'} → ${selectedRequest.requestedBreakEnd || '—'}`
+                        ? `${formatTime(selectedRequest.requestedBreakStart) || '—'} → ${formatTime(selectedRequest.requestedBreakEnd) || '—'}`
                         : '—'}
                     </div>
                   </div>
@@ -385,7 +385,7 @@ export default function RegularizationHistoryPage() {
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Lunch</label>
                     <div style={{ fontSize: 14, fontWeight: 600 }}>
                       {selectedRequest.requestedLunchStart || selectedRequest.requestedLunchEnd
-                        ? `${selectedRequest.requestedLunchStart || '—'} → ${selectedRequest.requestedLunchEnd || '—'}`
+                        ? `${formatTime(selectedRequest.requestedLunchStart) || '—'} → ${formatTime(selectedRequest.requestedLunchEnd) || '—'}`
                         : '—'}
                     </div>
                   </div>
@@ -395,7 +395,7 @@ export default function RegularizationHistoryPage() {
                   </div>
                   <div className="col-6">
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Submitted At</label>
-                    <div style={{ fontSize: 14, fontWeight: 600 }}>{new Date(selectedRequest.createdAt).toLocaleString()}</div>
+                    <div style={{ fontSize: 14, fontWeight: 600 }}>{formatDateTime(selectedRequest.createdAt)}</div>
                   </div>
                   <div className="col-6">
                     <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reviewed By</label>
@@ -404,7 +404,7 @@ export default function RegularizationHistoryPage() {
                   {selectedRequest.reviewedAt && (
                     <div className="col-6">
                       <label style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Reviewed At</label>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{new Date(selectedRequest.reviewedAt).toLocaleString()}</div>
+                      <div style={{ fontSize: 14, fontWeight: 600 }}>{formatDateTime(selectedRequest.reviewedAt)}</div>
                     </div>
                   )}
                 </div>

@@ -6,6 +6,7 @@ import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import TimeInput from '@/components/TimeInput';
 import Pagination from '@/components/Pagination';
+import { useSettings } from '@/lib/settings';
 
 const STATUS_STYLE = {
   pending:  { bg: '#fef3c7', color: '#d97706' },
@@ -28,6 +29,7 @@ function ApprovalBadge({ value, holdReason }) {
 
 export default function LeavePage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [leaves, setLeaves]         = useState([]);
   const [employees, setEmployees]   = useState([]);
   const [balanceData, setBalanceData] = useState(null);
@@ -400,8 +402,8 @@ export default function LeavePage() {
                             </span>
                           )}
                         </td>
-                        <td style={{ fontSize: 13 }}>{l.from}</td>
-                        <td style={{ fontSize: 13 }}>{l.to}</td>
+                        <td style={{ fontSize: 13 }}>{formatDate(l.from)}</td>
+                        <td style={{ fontSize: 13 }}>{formatDate(l.to)}</td>
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
                         {isSme ? (

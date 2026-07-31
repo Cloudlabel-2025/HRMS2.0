@@ -3,10 +3,11 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
-import { useSettings, formatTime } from '@/lib/settings';
+import { useSettings, formatTime, parseTime } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import TimeInput from '@/components/TimeInput';
+import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
@@ -54,7 +55,7 @@ function diffMins(start, end) {
 
 export default function AttendancePage() {
   const { user } = useAuth();
-  const { formatDate, settings } = useSettings();
+  const { formatDate, settings, formatTime, parseTime } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
   const [teamToday, setTeamToday]       = useState([]);
@@ -203,8 +204,8 @@ export default function AttendancePage() {
               r.date,
               DAYS[new Date(r.date + 'T00:00:00').getDay()],
               STATUS_STYLE[r.status]?.label || r.status,
-              r.clockIn || '—',
-              r.clockOut || '—',
+              formatTime(r.clockIn) || '—',
+              formatTime(r.clockOut) || '—',
               r.hoursWorked ? formatMins(r.hoursWorked) : '—',
             ];
             values.forEach((v, ci) => {
@@ -253,8 +254,8 @@ export default function AttendancePage() {
             r.date,
             DAYS[new Date(r.date + 'T00:00:00').getDay()],
             STATUS_STYLE[r.status]?.label || r.status,
-            r.clockIn || '—',
-            r.clockOut || '—',
+            formatTime(r.clockIn) || '—',
+            formatTime(r.clockOut) || '—',
             r.hoursWorked ? formatMins(r.hoursWorked) : '—',
           ]);
 
@@ -827,7 +828,7 @@ export default function AttendancePage() {
             {breakLoading
               ? <span className="spinner-border spinner-border-sm" />
               : active
-                ? <><i className="bi bi-stop-circle me-2" />End {label} (started {active.start})</>
+                ? <><i className="bi bi-stop-circle me-2" />End {label} (started {formatTime(active.start)})</>
                 : <><i className="bi bi-play-circle me-2" />Start {label}</>}
           </button>
         )}
@@ -840,7 +841,7 @@ export default function AttendancePage() {
               const exceeded = dur > allowance;
               return (
                 <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12, color: '#64748b', padding: '4px 0', borderBottom: i < history.length - 1 ? '1px solid #e2e8f033' : 'none' }}>
-                  <span>{b.start} → {b.end}</span>
+                  <span><Time value={b.start} fallback="—" /> → <Time value={b.end} fallback="—" /></span>
                   <span style={{ fontWeight: 700, color: exceeded ? '#ef4444' : '#10b981' }}>{dur} min{exceeded ? ` (${dur - allowance} over)` : ''}</span>
                 </div>
               );
@@ -851,7 +852,7 @@ export default function AttendancePage() {
         {active && (
           <div style={{ marginTop: 10, fontSize: 12, color, background: color + '10', borderRadius: 8, padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6 }}>
             <span className="spinner-grow spinner-grow-sm" style={{ width: 8, height: 8, background: color }} />
-            {label} in progress since {active.start}
+            {label} in progress since {formatTime(active.start)}
           </div>
         )}
       </div>
@@ -1020,7 +1021,7 @@ export default function AttendancePage() {
                                             color: task.status === 'In Progress' ? '#2563eb' : '#64748b',
                                             fontSize: 9,
                                           }}>{task.status}</span>
-                                          {task.due && <span style={{ fontSize: 10, color: '#94a3b8' }}>Due: {task.due}</span>}
+                                          {task.due && <span style={{ fontSize: 10, color: '#94a3b8' }}>Due: {formatDate(task.due)}</span>}
                                         </div>
                                       </div>
                                     ))}
@@ -1031,8 +1032,8 @@ export default function AttendancePage() {
                           </div>
                         )}
                       </td>
-                      <td style={{ fontSize: 13, fontWeight: 600 }}>{row.startTime || '--:--'}</td>
-                      <td style={{ fontSize: 13, fontWeight: 600 }}>{row.endTime || (active ? 'Running' : '--:--')}</td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.startTime} fallback="--:--" /></td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.endTime} fallback={active ? 'Running' : '--:--'} /></td>
                       <td>
                         <select
                           className="form-select form-select-sm"
@@ -1116,7 +1117,7 @@ export default function AttendancePage() {
 
       <div className="page-header">
         <div>
-          <h4>Time & Attendance{shiftConfig ? <span className="badge bg-secondary ms-2" style={{ fontSize: 11, fontWeight: 400, verticalAlign: 'middle' }}>{shiftConfig.name} ({shiftConfig.startTime}-{shiftConfig.endTime})</span> : ''}</h4>
+          <h4>Time & Attendance{shiftConfig ? <span className="badge bg-secondary ms-2" style={{ fontSize: 11, fontWeight: 400, verticalAlign: 'middle' }}>{shiftConfig.name} (<Time value={shiftConfig.startTime} fallback="?" />-<Time value={shiftConfig.endTime} fallback="?" />)</span> : ''}</h4>
           <p>{isSuperAdmin ? 'Team-wide attendance overview' : 'Track daily attendance, shifts, and working hours'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -1220,8 +1221,8 @@ export default function AttendancePage() {
                                 <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
                               )}
                             </td>
-                            <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
-                            <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
+                            <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
+                            <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
                             <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
@@ -1272,8 +1273,8 @@ export default function AttendancePage() {
                       <div className="row g-3">
                         {[
                           ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
-                          ['Clock In',  todayRecord.clockIn  || '—'],
-                          ['Clock Out', todayRecord.clockOut || '—'],
+                          ['Clock In',  formatTime(todayRecord.clockIn)  || '—'],
+                          ['Clock Out', formatTime(todayRecord.clockOut) || '—'],
                           ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
                         ].map(([label, val]) => (
                           <div key={label} className="col-6 col-md-3">
@@ -1290,7 +1291,7 @@ export default function AttendancePage() {
                       {clockedIn && !clockedOut && shiftConfig?.endTime && (
                         <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
                           <i className="bi bi-clock me-1" />
-                          Expected clock-out by <strong>{shiftConfig.endTime}</strong>
+                          Expected clock-out by <strong>{formatTime(shiftConfig.endTime)}</strong>
                         </div>
                       )}
                       {(todayRecord.breakDeduction > 0) && (
@@ -1332,7 +1333,7 @@ export default function AttendancePage() {
                     {formatTime(nowTimeStr(), settings?.timeFormat || '24h')}
                   </div>
                   <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>
-                    {todayRecord?.clockIn ? `Clocked in at ${todayRecord.clockIn}` : 'Not clocked in yet'}
+                    {todayRecord?.clockIn ? `Clocked in at ${formatTime(todayRecord.clockIn)}` : 'Not clocked in yet'}
                   </div>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                     {!clockedIn && (
@@ -1641,15 +1642,15 @@ export default function AttendancePage() {
                             </td>
                           )}
                           <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
-                          <td style={{ fontSize: 13 }}>{r.requestedIn  || '—'}</td>
-                          <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</td>
+                          <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn)  || '—'}</td>
+                          <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                           <td style={{ fontSize: 13 }}>
                             {(() => {
                               const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === 'break');
                               if (typeBreaks.length === 0) return '—';
                               return typeBreaks.map((b, i) => {
                                 if (b.notYet) return <span key={i} style={{ color: '#f59e0b', fontStyle: 'italic' }}>Not yet</span>;
-                                return `${b.start || '—'} → ${b.end || '—'}`;
+                                return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
                               }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
                             })()}
                           </td>
@@ -1659,7 +1660,7 @@ export default function AttendancePage() {
                               if (typeBreaks.length === 0) return '—';
                               return typeBreaks.map((b, i) => {
                                 if (b.notYet) return <span key={i} style={{ color: '#8b5cf6', fontStyle: 'italic' }}>Not yet</span>;
-                                return `${b.start || '—'} → ${b.end || '—'}`;
+                                return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
                               }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
                             })()}
                           </td>
@@ -1700,10 +1701,10 @@ export default function AttendancePage() {
                       </span>
                     </div>
                     <div className="row g-2 mb-2">
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedIn || '—'}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (r.requestedOut || '—')}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'break'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${b.start || '—'} → ${b.end || '—'}`).join(', '); })()}</div></div>
-                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'lunch'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${b.start || '—'} → ${b.end || '—'}`).join(', '); })()}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{formatTime(r.requestedIn) || '—'}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Break</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'break'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).join(', '); })()}</div></div>
+                      <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Lunch</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === 'lunch'); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? 'Not yet' : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).join(', '); })()}</div></div>
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
                     {canReview && regScope === 'approvals' && r.status === 'pending' && (
@@ -2113,8 +2114,8 @@ export default function AttendancePage() {
                                     <span style={{ fontSize: 12 }}>{row.taskDetails || '—'}</span>
                                   )}
                                 </td>
-                                <td style={{ fontSize: 13, fontWeight: 600 }}>{row.startTime || '--:--'}</td>
-                                <td style={{ fontSize: 13, fontWeight: 600 }}>{row.endTime || '--:--'}</td>
+                                <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.startTime} fallback="--:--" /></td>
+                                <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.endTime} fallback="--:--" /></td>
                                 <td>
                                   <span className="badge" style={{ background: '#e2e8f0', color: '#475569', fontSize: 12 }}>
                                     {row.status || 'pending'}
@@ -2243,8 +2244,8 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
                     <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
                     <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
-                    <td style={{ fontSize: 13 }}>{row.clockIn || '—'}</td>
-                    <td style={{ fontSize: 13 }}>{row.clockOut || '—'}</td>
+                    <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
+                    <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
                     <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
                     <td style={{ fontSize: 13, maxWidth: 160 }}>
                       {isAdmin && (row.status === 'absent' || row.status === 'late') ? (
@@ -2295,7 +2296,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                 <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
               </div>
               <div className="row g-2">
-                {[['Clock In', row.clockIn], ['Clock Out', row.clockOut], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
+                {[['Clock In', formatTime(row.clockIn)], ['Clock Out', formatTime(row.clockOut)], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
                   <div key={lbl} className="col-4">
                     <div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>{lbl}</div>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{val || '—'}</div>

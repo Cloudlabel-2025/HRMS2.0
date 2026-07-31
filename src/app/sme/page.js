@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import { useSettings } from '@/lib/settings';
 
 const EMPTY_SME = {
   name: '', email: '', password: '', phone: '', dob: '', pan: '',
@@ -16,6 +17,7 @@ const EMPTY_SME = {
 
 export default function SMEPage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [smes, setSmes] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [expertiseOptions, setExpertiseOptions] = useState([]);
@@ -301,7 +303,7 @@ export default function SMEPage() {
                               <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#0891b2,#06b6d4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 14, fontWeight: 700, flexShrink: 0 }}>{sme.name[0]}</div>
                               <div>
                                 <div style={{ fontWeight: 600, color: '#0f172a' }}>{sme.name}</div>
-                                {sme.dob && <div style={{ fontSize: 11, color: '#94a3b8' }}>DOB: {new Date(sme.dob).toLocaleDateString()}</div>}
+                                {sme.dob && <div style={{ fontSize: 11, color: '#94a3b8' }}>DOB: {formatDate(sme.dob)}</div>}
                               </div>
                             </Link>
                           </td>
@@ -324,8 +326,8 @@ export default function SMEPage() {
                           <td style={{ padding: '12px 16px', fontSize: 12 }}>
                             {sme.contractStart ? (
                               <div>
-                                <div>{new Date(sme.contractStart).toLocaleDateString()}</div>
-                                {sme.contractEnd && <div style={{ color: '#94a3b8' }}>→ {new Date(sme.contractEnd).toLocaleDateString()}</div>}
+                                <div>{formatDate(sme.contractStart)}</div>
+                                {sme.contractEnd && <div style={{ color: '#94a3b8' }}>→ {formatDate(sme.contractEnd)}</div>}
                               </div>
                             ) : <span style={{ color: '#94a3b8' }}>Open</span>}
                           </td>
@@ -497,7 +499,7 @@ export default function SMEPage() {
                           <div key={lv._id} style={{ padding: '10px 16px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ fontSize: 12 }}>
                               <span className="badge" style={{ background: '#0891b220', color: '#0891b2', fontSize: 10, fontWeight: 600, borderRadius: 6, marginRight: 6 }}>{lv.type}</span>
-                              {lv.from} → {lv.to} ({lv.days}d)
+                              {formatDate(lv.from)} → {formatDate(lv.to)} ({lv.days}d)
                               {lv.reason && <span style={{ color: '#94a3b8', marginLeft: 6 }}>"{lv.reason}"</span>}
                             </div>
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -535,7 +537,7 @@ export default function SMEPage() {
                                 <i className={`bi ${isExpanded ? 'bi-chevron-down' : 'bi-chevron-right'}`} style={{ color: '#94a3b8', fontSize: 14 }} />
                                 <div style={{ flex: 1 }}>
                                   <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>
-                                    {date === 'No date' ? 'Unscheduled' : new Date(date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                                    {date === 'No date' ? 'Unscheduled' : formatDate(date)}
                                   </div>
                                   <div style={{ fontSize: 12, color: '#94a3b8' }}>{tasks.length} task{tasks.length > 1 ? 's' : ''} • {done} completed</div>
                                 </div>
@@ -681,7 +683,7 @@ export default function SMEPage() {
                             <i className={`bi ${isExpanded ? 'bi-chevron-down' : 'bi-chevron-right'}`} style={{ color: '#94a3b8', fontSize: 14 }} />
                             <div style={{ flex: 1 }}>
                               <div style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>
-                                {date === 'No date' ? 'Unscheduled' : new Date(date).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+                                {date === 'No date' ? 'Unscheduled' : formatDate(date)}
                               </div>
                               <div style={{ fontSize: 12, color: '#94a3b8' }}>{tasks.length} task{tasks.length > 1 ? 's' : ''} • {done} completed</div>
                             </div>
@@ -862,8 +864,8 @@ export default function SMEPage() {
                           <td style={{ padding: '12px 16px' }}>
                             <span className="badge" style={{ background: '#0891b220', color: '#0891b2', fontSize: 10, fontWeight: 600, borderRadius: 6 }}>{lv.typeCode || lv.type}</span>
                           </td>
-                          <td style={{ padding: '12px 16px', color: '#64748b' }}>{lv.from}</td>
-                          <td style={{ padding: '12px 16px', color: '#64748b' }}>{lv.to}</td>
+                          <td style={{ padding: '12px 16px', color: '#64748b' }}>{formatDate(lv.from)}</td>
+                          <td style={{ padding: '12px 16px', color: '#64748b' }}>{formatDate(lv.to)}</td>
                           <td style={{ padding: '12px 16px', fontWeight: 600 }}>{lv.days}d</td>
                           <td style={{ padding: '12px 16px', color: '#64748b', maxWidth: 200 }}>
                             <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lv.reason || '—'}</div>

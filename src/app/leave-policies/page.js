@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import { useSettings } from '@/lib/settings';
 
 const TABS = [
   { key: 'policies', label: 'Policies',       icon: 'bi-file-earmark-text' },
@@ -17,6 +18,7 @@ function Label({ text, color }) {
 
 export default function LeavePoliciesPage() {
   const { user } = useAuth();
+  const { formatDate, formatDateTime } = useSettings();
   const [tab, setTab] = useState('policies');
   const [policies, setPolicies] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -104,7 +106,7 @@ export default function LeavePoliciesPage() {
   const savePolicy = async () => {
     let nameVal = policyForm?.name?.trim();
     if (!nameVal) {
-      nameVal = `Draft Policy - ${new Date().toLocaleDateString()}`;
+      nameVal = `Draft Policy - ${formatDate(new Date())}`;
     }
     setSaving(true);
     try {
@@ -911,7 +913,7 @@ export default function LeavePoliciesPage() {
                       </div>
                       <div style={{ fontSize: 12, color: '#94a3b8' }}>
                         <i className="bi bi-people me-1" />{p.approvalWorkflow?.length || 0} approval step(s)
-                        {p.effectiveFrom && <> · From: {new Date(p.effectiveFrom).toLocaleDateString()}</>}
+                        {p.effectiveFrom && <> · From: {formatDate(p.effectiveFrom)}</>}
                       </div>
                     </div>
                     <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
@@ -950,7 +952,7 @@ export default function LeavePoliciesPage() {
           ) : balances ? (
             <>
               <div style={{ fontSize: 12, color: '#64748b', marginBottom: 12 }}>
-                Policy: <strong>{balances.policy?.name}</strong> &middot; Cycle: {new Date(balances.cycleStart).toLocaleDateString()} – {new Date(balances.cycleEnd).toLocaleDateString()}
+                Policy: <strong>{balances.policy?.name}</strong> &middot; Cycle: {formatDate(balances.cycleStart)} – {formatDate(balances.cycleEnd)}
               </div>
               <div className="row g-3">
                 {balances.balances?.map(b => {
@@ -979,7 +981,7 @@ export default function LeavePoliciesPage() {
                         </div>
                         {b.carriedForward > 0 && (
                           <div style={{ fontSize: 11, color: '#f59e0b', marginTop: 2 }}>
-                            Carry fwd: +{b.carriedForward} {b.expiryDate ? `(exp: ${new Date(b.expiryDate).toLocaleDateString()})` : ''}
+                            Carry fwd: +{b.carriedForward} {b.expiryDate ? `(exp: ${formatDate(b.expiryDate)})` : ''}
                           </div>
                         )}
                         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end' }}>

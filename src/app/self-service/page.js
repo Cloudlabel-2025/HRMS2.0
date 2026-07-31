@@ -29,7 +29,7 @@ const EMPTY_FORM = {
 export default function SelfServicePage() {
   const { user } = useAuth();
   const router = useRouter();
-  const { formatDate } = useSettings();
+  const { formatDate, formatTime } = useSettings();
   const [identity, setIdentity] = useState(null);
   const [profile, setProfile] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -281,8 +281,8 @@ export default function SelfServicePage() {
                   <div className="small text-secondary">{formatDate(req.createdAt)}</div>
                   {req.requestType === 'permission' && req.payload && (
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4, background: '#f8fafc', padding: '4px 8px', borderRadius: 4 }}>
-                      <strong>Date:</strong> {req.payload.date} <br/>
-                      <strong>Time:</strong> {req.payload.startTime} - {req.payload.endTime} {req.payload.duration ? `(${req.payload.duration} mins)` : ''}
+                      <strong>Date:</strong> {formatDate(req.payload.date)} <br/>
+                      <strong>Time:</strong> {formatTime(req.payload.startTime)} - {formatTime(req.payload.endTime)} {req.payload.duration ? `(${req.payload.duration} mins)` : ''}
                     </div>
                   )}
                   <div className="small mt-1">{req.reason}</div>

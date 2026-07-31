@@ -157,7 +157,7 @@ export default function CalendarPage() {
   }, [currentDate, payrollStartDay, payrollEndDay]);
 
   const handleDeleteEvent = async (ev) => {
-    if (!window.confirm(`Remove "${ev.title}" from ${ev.date}?`)) return;
+    if (!window.confirm(`Remove "${ev.title}" from ${formatDate(ev.date)}?`)) return;
     setDeletingEvent(ev.id);
     try {
       if (ev.type === 'holiday') {

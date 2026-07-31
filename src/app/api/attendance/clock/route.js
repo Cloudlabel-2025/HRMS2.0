@@ -108,6 +108,15 @@ export async function POST(req) {
         const shiftStartMins = shiftHour * 60 + shiftMin;
         const limitMins = shiftStartMins + 120;
         const nowMins = now.getHours() * 60 + now.getMinutes();
+        const fmtTime = t => {
+          if (!t) return t;
+          const tf = config?.timeFormat;
+          if (tf !== '12h') return t;
+          const [h, m] = t.split(':').map(Number);
+          if (isNaN(h) || isNaN(m)) return t;
+          const ampm = h >= 12 ? 'PM' : 'AM';
+          return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
+        };
 
         for (const perm of approvedPermissions) {
           const startTime = perm.payload?.startTime;
@@ -121,8 +130,8 @@ export async function POST(req) {
 
             if (permStartMins <= limitMins) {
               if (nowMins < permEndMins) {
-                auditLog('Clock In Blocked', 'Attendance', user._id, `Block due to active morning permission (${startTime} to ${endTime})`, 'low', ip, null, user._id);
-                return fail(`You have an approved permission request today from ${startTime} to ${endTime}. You cannot clock in until the permission is over.`, 400);
+                auditLog('Clock In Blocked', 'Attendance', user._id, `Block due to active morning permission (${fmtTime(startTime)} to ${fmtTime(endTime)})`, 'low', ip, null, user._id);
+                return fail(`You have an approved permission request today from ${fmtTime(startTime)} to ${fmtTime(endTime)}. You cannot clock in until the permission is over.`, 400);
               }
             }
           }
