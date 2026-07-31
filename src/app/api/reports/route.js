@@ -5,12 +5,20 @@ import { Payroll } from '@/lib/models/Payroll';
 import { Task } from '@/lib/models/Task';
 import User from '@/lib/models/User';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { SelfServiceRequest } from '@/lib/models/index';
+import { SelfServiceRequest, Goal, Review, Invoice, Expense } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess, getAccessibleDepartments, getManagedUserIds } from '@/lib/rbac';
 
-const REPORT_TYPES = new Set(['attendance', 'leave', 'payroll', 'tasks', 'lifecycle']);
+const REPORT_TYPES = new Set(['attendance', 'leave', 'payroll', 'tasks', 'performance', 'finance', 'lifecycle']);
+
+const fmtDate = (d) => {
+  if (!d) return '—';
+  const dt = new Date(d);
+  if (isNaN(dt)) return '—';
+  const p = n => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${p(dt.getMonth() + 1)}-${p(dt.getDate())}`;
+};
 
 async function getReportUserQuery(user, requestedDepartment) {
   if (['super_admin', 'admin_full'].includes(user.role)) return requestedDepartment ? { department: requestedDepartment } : {};
@@ -18,7 +26,14 @@ async function getReportUserQuery(user, requestedDepartment) {
     const departments = await getAccessibleDepartments(user);
     return { department: requestedDepartment && departments.includes(requestedDepartment) ? requestedDepartment : { $in: departments } };
   }
-  if (user.role === 'team_admin') return { _id: { $in: await getManagedUserIds(user) } };
+  if (user.role === 'team_admin') {
+    const base = { _id: { $in: await getManagedUserIds(user) } };
+    const departments = await getAccessibleDepartments(user);
+    if (requestedDepartment && departments.includes(requestedDepartment)) {
+      return { ...base, department: requestedDepartment };
+    }
+    return base;
+  }
   // Limited reporting roles are self-only until a dedicated reporting policy is approved.
   return { _id: user._id };
 }
@@ -50,17 +65,19 @@ export async function GET(req) {
       for (const r of records) {
         const id = r.userId?._id?.toString();
         if (!id) continue;
-        if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0, leave: 0 };
+        if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0, leave: 0, halfDay: 0 };
         if (r.status === 'present') byUser[id].present++;
         else if (r.status === 'late') byUser[id].late++;
         else if (r.status === 'leave') byUser[id].leave++;
-        else byUser[id].absent++;
+        else if (r.status === 'half_day') byUser[id].halfDay++;
+        else if (r.status !== 'holiday') byUser[id].absent++;
       }
 
       const rows = Object.values(byUser);
       const totalPresent = rows.reduce((s, r) => s + r.present, 0);
       const totalLate    = rows.reduce((s, r) => s + r.late, 0);
       const totalLeave   = rows.reduce((s, r) => s + r.leave, 0);
+      const totalHalfDay = rows.reduce((s, r) => s + r.halfDay, 0);
 
       return ok({
         summary: [
@@ -68,6 +85,7 @@ export async function GET(req) {
           { label: 'Total Present Days', value: totalPresent, color: '#10b981' },
           { label: 'Total Late Days', value: totalLate, color: '#f59e0b' },
           { label: 'Total Leave Days', value: totalLeave, color: '#8b5cf6' },
+          { label: 'Total Half Days', value: totalHalfDay, color: '#f97316' },
           { label: 'Avg Present/Employee', value: rows.length ? (totalPresent / rows.length).toFixed(1) : 0, color: '#06b6d4' },
         ],
         chart: {
@@ -77,10 +95,11 @@ export async function GET(req) {
             { label: 'Present', data: rows.map(r => r.present), backgroundColor: '#10b981' },
             { label: 'Late',    data: rows.map(r => r.late),    backgroundColor: '#f59e0b' },
             { label: 'Leave',   data: rows.map(r => r.leave),   backgroundColor: '#8b5cf6' },
+            { label: 'Half Day', data: rows.map(r => r.halfDay), backgroundColor: '#f97316' },
           ],
         },
-        columns: ['name', 'dept', 'present', 'late', 'leave', 'absent'],
-        rows: rows.map(r => ({ name: r.name, dept: r.dept, present: r.present, late: r.late, leave: r.leave, absent: r.absent })),
+        columns: ['name', 'dept', 'present', 'late', 'leave', 'halfDay', 'absent'],
+        rows: rows.map(r => ({ name: r.name, dept: r.dept, present: r.present, late: r.late, leave: r.leave, halfDay: r.halfDay, absent: r.absent })),
       });
     }
 
@@ -142,7 +161,7 @@ export async function GET(req) {
         columns: ['Employee', 'Department', 'Gross', 'Deductions', 'Net', 'Status'],
         rows: payrolls.map(p => ({
           Employee: p.userId?.name, Department: p.userId?.department,
-          Gross: `₹${(p.grossPay||0).toLocaleString('en-IN')}`,
+          Gross: `₹${(p.monthlyGross || p.grossPay || 0).toLocaleString('en-IN')}`,
           Deductions: `₹${(p.totalDeductions||0).toLocaleString('en-IN')}`,
           Net: `₹${(p.netPay||0).toLocaleString('en-IN')}`,
           Status: p.status,
@@ -183,7 +202,113 @@ export async function GET(req) {
       });
     }
 
-    // performance & finance — summary only
+    if (type === 'performance') {
+      const monthStart = new Date(month + '-01');
+      const monthEnd = new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 1);
+      const reviews = await Review.find({
+        userId: { $in: userIds },
+        ...(month ? { createdAt: { $gte: monthStart, $lt: monthEnd } } : {}),
+      }).populate('userId', 'name department');
+
+      const rated = reviews.filter(r => r.overall != null);
+      const avgOverall = rated.length ? (rated.reduce((s, r) => s + r.overall, 0) / rated.length).toFixed(1) : 0;
+      const highPerformers = rated.filter(r => r.overall >= 4.5).length;
+      const needsImprovement = rated.filter(r => r.overall < 2.5).length;
+
+      const deptRatings = {};
+      for (const r of rated) {
+        const d = r.userId?.department || 'Unknown';
+        if (!deptRatings[d]) deptRatings[d] = { sum: 0, count: 0 };
+        deptRatings[d].sum += r.overall;
+        deptRatings[d].count++;
+      }
+
+      return ok({
+        summary: [
+          { label: 'Total Reviews', value: reviews.length, color: '#3b82f6' },
+          { label: 'Avg Overall', value: avgOverall, color: '#10b981' },
+          { label: 'High Performers', value: highPerformers, color: '#8b5cf6' },
+          { label: 'Needs Improvement', value: needsImprovement, color: '#ef4444' },
+        ],
+        chart: {
+          type: 'bar', title: 'Rating Distribution',
+          labels: ['Excellent (4.5+)', 'Good (3.5-4.4)', 'Average (2.5-3.4)', 'Needs Improvement (<2.5)'],
+          datasets: [{
+            label: 'Reviews',
+            data: [
+              rated.filter(r => r.overall >= 4.5).length,
+              rated.filter(r => r.overall >= 3.5 && r.overall < 4.5).length,
+              rated.filter(r => r.overall >= 2.5 && r.overall < 3.5).length,
+              rated.filter(r => r.overall < 2.5).length,
+            ],
+            backgroundColor: ['#10b981', '#06b6d4', '#f59e0b', '#ef4444'],
+          }],
+        },
+        deptChart: {
+          type: 'bar', title: 'Avg Rating by Department',
+          labels: Object.keys(deptRatings),
+          datasets: [{ label: 'Avg Rating', data: Object.keys(deptRatings).map(d => deptRatings[d].count ? (deptRatings[d].sum / deptRatings[d].count).toFixed(1) : 0), backgroundColor: '#3b82f6' }],
+        },
+        columns: ['Employee', 'Department', 'Cycle', 'Overall', 'Status'],
+        rows: reviews.map(r => ({
+          Employee: r.userId?.name,
+          Department: r.userId?.department,
+          Cycle: r.cycle,
+          Overall: r.overall ?? '—',
+          Status: r.status,
+        })),
+      });
+    }
+
+    if (type === 'finance') {
+      if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
+
+      const invoices = await Invoice.find(month ? { issued: { $regex: '^' + month } } : {});
+      const expenses = await Expense.find({
+        userId: { $in: userIds },
+        ...(month ? { date: { $regex: '^' + month } } : {}),
+      }).populate('userId', 'name department');
+
+      const totalInvoiced = invoices.reduce((s, i) => s + (i.amount || 0), 0);
+      const collected     = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.amount || 0), 0);
+      const outstanding   = invoices.filter(i => ['sent', 'pending', 'overdue'].includes(i.status)).reduce((s, i) => s + (i.amount || 0), 0);
+      const approvedExpenses = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + (e.amount || 0), 0);
+
+      const expenseByDept = {};
+      for (const e of expenses) {
+        const d = e.userId?.department || 'Unknown';
+        expenseByDept[d] = (expenseByDept[d] || 0) + (e.amount || 0);
+      }
+
+      return ok({
+        summary: [
+          { label: 'Total Invoiced', value: `₹${totalInvoiced.toLocaleString('en-IN')}`, color: '#3b82f6' },
+          { label: 'Collected', value: `₹${collected.toLocaleString('en-IN')}`, color: '#10b981' },
+          { label: 'Outstanding', value: `₹${outstanding.toLocaleString('en-IN')}`, color: '#f59e0b' },
+          { label: 'Approved Expenses', value: `₹${approvedExpenses.toLocaleString('en-IN')}`, color: '#8b5cf6' },
+        ],
+        chart: {
+          type: 'bar', title: 'Invoiced vs Collected',
+          labels: ['Paid', 'Outstanding'],
+          datasets: [{ label: 'Amount', data: [collected, outstanding], backgroundColor: ['#10b981', '#f59e0b'] }],
+        },
+        deptChart: {
+          type: 'bar', title: 'Expenses by Department',
+          labels: Object.keys(expenseByDept),
+          datasets: [{ label: 'Amount', data: Object.values(expenseByDept), backgroundColor: '#8b5cf6' }],
+        },
+        columns: ['Invoice No', 'Client', 'Amount', 'Issued', 'Due', 'Status'],
+        rows: invoices.map(i => ({
+          'Invoice No': i.invoiceNo,
+          Client: i.client,
+          Amount: `₹${(i.amount || 0).toLocaleString('en-IN')}`,
+          Issued: i.issued || '—',
+          Due: i.due || '—',
+          Status: i.status,
+        })),
+      });
+    }
+
     if (type === 'lifecycle') {
       if (!['super_admin', 'admin_full'].includes(user.role)) return fail('Access denied', 403);
 
@@ -214,7 +339,7 @@ export async function GET(req) {
         ssMap[key] = r.count;
       }
 
-      const ssTypes = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation'];
+      const ssTypes = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation', 'permission'];
       const ssRows = ssTypes.map(t => ({
         'Request Type': t.replace(/_/g, ' '),
         Pending:  ssMap[`${t}__pending`]  || 0,
@@ -230,12 +355,14 @@ export async function GET(req) {
           { label: 'Onboarding',        value: pendingOnboarding,       color: '#8b5cf6' },
           { label: 'Suspended',         value: statusCounts['suspended'] || 0, color: '#ef4444' },
           { label: 'Separated',         value: (statusCounts['resigned'] || 0) + (statusCounts['terminated'] || 0), color: '#64748b' },
+          { label: 'Retired',           value: statusCounts['retired'] || 0, color: '#a78bfa' },
+          { label: 'Alumni',            value: statusCounts['alumni'] || 0,   color: '#14b8a6' },
           { label: 'Rehired',           value: rehired,                 color: '#06b6d4' },
         ],
         chart: {
           type: 'bar', title: 'Headcount by Lifecycle Status',
           labels: Object.keys(statusCounts).map(s => s.replace(/_/g, ' ')),
-          datasets: [{ label: 'Employees', data: Object.values(statusCounts), backgroundColor: ['#10b981','#f59e0b','#8b5cf6','#3b82f6','#ef4444','#64748b','#06b6d4','#f97316'] }],
+          datasets: [{ label: 'Employees', data: Object.values(statusCounts), backgroundColor: ['#10b981','#f59e0b','#8b5cf6','#3b82f6','#ef4444','#64748b','#06b6d4','#f97316','#a78bfa'] }],
         },
         deptChart: {
           type: 'bar', title: 'Headcount by Department',
@@ -250,7 +377,7 @@ export async function GET(req) {
           Department:   p.department,
           Designation:  p.designation,
           Status:       p.employmentStatus,
-          'Hire Date':  p.hireDate ? new Date(p.hireDate).toISOString().slice(0, 10) : '—',
+          'Hire Date':  fmtDate(p.hireDate),
           'Rehire Count': p.rehireCount || 0,
         })),
       });
@@ -262,6 +389,7 @@ export async function GET(req) {
       rows: [],
     });
   } catch (e) {
-    return fail(e.message, 500);
+    console.error(e);
+    return fail('Internal server error', 500);
   }
 }

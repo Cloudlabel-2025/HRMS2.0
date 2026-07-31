@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { useAuth } from '@/lib/auth';
+import { useAuth, canAccessDepartment } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import { Chart, registerables } from 'chart.js';
@@ -15,6 +15,9 @@ const REPORT_TYPES = [
   { key: 'finance', label: 'Financial', icon: 'bi-bar-chart-line', color: '#06b6d4' },
   { key: 'lifecycle', label: 'HR Lifecycle', icon: 'bi-diagram-3', color: '#f97316' },
 ];
+
+const SHOW_DEPT = { attendance: true, leave: true, payroll: true, tasks: true, performance: true };
+const SHOW_MONTH = { attendance: true, leave: true, payroll: true, performance: true, finance: true };
 
 function BarChart({ labels, datasets }) {
   const ref = useRef(null);
@@ -54,14 +57,13 @@ function LineChart({ labels, datasets }) {
   return <canvas ref={ref} />;
 }
 
-const fmt = (n) => n != null ? `₹${Number(n).toLocaleString('en-IN')}` : '—';
-
 export default function ReportsPage() {
   const { user } = useAuth();
   const [activeReport, setActiveReport] = useState('attendance');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [filters, setFilters] = useState({ dept: '', month: new Date().toISOString().slice(0, 7) });
+  const [departments, setDepartments] = useState([]);
   const [toast, setToast] = useState(null);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
@@ -70,7 +72,11 @@ export default function ReportsPage() {
     setLoading(true);
     setData(null);
     try {
-      const params = new URLSearchParams({ type: activeReport, ...filters });
+      const params = new URLSearchParams({
+        type: activeReport,
+        dept: SHOW_DEPT[activeReport] ? filters.dept : '',
+        month: SHOW_MONTH[activeReport] ? filters.month : '',
+      });
       const res = await api.get(`/api/reports?${params}`);
       setData(res);
     } catch (e) {
@@ -81,6 +87,17 @@ export default function ReportsPage() {
   };
 
   useEffect(() => { if (user) generate(); }, [user, activeReport]);
+
+  useEffect(() => {
+    if (!user) return;
+    api.get('/api/settings?type=departments')
+      .then(data => {
+        const accessible = data.map(d => d.name).filter(name => canAccessDepartment(user, name));
+        setDepartments(accessible);
+        setFilters(p => accessible.includes(p.dept) ? p : { ...p, dept: '' });
+      })
+      .catch(() => {});
+  }, [user]);
 
   return (
     <AppShell title="Reports & Analytics">
@@ -106,17 +123,21 @@ export default function ReportsPage() {
       {/* Filters */}
       <div className="card p-3 mb-4">
         <div className="row g-2 align-items-end">
-          <div className="col-md-3">
-            <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Department</label>
-            <select className="form-select" style={{ fontSize: 13 }} value={filters.dept} onChange={e => setFilters(p => ({ ...p, dept: e.target.value }))}>
-              <option value="">All Departments</option>
-              {['Engineering', 'HR', 'Finance', 'Design', 'Marketing', 'Operations', 'Sales'].map(d => <option key={d}>{d}</option>)}
-            </select>
-          </div>
-          <div className="col-md-3">
-            <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Month</label>
-            <input type="month" className="form-control" style={{ fontSize: 13 }} value={filters.month} onChange={e => setFilters(p => ({ ...p, month: e.target.value }))} />
-          </div>
+          {SHOW_DEPT[activeReport] && (
+            <div className="col-md-3">
+              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Department</label>
+              <select className="form-select" style={{ fontSize: 13 }} value={filters.dept} onChange={e => setFilters(p => ({ ...p, dept: e.target.value }))}>
+                <option value="">All Departments</option>
+                {departments.map(d => <option key={d}>{d}</option>)}
+              </select>
+            </div>
+          )}
+          {SHOW_MONTH[activeReport] && (
+            <div className="col-md-3">
+              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Month</label>
+              <input type="month" className="form-control" style={{ fontSize: 13 }} value={filters.month} onChange={e => setFilters(p => ({ ...p, month: e.target.value }))} />
+            </div>
+          )}
           <div className="col-md-3">
             <button className="btn btn-primary w-100" onClick={generate} disabled={loading}>
               {loading ? <><span className="spinner-border spinner-border-sm me-2" />Generating...</> : <><i className="bi bi-search me-2" />Generate Report</>}
