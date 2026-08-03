@@ -41,6 +41,7 @@ export async function POST(req) {
     await connectDB();
     const body = await req.json();
     if (!body.name || !body.description || !body.startDate || !body.endDate || !body.responsibleTo) return fail('Name, description, responsible person, start date, and end date are required', 400);
+    if ((body.startDate && body.startDate < '2022-03-01') || (body.endDate && body.endDate < '2022-03-01')) return fail('Start and end dates cannot be before March 2022', 400);
     if (body.name.length > 30 || !body.name.trim()) return fail('Project name must be between 1 and 30 characters', 400);
     let team = Array.isArray(body.team) ? body.team.filter(Boolean) : [];
     // Legacy project form selects departments rather than individual team members.

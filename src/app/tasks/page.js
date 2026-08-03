@@ -15,6 +15,7 @@ const PRIORITIES = ['low', 'medium', 'high'];
 const PRIORITY_COLORS = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
 const STATUS_COLORS   = { 'To Do': '#64748b', 'In Progress': '#3b82f6', 'Pending': '#f59e0b', 'Completed': '#10b981', 'Blocked': '#ef4444' };
 const EMPTY_TASK = { title: '', description: '', projectId: '', assignedTo: '', priority: 'medium', status: 'To Do', due: '' };
+const MIN_PROJECT_DATE = '2022-03-01';
 
 function formatProjectDuration(startDate, endDate) {
   if (!startDate || !endDate) return '—';
@@ -299,8 +300,8 @@ export default function TasksPage() {
     if (!projectForm.startDate) { showToast('Start date is required', 'error'); return; }
     if (!projectForm.endDate) { showToast('End date is required', 'error'); return; }
     if (projectForm.endDate < projectForm.startDate) { showToast('End date cannot be before start date', 'error'); return; }
-    const today = new Date().toISOString().split('T')[0];
-    if (projectForm.startDate < today) { showToast('Start date cannot be before today', 'error'); return; }
+    if (projectForm.startDate < MIN_PROJECT_DATE) { showToast('Start date cannot be before March 2022', 'error'); return; }
+    if (projectForm.endDate < MIN_PROJECT_DATE) { showToast('End date cannot be before March 2022', 'error'); return; }
     setSaving(true);
     try {
       await api.post('/api/projects', projectForm);
@@ -797,11 +798,11 @@ export default function TasksPage() {
                   <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *</label><select className="form-select" value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} disabled={projectForm.departments.length === 0}><option value="">{projectForm.departments.length ? 'Select responsible person' : 'Select department first'}</option>{employees.filter(employee => projectForm.departments.includes(employee.department)).map(employee => <option key={employee.userId || employee._id} value={employee.userId || employee._id}>{employee.name} ({employee.department})</option>)}</select></div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Start Date *</label>
-                    <DateInput className="form-control" value={projectForm.startDate} onChange={e => setProjectForm(p => ({ ...p, startDate: e.target.value }))} />
+                    <DateInput className="form-control" value={projectForm.startDate} min={MIN_PROJECT_DATE} onChange={e => setProjectForm(p => ({ ...p, startDate: e.target.value }))} />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>End Date *</label>
-                    <DateInput className="form-control" value={projectForm.endDate} onChange={e => setProjectForm(p => ({ ...p, endDate: e.target.value }))} />
+                    <DateInput className="form-control" value={projectForm.endDate} min={MIN_PROJECT_DATE} onChange={e => setProjectForm(p => ({ ...p, endDate: e.target.value }))} />
                   </div>
                 </div>
               </div>
