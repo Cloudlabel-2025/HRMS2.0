@@ -1,7 +1,9 @@
 import dbConnect from '@/lib/db';
-import { Department, Shift, Holiday, SystemConfig, Role, Designation, AssetCategory, Leave, SmeExpertise } from '@/lib/models/index';
+import User from '@/lib/models/User';
+import { Department, Shift, Holiday, SystemConfig, Role, Designation, AssetCategory, Leave, SmeExpertise, Employee } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { notify } from '@/lib/notify';
 
 const MODEL_MAP = {
   departments:        Department,
@@ -15,6 +17,8 @@ const MODEL_MAP = {
 };
 
 const ADMIN_ROLES = ['super_admin', 'admin_full'];
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const FIELD_ALLOWLIST = {
   departments:  ['name', 'head', 'members', 'visibleDepartments'],
@@ -54,6 +58,8 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
   if (type === 'shifts') {
     if (!isUpdate && (!data.name?.trim() || !data.startTime || !data.endTime))
       return { error: fail('Shift name, start time, and end time are required', 400) };
+    if (data.startTime !== undefined && !TIME_RE.test(data.startTime)) return { error: fail('Start time must be in HH:MM (24-hour) format', 400) };
+    if (data.endTime !== undefined && !TIME_RE.test(data.endTime)) return { error: fail('End time must be in HH:MM (24-hour) format', 400) };
     if (data.name !== undefined) data.name = data.name.trim();
     if (data.days !== undefined && !Array.isArray(data.days))
       return { error: fail('Shift days must be an array', 400) };
@@ -163,6 +169,14 @@ export async function POST(req) {
   }
 
   const doc = await MODEL_MAP[type].create(data);
+
+  if (type === 'shifts') {
+    const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+    const adminIds = admins.map(a => a._id);
+    await notify(adminIds, 'Shift Created', `New shift "${doc.name}" created — ${doc.startTime} to ${doc.endTime}.`, 'shift', doc._id);
+    return ok({ ...doc.toObject(), notifiedCount: adminIds.length }, 201);
+  }
+
   return ok(doc, 201);
 }
 
@@ -180,8 +194,17 @@ export async function PUT(req) {
   if (type === 'departments' && data.visibleDepartments !== undefined) {
     data.visibleDepartments = Array.isArray(data.visibleDepartments) ? data.visibleDepartments : [];
   }
+  const prev = type === 'shifts' ? await MODEL_MAP[type].findById(id).lean() : null;
   const doc = await MODEL_MAP[type].findByIdAndUpdate(id, data, { new: true, runValidators: true });
   if (!doc) return fail('Not found', 404);
+
+  if (type === 'shifts') {
+    const affected = await Employee.find({ $or: [{ shiftId: doc._id }, { shift: prev?.name }] }).select('userId').lean();
+    const userIds = [...new Set(affected.map(e => e.userId?.toString()).filter(Boolean))];
+    await notify(userIds, 'Shift Updated', `Your shift "${doc.name}" has been updated — new hours ${doc.startTime} to ${doc.endTime}.`, 'shift', doc._id);
+    return ok({ ...doc.toObject(), notifiedCount: userIds.length });
+  }
+
   return ok(doc);
 }
 

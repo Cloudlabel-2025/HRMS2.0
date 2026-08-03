@@ -2,17 +2,30 @@ import { connectDB } from '@/lib/db';
 import { Notification } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { ADMIN_ROLES } from '@/lib/permissions';
 
 export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
     await connectDB();
-    const filter = { userId: user._id };
-    if (req.headers.get('x-impersonate')) {
-      filter.type = { $ne: 'viewing' };
+    const { searchParams } = new URL(req.url);
+    const scope = searchParams.get('scope');
+    const type = searchParams.get('type');
+
+    const filter = {};
+    if (scope === 'all') {
+      if (!ADMIN_ROLES.includes(user.role)) return fail('Access denied', 403);
+    } else {
+      filter.userId = user._id;
     }
-    const notes = await Notification.find(filter).sort({ createdAt: -1 }).limit(50);
+    if (type) filter.type = type;
+    if (!type && req.headers.get('x-impersonate')) filter.type = { $ne: 'viewing' };
+
+    const notes = await Notification.find(filter)
+      .populate('userId', 'name email department role')
+      .sort({ createdAt: -1 })
+      .limit(scope === 'all' ? 100 : 50);
     return ok(notes);
   } catch (e) {
     return fail(e.message, 500);

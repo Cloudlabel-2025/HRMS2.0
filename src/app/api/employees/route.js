@@ -185,16 +185,17 @@ export async function POST(req) {
       };
 
       // Address
-      if (validated.address) {
-        identityPayload.addressHistory = [{
-          addressType: 'current',
-          line1: validated.address,
-          city: 'N/A',
-          state: 'N/A',
-          country: 'India',
-          postalCode: '000000',
-          isCurrent: true,
-        }];
+      const addr = {
+        line1: validated.addressLine1 || validated.address || '',
+        line2: validated.addressLine2 || '',
+        landmark: validated.addressLine3 || '',
+        city: validated.cityTown || 'N/A',
+        state: 'N/A',
+        country: 'India',
+        postalCode: validated.pinCode || '000000',
+      };
+      if (addr.line1 || validated.cityTown || validated.pinCode) {
+        identityPayload.addressHistory = [{ addressType: 'current', ...addr, isCurrent: true }];
       }
 
       // Emergency contact

@@ -375,7 +375,7 @@ const NotificationSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title:   { type: String, required: true },
   message: { type: String, required: true },
-  type:    { type: String, enum: ['leave','attendance','announcement','general','performance','lifecycle','self_service','payroll','viewing'], default: 'general' },
+  type:    { type: String, enum: ['leave','attendance','announcement','general','performance','lifecycle','self_service','payroll','viewing','shift'], default: 'general' },
   attachment: {
     name: { type: String, default: '' },
     url: { type: String, default: '' },

@@ -135,6 +135,8 @@ export default function EmployeeProfilePage() {
       phone: emp.phone || '',
       bloodGroup: data?.identity?.bloodGroup || '',
       gender: data?.identity?.gender || '',
+      maritalStatus: data?.identity?.maritalStatus || '',
+      employmentType: data?.profile?.employmentType || '',
       addressLine1: currentAddress.line1 || '',
       addressLine2: currentAddress.line2 || '',
       addressLine3: currentAddress.landmark || '',
@@ -172,6 +174,7 @@ export default function EmployeeProfilePage() {
           personalPhone: editForm.phone || '',
           gender: editForm.gender || data.identity.gender || 'prefer_not_to_say',
           bloodGroup: editForm.bloodGroup || '',
+          maritalStatus: editForm.maritalStatus || data.identity.maritalStatus || 'prefer_not_to_say',
           addressHistory: editForm.addressLine1 || editForm.cityTown || editForm.pinCode ? [{
             addressType: 'current',
             line1: composeAddressLine(editForm) || editForm.addressLine1,
@@ -188,6 +191,16 @@ export default function EmployeeProfilePage() {
             phone: editForm.emergencyContactPhone || '0000000000',
             isPrimary: true,
           }] : data.identity.emergencyContacts || [],
+        });
+      }
+      if (data?.profile?._id) {
+        await api.put(`/api/core/profiles/${data.profile._id}`, {
+          employmentType: editForm.employmentType || 'full_time',
+          department: editForm.department,
+          designation: editForm.designation,
+          shift: editForm.shift,
+          hireDate: editForm.joinDate || undefined,
+          rbacRole: editForm.role,
         });
       }
       showToast('Employee updated successfully');
@@ -1263,6 +1276,20 @@ export default function EmployeeProfilePage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Role</label>
                     <select className="form-select" value={editForm.role || ''} onChange={e => setEditForm(p => ({ ...p, role: e.target.value }))}>
                       {Object.entries(ROLE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Marital Status</label>
+                    <select className="form-select" value={editForm.maritalStatus || ''} onChange={e => setEditForm(p => ({ ...p, maritalStatus: e.target.value }))}>
+                      <option value="">Select</option>
+                      {['single','married','divorced','widowed','separated','prefer_not_to_say'].map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-md-6">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employment Type</label>
+                    <select className="form-select" value={editForm.employmentType || ''} onChange={e => setEditForm(p => ({ ...p, employmentType: e.target.value }))}>
+                      <option value="">Select</option>
+                      {['full_time','part_time','contract','intern','consultant','apprentice'].map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
                     </select>
                   </div>
                   <div className="col-md-6">
