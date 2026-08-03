@@ -5,9 +5,10 @@ import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
-import TimeInput from '@/components/TimeInput';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function BarChart({ data }) {
   const ref = useRef(null);
@@ -64,6 +65,7 @@ export default function DashboardPage() {
     if (!startTime) return setModalError('Start time is required');
     if (!endTime) return setModalError('End time is required');
     if (!reason || reason.trim().length < 10) return setModalError('Reason must be at least 10 characters');
+    if (!TIME_RE.test(startTime) || !TIME_RE.test(endTime)) return setModalError('Invalid start or end time format');
 
     const [sh, sm] = startTime.split(':').map(Number);
     const [eh, em] = endTime.split(':').map(Number);
@@ -382,11 +384,11 @@ export default function DashboardPage() {
               <div className="row g-3 mb-3">
                 <div className="col-6">
                   <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Start Time <span style={{color:'#ef4444'}}>*</span></label>
-                  <TimeInput className="form-control" value={permissionForm.startTime} onChange={e => setPermissionForm(prev => ({ ...prev, startTime: e.target.value }))} />
+                  <input type="time" className="form-control" value={permissionForm.startTime} onChange={e => setPermissionForm(prev => ({ ...prev, startTime: e.target.value }))} />
                 </div>
                 <div className="col-6">
                   <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>End Time <span style={{color:'#ef4444'}}>*</span></label>
-                  <TimeInput className="form-control" value={permissionForm.endTime} onChange={e => setPermissionForm(prev => ({ ...prev, endTime: e.target.value }))} />
+                  <input type="time" className="form-control" value={permissionForm.endTime} onChange={e => setPermissionForm(prev => ({ ...prev, endTime: e.target.value }))} />
                 </div>
               </div>
 

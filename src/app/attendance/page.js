@@ -6,7 +6,6 @@ import { api } from '@/lib/api';
 import { useSettings, formatTime, parseTime } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
-import TimeInput from '@/components/TimeInput';
 import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
@@ -18,6 +17,8 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const DEFAULT_BREAK_RULES = [
   { type: 'break', maxDuration: 30, maxCount: 1 },
@@ -718,6 +719,13 @@ export default function AttendancePage() {
   // ── Regularization ──────────────────────────────────────────────────────────
   const submitRegularization = async () => {
     if (!regForm.date || !regForm.reason) { showToast('Date and reason are required', 'error'); return; }
+    if (regForm.requestedIn && !TIME_RE.test(regForm.requestedIn)) { showToast('Clock in must be in HH:MM (24-hour) format', 'error'); return; }
+    if (regForm.requestedOut && !TIME_RE.test(regForm.requestedOut)) { showToast('Clock out must be in HH:MM (24-hour) format', 'error'); return; }
+    for (const b of (regForm.requestedBreaks || [])) {
+      if ((b.start || b.end) && (!b.start || !b.end || !TIME_RE.test(b.start) || !TIME_RE.test(b.end))) {
+        showToast('Each break must have both start and end in HH:MM (24-hour) format', 'error'); return;
+      }
+    }
     setRegSaving(true);
     try {
       await api.post('/api/attendance/regularize', regForm);
@@ -1761,11 +1769,11 @@ export default function AttendancePage() {
                       <div className="row g-2">
                         <div className="col-6">
                           <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock In</label>
-                          <TimeInput className="form-control" style={{ fontSize: 13 }} value={regForm.requestedIn} onChange={e => setRegForm(p => ({ ...p, requestedIn: e.target.value }))} />
+                          <input type="time" className="form-control" style={{ fontSize: 13 }} value={regForm.requestedIn} onChange={e => setRegForm(p => ({ ...p, requestedIn: e.target.value }))} />
                         </div>
                         <div className="col-6">
                           <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock Out</label>
-                          <TimeInput className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} disabled={regForm.requestedOutNotYet} />
+                          <input type="time" className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} disabled={regForm.requestedOutNotYet} />
                           {regForm.date === todayStr && (
                             <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
                               <input type="checkbox" checked={regForm.requestedOutNotYet}
@@ -1807,14 +1815,14 @@ export default function AttendancePage() {
                           <div className="row g-2">
                             <div className="col-6">
                               <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Start</label>
-                              <TimeInput className="form-control" style={{ fontSize: 13 }}
+                              <input type="time" className="form-control" style={{ fontSize: 13 }}
                                 value={getVal('start')}
                                 onChange={e => updateBreak('start', e.target.value)}
                                 disabled={notYet} />
                             </div>
                             <div className="col-6">
                               <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>End</label>
-                              <TimeInput className="form-control" style={{ fontSize: 13 }}
+                              <input type="time" className="form-control" style={{ fontSize: 13 }}
                                 value={getVal('end')}
                                 onChange={e => updateBreak('end', e.target.value)}
                                 disabled={notYet} />

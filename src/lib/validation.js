@@ -23,6 +23,7 @@ const ObjectIdSchema = z.string().regex(/^[0-9a-f]{24}$/, 'Invalid ID format');
 const EmailSchema = z.string().email('Invalid email format').toLowerCase().trim();
 const PasswordSchema = z.string().min(8, 'Password must be at least 8 characters');
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function toDateStr(d) {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -82,6 +83,11 @@ export const CreateEmployeeSchema = z.object({
   maritalStatus: z.enum(['single', 'married', 'divorced', 'widowed', 'separated', 'prefer_not_to_say']).default('prefer_not_to_say'),
   employmentType: z.enum(['full_time', 'part_time', 'contract', 'intern', 'consultant', 'apprentice']).default('full_time'),
   bloodGroup: z.string().min(1, 'Blood group required').max(10),
+  addressLine1: z.string().max(200).optional().or(z.literal('')),
+  addressLine2: z.string().max(200).optional().or(z.literal('')),
+  addressLine3: z.string().max(200).optional().or(z.literal('')),
+  cityTown: z.string().max(100).optional().or(z.literal('')),
+  pinCode: z.string().max(12).optional().or(z.literal('')),
 });
 
 export const UpdateEmployeeSchema = CreateEmployeeSchema.partial();
@@ -354,8 +360,8 @@ export const AttendanceRegularizeSchema = z.object({
   requestedOutNotYet: z.boolean().optional(),
   requestedBreaks: z.array(z.object({
     type: z.string().min(1, 'Break type required'),
-    start: z.string().optional().or(z.literal('')),
-    end: z.string().optional().or(z.literal('')),
+    start: z.string().regex(TIME_RE, 'Time must be HH:MM').optional().or(z.literal('')),
+    end: z.string().regex(TIME_RE, 'Time must be HH:MM').optional().or(z.literal('')),
     notYet: z.boolean().optional(),
   })).optional().default([]),
   reason: z.string().min(20, 'Reason must be detailed (min 20 chars)').max(1000),

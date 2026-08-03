@@ -4,9 +4,10 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
-import TimeInput from '@/components/TimeInput';
 import Pagination from '@/components/Pagination';
 import { useSettings } from '@/lib/settings';
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const STATUS_STYLE = {
   pending:  { bg: '#fef3c7', color: '#d97706' },
@@ -135,6 +136,11 @@ export default function LeavePage() {
   const handleApply = async () => {
     if (!form.typeCode || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
     if (form.halfDay && !form.halfDayType) { showToast('Please select First Half or Second Half for half-day leave', 'error'); return; }
+    if (form._showTimePicker && (form.customStartTime || form.customEndTime)) {
+      if (!form.customStartTime || !form.customEndTime || !TIME_RE.test(form.customStartTime) || !TIME_RE.test(form.customEndTime)) {
+        showToast('Custom leave time must be valid HH:MM (24-hour) start and end times', 'error'); return;
+      }
+    }
     setSaving(true);
     try {
       const { customStartTime, customEndTime, _showTimePicker, ...payload } = form;
@@ -583,7 +589,8 @@ export default function LeavePage() {
                               <div className="row g-2" style={{ alignItems: 'center' }}>
                                 <div className="col-auto">
                                   <label style={{ fontSize: 12, color: '#64748b' }}>Start</label>
-                                  <TimeInput
+                                  <input
+                                    type="time"
                                     className="form-control form-control-sm"
                                     style={{ fontSize: 12, width: 130 }}
                                     value={form.customStartTime}
@@ -593,7 +600,8 @@ export default function LeavePage() {
                                 <div className="col-auto" style={{ paddingTop: 18, fontSize: 12, color: '#94a3b8' }}>to</div>
                                 <div className="col-auto">
                                   <label style={{ fontSize: 12, color: '#64748b' }}>End</label>
-                                  <TimeInput
+                                  <input
+                                    type="time"
                                     className="form-control form-control-sm"
                                     style={{ fontSize: 12, width: 130 }}
                                     value={form.customEndTime}

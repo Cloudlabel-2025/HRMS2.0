@@ -5,6 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 import { AuditLog, Employee, Shift } from '@/lib/models/index';
 import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
 import { canAccessDepartment } from '@/lib/rbac';
+import { notify } from '@/lib/notify';
 
 export async function GET(req, { params }) {
   const { id } = await params;
@@ -79,6 +80,15 @@ export async function PUT(req, { params }) {
 
   const emp = await Employee.findByIdAndUpdate(id, validated, { new: true });
   if (!emp) return fail('Employee not found', 404);
+
+  if (validated.shift !== undefined || validated.shiftId !== undefined) {
+    const shiftChanged =
+      (validated.shift !== undefined && validated.shift !== existing.shift) ||
+      (validated.shiftId && validated.shiftId.toString() !== existing.shiftId?.toString());
+    if (shiftChanged) {
+      await notify(existing.userId, 'Shift Changed', `Your shift has been changed to ${validated.shift || 'the new shift'}.`, 'shift', existing.shiftId || validated.shiftId || null);
+    }
+  }
 
   // Sync key fields back to User for auth/display consistency
   const syncFields = {};

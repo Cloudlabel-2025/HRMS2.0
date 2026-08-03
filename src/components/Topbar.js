@@ -5,8 +5,8 @@ import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 
-const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', announcement: 'bi-megaphone', general: 'bi-bell', performance: 'bi-graph-up-arrow', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack' };
-const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', announcement: '#2563eb', general: '#3b82f6', performance: '#8b5cf6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316' };
+const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', announcement: 'bi-megaphone', general: 'bi-bell', performance: 'bi-graph-up-arrow', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack', shift: 'bi-arrow-repeat' };
+const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', announcement: '#2563eb', general: '#3b82f6', performance: '#8b5cf6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316', shift: '#0d9488' };
 
 function getNotifRoute(n, role) {
   if (n.type === 'leave') return '/leave';

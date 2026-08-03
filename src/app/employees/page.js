@@ -62,6 +62,9 @@ export default function EmployeesPage() {
   const [firstLoginsLoading, setFirstLoginsLoading] = useState(false);
   const [showModal, setShowModal]   = useState(false);
   const [editEmp, setEditEmp]       = useState(null);
+  const [editIdentityId, setEditIdentityId] = useState(null);
+  const [editProfileId, setEditProfileId]   = useState(null);
+  const [editLoading, setEditLoading]       = useState(false);
   const [form, setForm]             = useState(EMPTY_FORM);
   const [toast, setToast]           = useState({ msg: '', type: 'success' });
   const [tempPasswordModal, setTempPasswordModal] = useState(null);
@@ -137,7 +140,34 @@ export default function EmployeesPage() {
   });
 
   const openAdd  = () => { setEditEmp(null); setForm(EMPTY_FORM); clearFormErrs(); setShowModal(true); };
-  const openEdit = (emp) => { setEditEmp(emp); setForm({ ...EMPTY_FORM, ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '' }); clearFormErrs(); setShowModal(true); };
+  const openEdit = async (emp) => {
+    setEditEmp(emp);
+    setForm({ ...EMPTY_FORM, ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '' });
+    setEditIdentityId(null); setEditProfileId(null);
+    clearFormErrs(); setShowModal(true);
+    setEditLoading(true);
+    try {
+      const d = await api.get(`/api/employees/${emp._id}/details`);
+      const currentAddress = d?.identity?.addressHistory?.find(a => a.isCurrent) || d?.identity?.addressHistory?.[0] || {};
+      const emergency = d?.identity?.emergencyContacts?.find(c => c.isPrimary) || d?.identity?.emergencyContacts?.[0] || {};
+      setEditIdentityId(d?.identity?._id || null);
+      setEditProfileId(d?.profile?._id || null);
+      setForm(p => ({
+        ...p,
+        bloodGroup: d?.identity?.bloodGroup || p.bloodGroup,
+        gender: d?.identity?.gender || p.gender,
+        maritalStatus: d?.identity?.maritalStatus || p.maritalStatus,
+        addressLine1: currentAddress.line1 || p.addressLine1,
+        addressLine2: currentAddress.line2 || p.addressLine2,
+        addressLine3: currentAddress.landmark || p.addressLine3,
+        cityTown: currentAddress.city && currentAddress.city !== 'N/A' ? currentAddress.city : p.cityTown,
+        pinCode: currentAddress.postalCode && currentAddress.postalCode !== '000000' ? currentAddress.postalCode : p.pinCode,
+        emergencyContactName: emergency.name || p.emergencyContactName,
+        emergencyContactPhone: emergency.phone || p.emergencyContactPhone,
+        employmentType: d?.profile?.employmentType || p.employmentType,
+      }));
+    } catch {} finally { setEditLoading(false); }
+  };
 
   const handleSave = async () => {
     const name = form.name?.trim() || '';
@@ -190,6 +220,42 @@ export default function EmployeesPage() {
       if (!payload.aadhaarNumber) delete payload.aadhaarNumber;
       if (editEmp) {
         await api.put(`/api/employees/${editEmp._id}`, payload);
+        if (editIdentityId) {
+          await api.put(`/api/core/identities/${editIdentityId}`, {
+            preferredName: form.name,
+            primaryEmail: form.email,
+            personalPhone: form.phone || '',
+            gender: form.gender || 'prefer_not_to_say',
+            bloodGroup: form.bloodGroup || '',
+            maritalStatus: form.maritalStatus || 'prefer_not_to_say',
+            addressHistory: form.addressLine1 || form.cityTown || form.pinCode ? [{
+              addressType: 'current',
+              line1: [form.addressLine1, form.addressLine2, form.addressLine3].map(v => String(v || '').trim()).filter(Boolean).join(', ') || form.addressLine1,
+              city: form.cityTown || 'N/A',
+              state: 'N/A',
+              country: 'India',
+              postalCode: form.pinCode || '000000',
+              landmark: form.addressLine3 || '',
+              isCurrent: true,
+            }] : undefined,
+            emergencyContacts: form.emergencyContactName || form.emergencyContactPhone ? [{
+              name: form.emergencyContactName || 'Emergency Contact',
+              relation: 'Emergency',
+              phone: form.emergencyContactPhone || '0000000000',
+              isPrimary: true,
+            }] : undefined,
+          });
+        }
+        if (editProfileId) {
+          await api.put(`/api/core/profiles/${editProfileId}`, {
+            employmentType: form.employmentType || 'full_time',
+            department: form.department,
+            designation: form.designation,
+            shift: form.shift,
+            hireDate: form.joinDate || undefined,
+            rbacRole: form.role,
+          });
+        }
         showToast('Employee updated');
         setShowModal(false);
       } else {
@@ -636,8 +702,8 @@ export default function EmployeesPage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); clearFormErrs(); }}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
-                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editEmp ? 'Save Changes' : 'Add Employee'}
+                <button className="btn btn-primary" onClick={handleSave} disabled={saving || editLoading}>
+                  {editLoading ? 'Loading...' : saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editEmp ? 'Save Changes' : 'Add Employee'}
                 </button>
               </div>
             </div>

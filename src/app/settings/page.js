@@ -5,7 +5,6 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
-import TimeInput from '@/components/TimeInput';
 
 const NOTIFICATION_RULES = [
   ['Late Login Alert',       'Send alert when employee logs in after threshold', true],
@@ -25,6 +24,7 @@ const TABS = [
   { key: 'designations', label: 'Designations', icon: 'bi-briefcase' },
   { key: 'categories',   label: 'Asset Categories', icon: 'bi-tag' },
   { key: 'shifts',       label: 'Shifts',       icon: 'bi-clock' },
+  { key: 'shiftChanges', label: 'Shift Changes', icon: 'bi-arrow-repeat' },
   { key: 'holidays',     label: 'Holidays',     icon: 'bi-calendar3' },
 ];
 
@@ -61,6 +61,8 @@ const getDefaultPayrollEndDate = () => {
   return `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 };
 
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 function minutesToHrMin(totalMins) {
   const m = Number(totalMins) || 0;
   return { hours: Math.floor(m / 60), minutes: m % 60 };
@@ -71,7 +73,7 @@ function hrMinToMinutes(hours, minutes) {
 
 export default function SettingsPage() {
   const { user } = useAuth();
-  const { formatDate, formatTime, updateSettings } = useSettings();
+  const { formatDate, formatTime, formatDateTime, updateSettings } = useSettings();
   const [tab, setTab]               = useState('general');
   const [departments, setDepartments] = useState([]);
   const [roles, setRoles]           = useState([]);
@@ -93,6 +95,10 @@ export default function SettingsPage() {
   const [generating, setGenerating] = useState(false);
   const [showModal, setShowModal]   = useState(null);
   const [modalForm, setModalForm]   = useState({});
+  const [shiftErrs, setShiftErrs]   = useState({});
+  const [shiftNotifs, setShiftNotifs] = useState([]);
+  const [shiftNotifsLoading, setShiftNotifsLoading] = useState(false);
+  const [shiftSearch, setShiftSearch] = useState('');
   const [toast, setToast]           = useState(null);
   const [notifications, setNotifications] = useState(
     Object.fromEntries(NOTIFICATION_RULES.map(([title, , def]) => [title, def]))
@@ -119,6 +125,18 @@ export default function SettingsPage() {
   };
 
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
+  const visibleTabs = TABS.filter(t => t.key !== 'shiftChanges' || isAdmin);
+
+  useEffect(() => {
+    if (tab !== 'shiftChanges' || !isAdmin) return;
+    let cancelled = false;
+    setShiftNotifsLoading(true);
+    api.get('/api/notifications?scope=all&type=shift')
+      .then(d => { if (!cancelled) setShiftNotifs(Array.isArray(d) ? d : []); })
+      .catch(() => { if (!cancelled) setShiftNotifs([]); })
+      .finally(() => { if (!cancelled) setShiftNotifsLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, isAdmin]);
 
   const load = async () => {
     setLoading(true);
@@ -187,6 +205,17 @@ export default function SettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const saveShift = () => {
+    const errs = {};
+    if (!modalForm.startTime) errs.startTime = 'Start time is required';
+    else if (!TIME_RE.test(modalForm.startTime)) errs.startTime = 'Start time must be in HH:MM (24-hour) format';
+    if (!modalForm.endTime) errs.endTime = 'End time is required';
+    else if (!TIME_RE.test(modalForm.endTime)) errs.endTime = 'End time must be in HH:MM (24-hour) format';
+    setShiftErrs(errs);
+    if (Object.keys(errs).length > 0) return;
+    saveItem('shifts', modalForm);
   };
 
   const deleteItem = async (type, id) => {
@@ -326,7 +355,7 @@ export default function SettingsPage() {
           <div className="card p-2">
             {/* Mobile: horizontal scroll */}
             <div style={{ overflowX: 'auto', display: 'flex', flexDirection: 'row', gap: 4 }} className="d-md-none pb-1">
-              {TABS.map(t => (
+              {visibleTabs.map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={'nav-item-link' + (tab === t.key ? ' active' : '')}
                   style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>
@@ -336,7 +365,7 @@ export default function SettingsPage() {
             </div>
             {/* Desktop: vertical */}
             <div className="d-none d-md-block">
-              {TABS.map(t => (
+              {visibleTabs.map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={'nav-item-link' + (tab === t.key ? ' active' : '')}
                   style={{ marginBottom: 2 }}>
@@ -498,7 +527,7 @@ export default function SettingsPage() {
             <div className="card p-3 p-md-4">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
                 <div className="section-title" style={{ margin: 0 }}>Shift Management</div>
-                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShowModal('shift'); }}>
+                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShiftErrs({}); setShowModal('shift'); }}>
                   <i className="bi bi-plus-lg me-1" />Add Shift
                 </button>
               </div>
@@ -513,7 +542,7 @@ export default function SettingsPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                           <span style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</span>
                           <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...s }); setShowModal('shift'); }}>Edit</button>
+                            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...s }); setShiftErrs({}); setShowModal('shift'); }}>Edit</button>
                             <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('shifts', s._id)}>Delete</button>
                           </div>
                         </div>
@@ -599,6 +628,47 @@ export default function SettingsPage() {
                     ))}
                   </div>
                 </>
+              )}
+            </div>
+          )}
+
+          {/* SHIFT CHANGES */}
+          {tab === 'shiftChanges' && (
+            <div className="card p-3 p-md-4">
+              <div className="section-title mb-1">Shift Change Notifications</div>
+              <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 16 }}>Notifications sent to employees when a shift is created, updated, or reassigned.</div>
+              <input className="form-control mb-3" placeholder="Search by employee or message..."
+                value={shiftSearch}
+                onChange={e => setShiftSearch(e.target.value)} />
+              {shiftNotifsLoading ? (
+                <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
+              ) : (
+                <div className="table-responsive">
+                  <table className="table mb-0">
+                    <thead><tr><th>Employee</th><th>Notification</th><th>When</th></tr></thead>
+                    <tbody>
+                      {shiftNotifs.length === 0 ? (
+                        <tr><td colSpan={3}><div className="empty-state" style={{ padding: 20 }}><i className="bi bi-arrow-repeat" /><h6>No shift change notifications yet</h6></div></td></tr>
+                      ) : shiftNotifs.filter(n => {
+                        const q = shiftSearch.trim().toLowerCase();
+                        if (!q) return true;
+                        return (n.userId?.name || '').toLowerCase().includes(q) || (n.message || '').toLowerCase().includes(q);
+                      }).map(n => (
+                        <tr key={n._id}>
+                          <td style={{ fontSize: 13 }}>
+                            <div style={{ fontWeight: 600 }}>{n.userId?.name || '—'}</div>
+                            <div style={{ fontSize: 12, color: '#94a3b8' }}>{n.userId?.department || n.userId?.email || ''}</div>
+                          </td>
+                          <td style={{ fontSize: 13 }}>
+                            <div style={{ fontWeight: 600 }}>{n.title}</div>
+                            <div style={{ fontSize: 12, color: '#64748b' }}>{n.message}</div>
+                          </td>
+                          <td style={{ fontSize: 13, color: '#64748b', whiteSpace: 'nowrap' }}>{formatDateTime(n.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           )}
@@ -832,11 +902,13 @@ export default function SettingsPage() {
                   </div>
                   <div className="col-md-3">
                     <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Start Time</label>
-                    <TimeInput className="form-control form-control-sm" value={modalForm.startTime || ''} onChange={e => setModalForm(p => ({ ...p, startTime: e.target.value }))} />
+                    <input type="time" className={`form-control form-control-sm${shiftErrs.startTime ? ' is-invalid' : ''}`} value={modalForm.startTime || ''} onChange={e => { setModalForm(p => ({ ...p, startTime: e.target.value })); setShiftErrs(p => ({ ...p, startTime: '' })); }} />
+                    {shiftErrs.startTime && <div className="invalid-feedback d-block" style={{ fontSize: 12 }}>{shiftErrs.startTime}</div>}
                   </div>
                   <div className="col-md-3">
                     <label className="form-label fw-semibold" style={{ fontSize: 13 }}>End Time</label>
-                    <TimeInput className="form-control form-control-sm" value={modalForm.endTime || ''} onChange={e => setModalForm(p => ({ ...p, endTime: e.target.value }))} />
+                    <input type="time" className={`form-control form-control-sm${shiftErrs.endTime ? ' is-invalid' : ''}`} value={modalForm.endTime || ''} onChange={e => { setModalForm(p => ({ ...p, endTime: e.target.value })); setShiftErrs(p => ({ ...p, endTime: '' })); }} />
+                    {shiftErrs.endTime && <div className="invalid-feedback d-block" style={{ fontSize: 12 }}>{shiftErrs.endTime}</div>}
                   </div>
 
                   <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
@@ -982,7 +1054,7 @@ export default function SettingsPage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => saveItem('shifts', modalForm)} disabled={saving}>
+                <button className="btn btn-primary" onClick={saveShift} disabled={saving}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
                 </button>
               </div>

@@ -9,7 +9,7 @@ export default function TimeInput({ value, onChange, className, style, disabled,
         type="text"
         className={className}
         value={formatTime(value, '12h')}
-        onChange={e => onChange(e.target.value ? parseTime(e.target.value) : '')}
+        onChange={e => onChange({ ...e, target: { ...e.target, value: e.target.value ? parseTime(e.target.value) : '' } })}
         disabled={disabled}
         style={style}
         placeholder={placeholder}
