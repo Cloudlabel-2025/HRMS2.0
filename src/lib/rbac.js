@@ -4,7 +4,8 @@
  */
 import { Department } from '@/lib/models/index';
 import User from '@/lib/models/User';
-export { MODULE_ACCESS, getAccess, hasAccess, ADMIN_ROLES, MANAGER_ROLES } from './permissions';
+import { rankOf } from './permissions';
+export { MODULE_ACCESS, getAccess, hasAccess, ADMIN_ROLES, MANAGER_ROLES, rankOf } from './permissions';
 
 // ── Cross-department visibility rules ──────────────────────────────────────────
 
@@ -104,4 +105,26 @@ export async function canManageUser(user, targetUserId) {
   const managedIds = await getManagedUserIds(user);
   if (managedIds === null) return true;
   return managedIds.some(id => id.toString() === targetUserId.toString());
+}
+
+/**
+ * True when the user may assign a task to assigneeUser.
+ * Recruiters can never be assignees; assignment upward is blocked (equal allowed);
+ * non-admins must also manage the assignee (same team).
+ */
+export async function canAssignTask(user, assigneeUser) {
+  if (assigneeUser?.role === 'recruiter') return false;
+  if (rankOf(assigneeUser?.role) > rankOf(user.role)) return false;
+  if (['super_admin', 'admin_full'].includes(user.role)) return true;
+  return canManageUser(user, assigneeUser._id);
+}
+
+/**
+ * True when the user may edit details of / delete a task.
+ * Legacy tasks without assignedBy may only be edited by super_admin/admin_full;
+ * otherwise any user ranked at or above the task creator may edit.
+ */
+export function canEditTaskDetails(user, task) {
+  if (!task.assignedBy) return ['super_admin', 'admin_full'].includes(user.role);
+  return rankOf(user.role) >= rankOf(task.assignedBy?.role);
 }

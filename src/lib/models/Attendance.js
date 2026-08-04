@@ -10,6 +10,8 @@ const AttendanceSchema = new mongoose.Schema({
   breakDeduction: { type: Number, default: 0 },
   breaks: [{
     type: { type: String, required: true },
+    name: { type: String, default: '' },
+    ruleIdx: { type: Number, default: null },
     start: { type: String, default: '' },
     end: { type: String, default: null },
   }],

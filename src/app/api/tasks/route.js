@@ -3,7 +3,7 @@ import { Task, Project } from '@/lib/models/Task';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import User from '@/lib/models/User';
-import { hasAccess, getManagedUserIds, canManageUser } from '@/lib/rbac';
+import { hasAccess, getManagedUserIds, canAssignTask } from '@/lib/rbac';
 import { Notification } from '@/lib/models/index';
 
 async function getTaskStakeholders(assigneeId, actorId) {
@@ -40,7 +40,7 @@ export async function GET(req) {
 
     const tasks = await Task.find(query)
       .populate('assignedTo', 'name avatar')
-      .populate('assignedBy', 'name')
+      .populate('assignedBy', 'name role')
       .populate('projectId', 'name departments')
       .sort({ createdAt: -1 });
 
@@ -110,18 +110,17 @@ export async function POST(req) {
       }
     }
 
-    if (!['super_admin', 'admin_full'].includes(user.role)) {
-      if (!await canManageUser(user, body.assignedTo)) {
-        auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to non-team member (${body.assignedTo})`, 'low', ip, null, user._id);
-        return fail('You can only assign tasks to your team members', 403);
-      }
+    const assignee = await User.findById(body.assignedTo).select('role name').lean();
+    if (!assignee) return fail('Assigned user not found', 404);
+    if (!await canAssignTask(user, assignee)) {
+      auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to invalid assignee (${body.assignedTo})`, 'low', ip, null, user._id);
+      return fail('You can only assign tasks to team members of equal or lower rank', 403);
     }
 
     const task = await Task.create({ ...body, assignedBy: user._id, statusHistory: [{ status: body.status, changedAt: new Date(), changedBy: user._id }] });
     const recipientIds = await getTaskStakeholders(body.assignedTo, user._id);
     if (recipientIds.length) await Notification.insertMany(recipientIds.map(userId => ({ userId, title: 'New Task Assigned', message: `Task assigned: ${task.title}. Due ${task.due}.`, type: 'general', refId: task._id })));
     await task.populate('assignedTo', 'name avatar');
-    const assignee = await User.findById(body.assignedTo).select('name').catch(() => null);
     auditLog('Task Created', 'Tasks', user._id, `Created task "${body.title}" assigned to ${assignee?.name || 'unknown'}`, 'low', ip, null, body.assignedTo);
     return ok(task, 201);
   } catch (e) {

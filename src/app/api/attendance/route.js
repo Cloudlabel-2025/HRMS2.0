@@ -1,7 +1,6 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Shift } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
@@ -10,7 +9,7 @@ import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, determineStatus } from '@/lib/attendance-constants';
-import { getBreakMaxCount, getBreakTypes } from '@/lib/attendance-breaks';
+import { matchBreakRule } from '@/lib/attendance-breaks';
 import { getDepartmentUserIds } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -18,9 +17,9 @@ import { notify } from '@/lib/notify';
 async function getShiftAwareToday(targetUserId) {
   const now = await getTzTime();
   try {
-    const targetUser = await User.findById(targetUserId).select('shift');
+    const targetUser = await User.findById(targetUserId).select('shift shiftId').lean();
     if (!targetUser) return null;
-    const shiftDoc = await Shift.findOne({ name: targetUser.shift || 'Morning (9AM-6PM)' }).lean();
+    const shiftDoc = await resolveShift(targetUser);
     return getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
   } catch {
     return null;
@@ -149,7 +148,9 @@ export async function GET(req) {
         }
       }
       const [h, m] = rec.clockIn.split(':').map(Number);
-      const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      let minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
+      if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
 
       if (rec.clockOut && rec.hoursWorked < cfg.absentThreshold) {
         rec.status = 'absent';
@@ -311,17 +312,16 @@ export async function PUT(req) {
 
     // Enforce break limits from shift config
     if (body.breaks) {
-      const targetUser = await User.findById(targetUserId).select('shift').lean();
-      const shiftDoc = await Shift.findOne({ name: targetUser?.shift || 'Morning (9AM-6PM)' }).lean();
+      const targetUser = await User.findById(targetUserId).select('shift shiftId').lean();
+      const shiftDoc = await resolveShift(targetUser);
       const cfg = await getGlobalConfig();
       const shiftCfg = getShiftConfig(shiftDoc, cfg);
 
-      const typeLabels = { break: 'break(s)', lunch: 'lunch(es)' };
-      for (const type of getBreakTypes(shiftCfg.breaks)) {
-        const allowed = getBreakMaxCount(type, shiftCfg.breaks);
-        const count = body.breaks.filter(b => b.type === type).length;
+      for (const [ruleIdx, rule] of (shiftCfg.breaks || []).entries()) {
+        const allowed = rule.maxCount ?? 1;
+        const count = body.breaks.filter(b => matchBreakRule(b, shiftCfg.breaks)?.index === ruleIdx).length;
         if (count > allowed) {
-          return fail(`You can only take ${allowed} ${type}(s) per day.`, 400);
+          return fail(`You can only take ${allowed} ${rule.name || rule.type}(s) per day.`, 400);
         }
       }
     }

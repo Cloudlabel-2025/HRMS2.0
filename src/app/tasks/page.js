@@ -9,6 +9,7 @@ import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useSettings } from '@/lib/settings';
+import { rankOf } from '@/lib/permissions';
 
 const STATUSES  = ['To Do', 'In Progress', 'Pending', 'Completed', 'Blocked'];
 const PRIORITIES = ['low', 'medium', 'high'];
@@ -82,6 +83,11 @@ export default function TasksPage() {
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
+
+  const canEditTask = (task) => {
+    if (!task?.assignedBy) return ['super_admin', 'admin_full'].includes(user?.role);
+    return rankOf(user?.role) >= rankOf(task.assignedBy?.role);
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -324,6 +330,8 @@ export default function TasksPage() {
   const assignableEmployees = selectedProjectDepts.length > 0
     ? employees.filter(e => selectedProjectDepts.includes(e.department))
     : employees;
+  const assignableByRank = assignableEmployees.filter(e => e.role !== 'recruiter' && rankOf(user?.role) >= rankOf(e.role));
+  const canEditForm = !editTask || canEditTask(editTask);
 
   return (
     <AppShell title="Tasks & Projects">
@@ -430,10 +438,10 @@ export default function TasksPage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>In status</th><th>Due</th>{isAdmin && <th>Edit</th>}</tr></thead>
+                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>In status</th><th>Due</th>{filtered.some(canEditTask) && <th>Edit</th>}</tr></thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={isAdmin ? 8 : 7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
+                      <tr><td colSpan={filtered.some(canEditTask) ? 8 : 7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
                     ) : filtered.slice((listPage - 1) * pageSize, listPage * pageSize).map(task => (
                       <tr key={task._id}>
                         <td>
@@ -459,7 +467,7 @@ export default function TasksPage() {
                         <td><span className="badge" style={{ background: STATUS_COLORS[task.status] + '20', color: STATUS_COLORS[task.status] }}>{task.status}</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}><i className="bi bi-stopwatch me-1" />{formatStatusDuration(getCurrentStatusStartedAt(task))}</td>
                         <td style={{ fontSize: 12, color: '#64748b' }}>{task.due || '—'}</td>
-                        {isAdmin && <td><button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(task)}><i className="bi bi-pencil" /></button></td>}
+                        {canEditTask(task) && <td><button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(task)}><i className="bi bi-pencil" /></button></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -562,15 +570,15 @@ export default function TasksPage() {
                   <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-list-check me-2" />Task Details</div></div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task Title *</label>
-                    <input className="form-control" maxLength={30} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} />
+                    <input className="form-control" maxLength={30} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} disabled={!canEditForm} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description *</label>
-                    <textarea className="form-control" rows={2} value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
+                    <textarea className="form-control" rows={2} value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} disabled={!canEditForm} />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project *</label>
-                    <select className="form-select" value={form.projectId} onChange={e => { const v = e.target.value; const found = projects.find(p => String(p._id) === String(v)); setSelectedProjectObj(found || null); setForm(p => ({ ...p, projectId: v })); }}>
+                    <select className="form-select" value={form.projectId} onChange={e => { const v = e.target.value; const found = projects.find(p => String(p._id) === String(v)); setSelectedProjectObj(found || null); setForm(p => ({ ...p, projectId: v })); }} disabled={!canEditForm}>
                       <option value="">Select Project</option>
                       {projects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
                     </select>
@@ -578,9 +586,9 @@ export default function TasksPage() {
                   {isAdmin && (
                     <div className="col-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To *</label>
-                      <select className="form-select assign-select" value={form.assignedTo} onChange={e => setForm(p => ({ ...p, assignedTo: e.target.value }))} disabled={!selectedProjectObj}>
+                      <select className="form-select assign-select" value={form.assignedTo} onChange={e => setForm(p => ({ ...p, assignedTo: e.target.value }))} disabled={!canEditForm || !selectedProjectObj}>
                         <option value="">Select employee</option>
-                        {assignableEmployees.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}{selectedProjectDepts.length > 0 ? ` (${e.department})` : ''}</option>)}
+                        {assignableByRank.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}{selectedProjectDepts.length > 0 ? ` (${e.department})` : ''}</option>)}
                       </select>
                       {selectedProjectDepts.length > 0 && (
                         <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Showing employees from selected project's departments</div>
@@ -589,19 +597,19 @@ export default function TasksPage() {
                   )}
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Priority *</label>
-                    <select className="form-select" value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value }))}>
+                    <select className="form-select" value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value }))} disabled={!canEditForm}>
                       {PRIORITIES.map(p => <option key={p}>{p}</option>)}
                     </select>
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status *</label>
-                    <select className="form-select" value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))}>
+                    <select className="form-select" value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} disabled={!canEditForm}>
                       {STATUSES.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
-                    <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} />
+                    <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} disabled={!canEditForm} />
                   </div>
                   {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><div style={{ display: 'flex', gap: 8 }}><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /><button type="button" className="btn btn-outline-primary" onClick={addTaskActivity} disabled={saving} title="Add dated comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} /></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-paperclip me-2" />Documents</div></div></>}
                   {editTask && <div className="col-12"><div className="row g-2"><div className="col-md-4"><input className="form-control" placeholder="Document name" value={uploadForm.name} onChange={e => setUploadForm(p => ({ ...p, name: e.target.value }))} /></div><div className="col-md-4"><input className="form-control" type="file" onChange={e => { const file = e.target.files?.[0]; if (file) { if (file.size > 3 * 1024 * 1024) { showToast('Document must be smaller than 3 MB', 'error'); e.target.value = ''; return; } setSelectedFile(file); setUploadForm(p => ({ ...p, name: p.name || file.name, fileType: file.name.split('.').pop() || p.fileType, fileSize: `${(file.size / 1024).toFixed(1)} KB` })); } }} /></div><div className="col-md-4"><input className="form-control" placeholder="Or paste document URL" value={uploadForm.fileUrl} onChange={e => setUploadForm(p => ({ ...p, fileUrl: e.target.value }))} /></div><div className="col-12"><small className="text-muted">Upload a document under 3 MB or provide a document URL.</small><button type="button" className="btn btn-sm btn-outline-primary ms-2" onClick={handleUploadDoc} disabled={saving || fileUploading}><i className="bi bi-upload me-1" />{fileUploading ? 'Uploading...' : 'Add Document'}</button></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginTop: 5, marginBottom: 4 }}>Uploaded Files</div><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 8 }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: '5px 3px', borderBottom: '1px solid #f1f5f9' }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a></div>) : <span style={{ color: '#64748b', fontSize: 12 }}>No files uploaded for this task.</span>}</div></div></div></div>}
@@ -609,7 +617,7 @@ export default function TasksPage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                <button className="btn btn-primary" onClick={handleSave} disabled={saving || !canEditForm}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editTask ? 'Save Changes' : 'Create Task'}
                 </button>
               </div>

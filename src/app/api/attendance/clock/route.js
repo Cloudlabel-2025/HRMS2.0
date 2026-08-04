@@ -11,7 +11,7 @@ import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
-import { calculateBreakDeduction, getBreakAllowance } from '@/lib/attendance-breaks';
+import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 
@@ -53,19 +53,24 @@ export async function POST(req) {
     const ip = req.headers.get('x-forwarded-for') || '';
 
     if (action === 'in') {
-      const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null });
+      const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
       if (openRecord) {
         if (await checkAndApplyAutoLogout(openRecord, now, cfg, shiftDoc, isEmployer(user.role))) {
           await openRecord.save();
+          record = await Attendance.findOne({ userId: user._id, date: today });
+        } else if (openRecord.date === today) {
+          // Idempotent: the open session is the resolved-date record. Return it as success
+          // instead of a lock-out so page refreshes / double-clicks can't wedge the user.
+          return ok({ record: openRecord, alreadyClockedIn: true, time: timeStr });
         } else {
-          auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active`, 'low', ip, null, user._id);
+          auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active (${openRecord.date})`, 'low', ip, null, user._id);
           return fail('You are already clocked in and have an active session.', 400);
         }
       }
 
       if (record?.clockIn) {
-        auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in today`, 'low', ip, null, user._id);
-        return fail('Already clocked in today', 400);
+        auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in today (idempotent success)`, 'low', ip, null, user._id);
+        return ok({ record, alreadyClockedIn: true, time: timeStr });
       }
 
       const onLeave = await Leave.findOne({
@@ -167,7 +172,9 @@ export async function POST(req) {
       }
 
       const [h, m] = timeStr.split(':').map(Number);
-      const minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      let minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
+      if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
+      if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
       let lateFlag = false;
       let status = 'present';
 
@@ -260,16 +267,24 @@ export async function POST(req) {
       }
 
     } else if (action === 'out') {
-      if (!record?.clockIn) {
+      // Clock-out must find the OPEN record regardless of the resolved date:
+      // a night-shift employee clocking out after midnight may belong to a record
+      // whose shift-aware date is "yesterday". Prefer the open record, then fall
+      // back to the resolved-date record when it is itself open.
+      let outRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
+      if (!outRecord && record?.clockIn && !record?.clockOut) {
+        outRecord = record;
+      }
+      if (!outRecord) {
+        if (record?.clockOut) {
+          auditLog('Clock Out Attempted', 'Attendance', user._id, `Already clocked out today`, 'low', ip, null, user._id);
+          return fail('Already clocked out today', 400);
+        }
         auditLog('Clock Out Attempted', 'Attendance', user._id, `Not clocked in yet`, 'low', ip, null, user._id);
         return fail('You have not clocked in yet', 400);
       }
-      if (record?.clockOut) {
-        auditLog('Clock Out Attempted', 'Attendance', user._id, `Already clocked out today`, 'low', ip, null, user._id);
-        return fail('Already clocked out today', 400);
-      }
 
-      const [ih, im] = record.clockIn.split(':').map(Number);
+      const [ih, im] = outRecord.clockIn.split(':').map(Number);
       const [oh, om] = timeStr.split(':').map(Number);
       let elapsedMins = (oh * 60 + om) - (ih * 60 + im);
       if (elapsedMins < 0) elapsedMins += 24 * 60; // overnight support
@@ -279,7 +294,7 @@ export async function POST(req) {
       let finalMinutes = elapsedMins;
 
       // Recalculate break deduction from actual break records
-      const updatedBreaks = (record.breaks || []).map(row => (
+      const updatedBreaks = (outRecord.breaks || []).map(row => (
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
       const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
@@ -288,26 +303,27 @@ export async function POST(req) {
         totalDeduction: deduction,
         breakLog: updatedBreaks.map(b => ({
           type: b.type,
+          name: b.name,
           start: b.start,
           end: b.end,
           duration: diffMins(b.start, b.end),
-          exceeded: diffMins(b.start, b.end) > getBreakAllowance(b.type, cfg.breaks),
+          exceeded: diffMins(b.start, b.end) > getBreakAllowanceForEntry(b, cfg.breaks),
         })),
       };
-      let status = record.status;
+      let status = outRecord.status;
       if (hoursWorked < cfg.absentThreshold) {
         status = 'absent';
       }
 
       record = await Attendance.findOneAndUpdate(
-        { userId: user._id, date: today },
+        { _id: outRecord._id },
         {
           clockOut: finalClockOut,
           hoursWorked,
-          baseHoursWorked: record.baseHoursWorked ?? baseHours,
+          baseHoursWorked: outRecord.baseHoursWorked ?? baseHours,
           autoLoggedOut: isAutoLogout,
           status,
-          workProgress: (record.workProgress || []).map(row => (
+          workProgress: (outRecord.workProgress || []).map(row => (
             row.startTime && !row.endTime
               ? { ...(row.toObject ? row.toObject() : row), endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
               : row

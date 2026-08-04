@@ -33,15 +33,53 @@ export function isBreakType(type) {
   return typeof type === 'string' && type !== 'task';
 }
 
+export function getRuleAllowance(rule) {
+  return (rule?.maxDuration ?? 0) * (rule?.maxCount ?? 1);
+}
+
+// Match a break entry to the shift-config rule it belongs to.
+// Preference: explicit ruleIdx (set by the client when a rule tab is used),
+// then rule name + type, then first rule of the same type (legacy entries).
+export function matchBreakRule(entry, shiftBreaks) {
+  const rules = shiftBreaks || [];
+  if (entry && entry.ruleIdx != null && !Number.isNaN(Number(entry.ruleIdx))) {
+    const idx = Number(entry.ruleIdx);
+    if (rules[idx]) return { rule: rules[idx], index: idx };
+  }
+  if (entry?.name) {
+    const named = rules.findIndex(r => r.type === entry.type && (r.name || '') === entry.name);
+    if (named !== -1) return { rule: rules[named], index: named };
+  }
+  const typed = rules.findIndex(r => r.type === entry?.type);
+  if (typed !== -1) return { rule: rules[typed], index: typed };
+  return null;
+}
+
+// Allowance (maxDuration x maxCount) for the rule an entry belongs to.
+// Falls back to per-type aggregate allowance for unmatched/legacy entries.
+export function getBreakAllowanceForEntry(entry, shiftBreaks) {
+  const m = matchBreakRule(entry, shiftBreaks);
+  if (m) return getRuleAllowance(m.rule);
+  return getBreakAllowance(entry?.type, shiftBreaks);
+}
+
 export function calculateBreakDeduction(breaks, shiftBreaks) {
-  const totals = {};
+  const rules = shiftBreaks || [];
+  const byRule = {};
+  const byType = {};
   for (const b of (breaks || [])) {
     if (!b.end) continue;
-    totals[b.type] = (totals[b.type] || 0) + diffMins(b.start, b.end);
+    const dur = diffMins(b.start, b.end);
+    const m = matchBreakRule(b, rules);
+    if (m) byRule[m.index] = (byRule[m.index] || 0) + dur;
+    else byType[b.type] = (byType[b.type] || 0) + dur;
   }
   let deduction = 0;
-  for (const [type, total] of Object.entries(totals)) {
-    deduction += Math.max(0, total - getBreakAllowance(type, shiftBreaks));
+  for (const [idx, total] of Object.entries(byRule)) {
+    deduction += Math.max(0, total - getRuleAllowance(rules[Number(idx)]));
+  }
+  for (const [type, total] of Object.entries(byType)) {
+    deduction += Math.max(0, total - getBreakAllowance(type, rules));
   }
   return deduction;
 }

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -10,7 +10,7 @@ import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
-import { getBreakAllowance, getBreakMaxCount, calculateBreakDeduction, isBreakType, breakStyle } from '@/lib/attendance-breaks';
+import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
 import Pagination from '@/components/Pagination';
 import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
@@ -88,6 +88,7 @@ export default function AttendancePage() {
 
   const [shifts, setShifts] = useState([]);
   const [shiftConfig, setShiftConfig] = useState(null);
+  const [shiftsLoaded, setShiftsLoaded] = useState(false);
 
   // Progress tab states
   const [progressSearch, setProgressSearch] = useState('');
@@ -272,16 +273,35 @@ export default function AttendancePage() {
 
   const isAdmin = canReview;
   const isSuperAdmin = useMemo(() => user?.role === 'super_admin', [user?.role]);
-  const today   = useMemo(() => {
+  const [today, setToday] = useState(() => {
     const d = new Date();
-    if (user?.shift && shifts.length > 0) {
-      const matched = shifts.find(s => s.name === user.shift);
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  });
+
+  // Re-evaluate the shift-aware "today" every 60s and when the tab regains
+  // visibility, so night-shift users don't get stuck on a stale date after
+  // midnight (and don't get a spurious "clock in" on the calendar date).
+  const computeToday = useCallback((d, shiftsList, u) => {
+    if ((u?.shift || u?.shiftId) && shiftsList.length > 0) {
+      const matched = shiftsList.find(s => (u?.shiftId && s._id === u.shiftId) || s.name === u?.shift);
       if (matched?.startTime && matched?.endTime) {
         return getAttendanceDate(d, matched.startTime, matched.endTime);
       }
     }
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  }, [user?.shift, shifts]);
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const apply = () => {
+      const next = computeToday(new Date(), shifts, user);
+      setToday(prev => prev === next ? prev : next);
+    };
+    apply();
+    const timer = setInterval(apply, 60000);
+    document.addEventListener('visibilitychange', apply);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', apply); };
+  }, [user, shifts, computeToday]);
   const month   = today.slice(0, 7);
 
   // Team tab filters
@@ -352,7 +372,7 @@ export default function AttendancePage() {
     if (tab === 'progress' && selectedProgressUserId) {
       loadProgressRecord(selectedProgressUserId);
     }
-  }, [selectedProgressUserId, tab]);
+  }, [selectedProgressUserId, tab, today]);
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -377,12 +397,11 @@ export default function AttendancePage() {
     api.get('/api/settings?type=shifts').then(d => {
       const allShifts = Array.isArray(d) ? d : [];
       setShifts(allShifts);
+      setShiftsLoaded(true);
       const matched = allShifts.find(s => (user?.shiftId && s._id === user.shiftId) || s.name === user?.shift);
       setShiftConfig(matched || null);
-    }).catch(() => {});
+    }).catch(() => setShiftsLoaded(true));
     Promise.all([
-      loadTodayRecord(),
-      isAdmin ? loadTeamToday() : Promise.resolve(),
       isAdmin ? loadEmployees() : Promise.resolve(),
       loadRegRequests(regScope),
       api.get('/api/attendance/available-tasks').then(tasks => {
@@ -390,6 +409,12 @@ export default function AttendancePage() {
       }).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [user]);
+
+  useEffect(() => {
+    if (!user || !shiftsLoaded) return;
+    loadTodayRecord();
+    if (isAdmin) loadTeamToday();
+  }, [today, shiftsLoaded, user]);
 
   // Warn on unsaved work progress
   useEffect(() => {
@@ -423,10 +448,11 @@ export default function AttendancePage() {
       let payload = { action };
       const result = await api.post('/api/attendance/clock', payload);
       setTodayRecord(result.record);
-      if (action === 'in' && result.record?.lateFlag) {
+      if (action === 'in' && result.alreadyClockedIn) {
+        showToast('You are already clocked in', 'info');
+      } else if (action === 'in' && result.record?.lateFlag) {
         showToast('Late clock-in detected — your attendance has been marked as Late', 'warning');
-      }
-      if (action === 'out' && result.deductionBreakdown) {
+      } else if (action === 'out' && result.deductionBreakdown) {
         showToast(
           `Clocked out — ${result.hoursWorked} min worked, ${result.deductionBreakdown.totalDeduction} min deducted for breaks`,
           'info'
@@ -471,11 +497,14 @@ export default function AttendancePage() {
 
   // ── Break / Lunch helpers ──────────────────────────────────────────────────
   // We store breaks in todayRecord locally; in a real app you'd persist via API.
-  // Structure: todayRecord.breaks = [{ type:'break'|'lunch', start, end }]
+  // Structure: todayRecord.breaks = [{ type, name, ruleIdx, start, end }]
+  // A break entry is matched to its shift-config rule via ruleIdx (preferred),
+  // then name+type, then type — so multiple same-type rules stay independent.
 
-  const getBreaks = (type) => (todayRecord?.breaks || []).filter(b => b.type === type);
+  const getRuleBreaks = (rule, ruleIdx) =>
+    (todayRecord?.breaks || []).filter(b => matchBreakRule(b, breakRules)?.index === ruleIdx);
 
-  const activeBreak = (type) => getBreaks(type).find(b => b.start && !b.end);
+  const activeBreakForRule = (rule, ruleIdx) => getRuleBreaks(rule, ruleIdx).find(b => b.start && !b.end);
   const anyActiveBreak = () => (todayRecord?.breaks || []).find(b => b.start && !b.end);
   const getWorkProgress = () => todayRecord?.workProgress || [];
   const activeWorkIndex = () => getWorkProgress().findIndex(row => row.startTime && !row.endTime);
@@ -498,10 +527,11 @@ export default function AttendancePage() {
   });
 
   const breakLabel = (type) => (shiftConfig?.breaks || []).find(b => b.type === type)?.name || type || 'Break';
+  const breakLabelForRule = (rule) => rule?.name || rule?.type || 'Break';
 
-  const buildBreakRow = (type, startTime) => ({
-    type,
-    taskDetails: breakLabel(type),
+  const buildBreakRow = (rule, startTime) => ({
+    type: rule.type,
+    taskDetails: breakLabelForRule(rule),
     startTime,
     endTime: null,
     status: 'work_in_progress',
@@ -595,47 +625,48 @@ export default function AttendancePage() {
     } catch (e) { showToast(e.message, 'error'); }
   };
 
-  const totalBreakMins = (type) =>
-    getBreaks(type).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
+  const totalRuleMins = (rule, ruleIdx) =>
+    getRuleBreaks(rule, ruleIdx).reduce((acc, b) => acc + (b.end ? diffMins(b.start, b.end) : 0), 0);
 
-  const overMins = (type) => {
-    const allowance = getBreakAllowance(type, shiftConfig?.breaks);
-    return Math.max(0, totalBreakMins(type) - allowance);
+  const overMinsForRule = (rule, ruleIdx) => {
+    const allowance = getRuleAllowance(rule);
+    return Math.max(0, totalRuleMins(rule, ruleIdx) - allowance);
   };
 
-  const handleBreakClock = async (type) => {
+  const handleBreakClock = async (rule, ruleIdx) => {
     setBreakLoading(true);
     try {
       const now = nowTimeStr();
-      const active = activeBreak(type);
-      const label = breakLabel(type);
+      const type = rule.type;
+      const label = breakLabelForRule(rule);
+      const active = activeBreakForRule(rule, ruleIdx);
       let updatedBreaks = [...(todayRecord?.breaks || [])];
 
       let updatedWorkProgress = [...(todayRecord?.workProgress || [])];
 
       if (!active) {
         // Start break/lunch
-        const maxCount = getBreakMaxCount(type, shiftConfig?.breaks);
-        if (getBreaks(type).length >= maxCount) {
+        const maxCount = rule.maxCount ?? 1;
+        if (getRuleBreaks(rule, ruleIdx).length >= maxCount) {
           showToast(`You have already taken the maximum ${maxCount} ${label}(s) for today.`, 'error');
           setBreakLoading(false);
           return;
         }
-        updatedBreaks.push({ type, start: now, end: null });
+        updatedBreaks.push({ type, name: rule.name || '', ruleIdx, start: now, end: null });
         updatedWorkProgress = closeActiveWork(updatedWorkProgress, now, 'stopped');
-        updatedWorkProgress.push(buildBreakRow(type, now));
+        updatedWorkProgress.push(buildBreakRow(rule, now));
         showToast(`${label} started at ${now}`);
       } else {
         // End break/lunch
-        const idx = updatedBreaks.findIndex(b => b.type === type && b.start && !b.end);
+        const idx = updatedBreaks.findIndex(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.start && !b.end);
         if (idx !== -1) updatedBreaks[idx] = { ...updatedBreaks[idx], end: now };
-        const workIdx = updatedWorkProgress.findIndex(row => row.type === type && row.startTime && !row.endTime);
+        const workIdx = updatedWorkProgress.findIndex(row => row.type === type && (rule.name ? row.taskDetails === rule.name : true) && row.startTime && !row.endTime);
         if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
         if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
-        const typeMins = updatedBreaks.filter(b => b.type === type && b.end)
+        const ruleMins = updatedBreaks.filter(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.end)
           .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
-        const over = Math.max(0, typeMins - getBreakAllowance(type, shiftConfig?.breaks));
+        const over = Math.max(0, ruleMins - getRuleAllowance(rule));
         if (over > 0) {
           showToast(`${label} ended — ${over} min over allowance. Working hours reduced.`, 'error');
         } else {
@@ -643,8 +674,8 @@ export default function AttendancePage() {
         }
       }
 
-      // Recalculate deduction: total over-time for all break types
-      const totalDeduction = calculateBreakDeduction(updatedBreaks, shiftConfig?.breaks || []);
+      // Recalculate deduction: total over-time across all break rules
+      const totalDeduction = calculateBreakDeduction(updatedBreaks, breakRules);
 
       // Recalculate effective hours (base hoursWorked minus deductions)
       const baseHours = todayRecord?.baseHoursWorked ?? todayRecord?.hoursWorked ?? 0;
@@ -761,13 +792,15 @@ export default function AttendancePage() {
 
   const breakInstances = useMemo(() => {
     const result = [];
-    for (const rule of breakRules) {
+    breakRules.forEach((rule, ruleIdx) => {
       const count = rule.maxCount || 1;
       const style = breakStyle(rule.type);
       for (let i = 0; i < count; i++) {
         result.push({
-          key: `${rule.type}-${i}`,
+          key: `${ruleIdx}-${i}`,
+          ruleIdx,
           type: rule.type,
+          name: rule.name || '',
           label: rule.name || rule.type || 'Break',
           icon: style.icon,
           color: style.color,
@@ -776,7 +809,7 @@ export default function AttendancePage() {
           index: i,
         });
       }
-    }
+    });
     return result;
   }, [breakRules]);
 
@@ -789,20 +822,20 @@ export default function AttendancePage() {
   );
 
   // Break/Lunch UI helpers
-  const renderBreakPanel = (rule) => {
+  const renderBreakPanel = (rule, ruleIdx) => {
     const type      = rule.type;
-    const label     = rule.name || type || 'Break';
+    const label     = breakLabelForRule(rule);
     const style     = breakStyle(type);
-    const allowance = getBreakAllowance(type, breakRules);
-    const maxCount  = getBreakMaxCount(type, breakRules);
-    const taken     = getBreaks(type).length;
+    const allowance = getRuleAllowance(rule);
+    const maxCount  = rule.maxCount ?? 1;
+    const taken     = getRuleBreaks(rule, ruleIdx).length;
     const color     = style.color;
     const bgColor   = style.bg;
     const icon      = style.icon;
-    const active    = activeBreak(type);
-    const totalMins = totalBreakMins(type);
-    const over      = overMins(type);
-    const history   = getBreaks(type).filter(b => b.end);
+    const active    = activeBreakForRule(rule, ruleIdx);
+    const totalMins = totalRuleMins(rule, ruleIdx);
+    const over      = overMinsForRule(rule, ruleIdx);
+    const history   = getRuleBreaks(rule, ruleIdx).filter(b => b.end);
 
     return (
       <div style={{ background: bgColor, border: `1px solid ${color}30`, borderRadius: 12, padding: 16 }}>
@@ -834,7 +867,7 @@ export default function AttendancePage() {
           <button
             className="btn btn-sm w-100"
             disabled={breakLoading}
-            onClick={() => handleBreakClock(type)}
+            onClick={() => handleBreakClock(rule, ruleIdx)}
             style={{ fontSize: 13, fontWeight: 600, background: active ? '#ef444415' : color + '15', color: active ? '#ef4444' : color, border: `1px solid ${active ? '#ef4444' : color}30` }}>
             {breakLoading
               ? <span className="spinner-border spinner-border-sm" />
@@ -1135,12 +1168,12 @@ export default function AttendancePage() {
           {!isSuperAdmin && (
             <>
               {!clockedIn && !clockedOut && (
-                <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading}>
+                <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading || !shiftsLoaded}>
                   {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
                 </button>
               )}
               {clockedIn && !clockedOut && (
-                <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading}>
+                <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading || !shiftsLoaded}>
                   {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
                 </button>
               )}
@@ -1348,12 +1381,12 @@ export default function AttendancePage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                     {!clockedIn && (
-                      <button className="btn btn-success btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('in')} disabled={clockLoading}>
+                      <button className="btn btn-success btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('in')} disabled={clockLoading || !shiftsLoaded}>
                         {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-play-circle me-2" />Clock In</>}
                       </button>
                     )}
                     {clockedIn && !clockedOut && (
-                      <button className="btn btn-danger btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('out')} disabled={clockLoading}>
+                      <button className="btn btn-danger btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('out')} disabled={clockLoading || !shiftsLoaded}>
                         {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-stop-circle me-2" />Clock Out</>}
                       </button>
                     )}
@@ -1386,9 +1419,9 @@ export default function AttendancePage() {
                             transition: 'all 0.15s',
                           }}>
                           <i className={`bi ${style.icon}`} style={{ fontSize: 14 }} />{label}
-                          {overMins(rule.type) > 0 && (
+                          {overMinsForRule(rule, idx) > 0 && (
                             <span style={{ fontSize: 10, background: '#fef2f2', color: '#ef4444', padding: '1px 6px', borderRadius: 10, fontWeight: 700 }}>
-                              −{overMins(rule.type)}m
+                              −{overMinsForRule(rule, idx)}m
                             </span>
                           )}
                         </button>
@@ -1396,7 +1429,7 @@ export default function AttendancePage() {
                     })}
                     </div>
                     <div style={{ padding: 16 }}>
-                      {renderBreakPanel(activeRule)}
+                      {renderBreakPanel(activeRule, breakRuleIdx)}
                     </div>
                   </div>
                 </div>
@@ -1713,7 +1746,7 @@ export default function AttendancePage() {
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. In</div><div style={{ fontSize: 13, fontWeight: 600 }}>{formatTime(r.requestedIn) || '—'}</div></div>
                       <div className="col-6"><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. Out</div><div style={{ fontSize: 13, fontWeight: 600 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</div></div>
                       {regBreakTypes.map(type => (
-                        <div className="col-6" key={type}><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. {type}</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === type); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? <span key={b._idx} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span> : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []); })()}</div></div>
+                        <div className="col-6" key={type}><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. {type}</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === type); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? <span key={b.idx ?? 0} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span> : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []); })()}</div></div>
                       ))}
                     </div>
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
@@ -1785,14 +1818,14 @@ export default function AttendancePage() {
                       </div>
                     </div>
                     {breakInstances.map(bi => {
-                      const entryIndex = regForm.requestedBreaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
+                      const entryIndex = regForm.requestedBreaks.findIndex(rb => rb.ruleIdx === bi.ruleIdx && rb.idx === bi.index);
                       const entry = entryIndex !== -1 ? regForm.requestedBreaks[entryIndex] : null;
 
                       const updateBreak = (field, value) => {
                         setRegForm(prev => {
                           const breaks = [...(prev.requestedBreaks || [])];
-                          const idx = breaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
-                          const updated = { ...(breaks[idx] || { type: bi.type, _idx: bi.index }), [field]: value };
+                          const idx = breaks.findIndex(rb => rb.ruleIdx === bi.ruleIdx && rb.idx === bi.index);
+                          const updated = { ...(breaks[idx] || { type: bi.type, name: bi.name, ruleIdx: bi.ruleIdx, idx: bi.index }), [field]: value };
                           if (idx !== -1) breaks[idx] = updated;
                           else breaks.push(updated);
                           return { ...prev, requestedBreaks: breaks };
@@ -1810,7 +1843,7 @@ export default function AttendancePage() {
                         <div key={bi.key} style={{ background: bi.bgColor, borderRadius: 12, padding: 16, border: `1px solid ${bi.borderColor}` }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                             <i className={`bi ${bi.icon}`} style={{ color: bi.color, fontSize: 14 }} />
-                            <span style={{ fontSize: 13, fontWeight: 700 }}>{bi.label}{breakInstances.filter(b => b.type === bi.type).length > 1 ? ` #${bi.index + 1}` : ''}</span>
+                            <span style={{ fontSize: 13, fontWeight: 700 }}>{bi.label}{breakInstances.filter(b => b.ruleIdx === bi.ruleIdx).length > 1 ? ` #${bi.index + 1}` : ''}</span>
                           </div>
                           <div className="row g-2">
                             <div className="col-6">
@@ -1833,8 +1866,8 @@ export default function AttendancePage() {
                                       const checked = e.target.checked;
                                       setRegForm(prev => {
                                         const breaks = [...(prev.requestedBreaks || [])];
-                                        const idx = breaks.findIndex(rb => rb.type === bi.type && rb._idx === bi.index);
-                                        const updated = { type: bi.type, _idx: bi.index, start: checked ? '' : (breaks[idx]?.start || ''), end: checked ? '' : (breaks[idx]?.end || ''), notYet: checked };
+                                        const idx = breaks.findIndex(rb => rb.ruleIdx === bi.ruleIdx && rb.idx === bi.index);
+                                        const updated = { type: bi.type, name: bi.name, ruleIdx: bi.ruleIdx, idx: bi.index, start: checked ? '' : (breaks[idx]?.start || ''), end: checked ? '' : (breaks[idx]?.end || ''), notYet: checked };
                                         if (idx !== -1) breaks[idx] = updated;
                                         else breaks.push(updated);
                                         return { ...prev, requestedBreaks: breaks };

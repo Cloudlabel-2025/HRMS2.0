@@ -1,6 +1,6 @@
 import { calculateHoursWorked } from './attendance-constants';
 import { calculateBreakDeduction } from './attendance-breaks';
-import { getShiftEndMinutes } from './shift-utils';
+import { getShiftEndMinutes, resolveShift, isShiftWorkingDay } from './shift-utils';
 import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
 import { Holiday, Employee } from './models/index';
 import User from './models/User';
@@ -89,7 +89,7 @@ export async function markAbsentEmployees(dateStr) {
   if (!isWorkingDay(dateStr, config, holidays)) return 0;
 
   const employees = await Employee.find({ status: 'active' })
-    .populate('userId', 'name teamLeadId teamAdminId role')
+    .populate('userId', 'name teamLeadId teamAdminId role shift shiftId')
     .lean();
 
   const activeEmployees = employees.filter(e => e.userId?.role && e.userId.role !== 'super_admin');

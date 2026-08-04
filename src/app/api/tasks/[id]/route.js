@@ -2,7 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Task, Project } from '@/lib/models/Task';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { canManageUser, getManagedUserIds } from '@/lib/rbac';
+import { canManageUser, getManagedUserIds, canEditTaskDetails } from '@/lib/rbac';
 import User from '@/lib/models/User';
 import { Notification } from '@/lib/models/index';
 
@@ -25,7 +25,7 @@ export async function PUT(req, { params }) {
     await connectDB();
 
     const body = await req.json();
-    const task = await Task.findById(id);
+    const task = await Task.findById(id).populate('assignedBy', 'name role');
     if (!task) return fail('Task not found', 404);
 
     const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_admin', 'team_lead'];
@@ -64,9 +64,9 @@ export async function PUT(req, { params }) {
       return ok(updated);
     }
 
-    // Full update — managers/admins only
+    // Full update — manager/admin only, subject to creator hierarchy
     if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
-    if (!await canManageUser(user, task.assignedTo)) return fail('Access denied', 403);
+    if (!canEditTaskDetails(user, task)) return fail('Access denied', 403);
     if (!body.title || !body.description || !body.projectId || !body.assignedTo || !body.priority || !body.due) {
       return fail('All fields are required', 400);
     }
@@ -123,9 +123,9 @@ export async function DELETE(req, { params }) {
     if (error) return error;
     if (!['super_admin','admin_full','team_admin','team_lead'].includes(user.role)) return fail('Access denied', 403);
     await connectDB();
-    const task = await Task.findById(id);
+    const task = await Task.findById(id).populate('assignedBy', 'name role');
     if (!task) return fail('Task not found', 404);
-    if (!await canManageUser(user, task.assignedTo)) return fail('Access denied', 403);
+    if (!canEditTaskDetails(user, task)) return fail('Access denied', 403);
     await Task.findByIdAndDelete(id);
     auditLog('Task Deleted', 'Tasks', user._id, `Deleted task "${task.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, task.assignedTo);
     return ok({ deleted: true });

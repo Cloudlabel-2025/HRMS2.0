@@ -7,7 +7,8 @@ import { ok, fail } from '@/lib/jwt';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
-import { getShiftEndMinutes } from '@/lib/shift-utils';
+import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
+import { getGlobalConfig } from '@/lib/payroll-cycle';
 
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -38,6 +39,7 @@ export async function POST(req) {
 
     // Get all shifts
     const shifts = await Shift.find({}).lean();
+    const globalConfig = await getGlobalConfig();
     const autoLoggedOut = [];
 
     for (const shift of shifts) {
@@ -58,7 +60,7 @@ export async function POST(req) {
 
       const effectiveNowMinutes = nowMinutes < effectiveEndMinutes ? nowMinutes + 24 * 60 : nowMinutes;
 
-      const shiftCfg = getShiftConfig(shift, {});
+      const shiftCfg = getShiftConfig(shift, globalConfig);
       if (effectiveNowMinutes < effectiveEndMinutes + shiftCfg.autoLogoutBuffer) continue;
 
       // Resolve attendance date for this shift at the current time
@@ -79,9 +81,15 @@ export async function POST(req) {
         searchDates.push(yesterdayStr);
       }
 
-      // Find users with this shift name who haven't clocked out
-      const users = await User.find({ shift: shift.name, status: 'active', role: { $ne: 'super_admin' } }).lean();
+      // Find users on this shift (by shiftId first, falling back to the shift
+      // name so a stale user.shift string still matches) who haven't clocked out
+      const users = await User.find({
+        $or: [{ shift: shift.name }, { shiftId: shift._id }],
+        status: 'active',
+        role: { $ne: 'super_admin' },
+      }).select('shift shiftId').lean();
       const userIds = users.map(u => u._id);
+      const usersById = new Map(users.map(u => [u._id.toString(), u]));
 
       if (userIds.length === 0) continue;
 
@@ -97,8 +105,12 @@ export async function POST(req) {
         const [ih, im] = record.clockIn.split(':').map(Number);
         const clockInMins = ih * 60 + im;
 
-        const recordShiftCfg = getShiftConfig(shift, {});
-        const endMins = getShiftEndMinutes(shift, {});
+        // Resolve the record owner's ACTUAL shift so a stale user.shift name can
+        // never trigger the wrong shift's deadline.
+        const recordUser = usersById.get(record.userId.toString());
+        const userShift = (await resolveShift(recordUser)) || shift;
+        const recordShiftCfg = getShiftConfig(userShift, globalConfig);
+        const endMins = getShiftEndMinutes(userShift, globalConfig);
         const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);
         if (deadlineMins <= clockInMins) continue;
 

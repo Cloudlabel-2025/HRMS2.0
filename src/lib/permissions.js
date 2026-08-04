@@ -45,3 +45,7 @@ export function getAccess(role, module) {
 export function hasAccess(role, module) {
   return !!getAccess(role, module);
 }
+
+// ── Role hierarchy ────────────────────────────────────────────────────────────
+export const ROLE_RANK = { super_admin: 5, admin_full: 4, team_lead: 3, team_admin: 2, employee: 1, sme: 1, intern: 0, recruiter: 0 };
+export const rankOf = (role) => ROLE_RANK[role] ?? 0;

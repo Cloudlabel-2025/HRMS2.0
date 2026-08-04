@@ -360,6 +360,9 @@ export const AttendanceRegularizeSchema = z.object({
   requestedOutNotYet: z.boolean().optional(),
   requestedBreaks: z.array(z.object({
     type: z.string().min(1, 'Break type required'),
+    name: z.string().optional().default(''),
+    ruleIdx: z.number().optional().nullable(),
+    idx: z.number().optional().nullable(),
     start: z.string().regex(TIME_RE, 'Time must be HH:MM').optional().or(z.literal('')),
     end: z.string().regex(TIME_RE, 'Time must be HH:MM').optional().or(z.literal('')),
     notYet: z.boolean().optional(),

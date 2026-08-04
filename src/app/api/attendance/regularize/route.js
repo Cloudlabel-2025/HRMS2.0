@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { AttendanceRegularization, Notification, Shift } from '@/lib/models/index';
+import { AttendanceRegularization, Notification } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -9,6 +9,7 @@ import { getDepartmentUserIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
+import { resolveShift } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
 
 export async function GET(req) {
@@ -95,6 +96,9 @@ export async function POST(req) {
       requestedOutNotYet: requestedOutNotYet || false,
       requestedBreaks: (requestedBreaks || []).map(b => ({
         type: b.type,
+        name: b.name || '',
+        ruleIdx: b.ruleIdx ?? null,
+        idx: b.idx ?? null,
         start: b.start || '',
         end: b.end || null,
         notYet: b.notYet || false,
@@ -197,8 +201,8 @@ export async function PUT(req) {
       if (reg.requestedIn)  attendance.clockIn = reg.requestedIn;
       if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
       if (reg.requestedOutNotYet) {
-        const nyUser = await User.findById(reg.userId).select('shift').lean();
-        const nyShift = await Shift.findOne({ name: nyUser?.shift || 'Morning (9AM-6PM)' }).lean();
+        const nyUser = await User.findById(reg.userId).select('shift shiftId').lean();
+        const nyShift = await resolveShift(nyUser);
         if (nyShift?.endTime) attendance.clockOut = nyShift.endTime;
       }
 
@@ -207,49 +211,81 @@ export async function PUT(req) {
       const attendanceWorkProgress = attendance.workProgress ? [...attendance.workProgress] : [];
 
       if (reg.requestedBreaks && reg.requestedBreaks.length > 0) {
-        const byType = {};
-        for (const rb of reg.requestedBreaks) {
-          if (!byType[rb.type]) byType[rb.type] = [];
-          byType[rb.type].push(rb);
-        }
+        const ruleKey = (b) => (b.ruleIdx != null ? 'r' + b.ruleIdx : (b.name ? b.type + '|' + b.name : b.type || ''));
 
-        for (const [type, entries] of Object.entries(byType)) {
-          const existingIndices = attendanceBreaks
-            .map((b, i) => b.type === type ? i : -1)
-            .filter(i => i !== -1);
+        // Indexes of attendance break entries per rule key (ordered)
+        const breaksByRule = {};
+        attendanceBreaks.forEach((b, i) => {
+          const k = ruleKey(b);
+          (breaksByRule[k] = breaksByRule[k] || []).push(i);
+        });
 
-          entries.forEach((rb, idx) => {
-            if (rb.notYet) {
-              const removeIdx = attendanceBreaks.findIndex(b => b.type === type);
-              if (removeIdx !== -1) attendanceBreaks.splice(removeIdx, 1);
-              const wpRemoveIdx = attendanceWorkProgress.findIndex(w => w.type === type);
-              if (wpRemoveIdx !== -1) attendanceWorkProgress.splice(wpRemoveIdx, 1);
-            } else if (rb.start || rb.end) {
-              const existingIdx = existingIndices[idx];
-              if (existingIdx !== undefined) {
-                if (rb.start) attendanceBreaks[existingIdx].start = rb.start;
-                if (rb.end) attendanceBreaks[existingIdx].end = rb.end;
-              } else {
-                attendanceBreaks.push({ type, start: rb.start || '', end: rb.end || null });
-              }
+        // Find the instIdx-th attendance break for the requested break's rule,
+        // falling back to type-only matching for legacy (pre rule-identity) data.
+        const findExistingIdx = (rb, instIdx) => {
+          const key = ruleKey(rb);
+          const byKey = breaksByRule[key]?.[instIdx];
+          if (byKey !== undefined) return byKey;
+          const byType = breaksByRule[rb.type]?.[instIdx];
+          if (byType !== undefined) return byType;
+          return undefined;
+        };
 
-              const wpExistingIdx = attendanceWorkProgress.findIndex(w => w.type === type);
-              if (wpExistingIdx !== -1) {
-                if (rb.start) attendanceWorkProgress[wpExistingIdx].startTime = rb.start;
-                if (rb.end) {
-                  attendanceWorkProgress[wpExistingIdx].endTime = rb.end;
-                  attendanceWorkProgress[wpExistingIdx].status = 'completed';
-                }
-              } else {
-                attendanceWorkProgress.push({
-                  type, taskDetails: type === 'lunch' ? 'Lunch break' : 'Break',
-                  startTime: rb.start || '', endTime: rb.end || null,
-                  status: rb.end ? 'completed' : 'work_in_progress',
-                  remarks: '', feedback: '',
-                });
-              }
+        // Find the instIdx-th workProgress row belonging to the requested break's rule
+        const findWp = (rb, instIdx) => {
+          let seen = -1;
+          let match = -1;
+          attendanceWorkProgress.forEach((w, i) => {
+            if (w.type === rb.type && (rb.name ? w.taskDetails === rb.name : true)) {
+              seen++;
+              if (seen === instIdx) match = i;
             }
           });
+          if (match !== -1) return match;
+          seen = -1; match = -1;
+          attendanceWorkProgress.forEach((w, i) => {
+            if (w.type === rb.type) { seen++; if (seen === instIdx) match = i; }
+          });
+          return match;
+        };
+
+        for (const rb of reg.requestedBreaks) {
+          const instIdx = rb.idx ?? 0;
+          if (rb.notYet) {
+            const removeIdx = findExistingIdx(rb, instIdx);
+            if (removeIdx !== undefined) {
+              attendanceBreaks.splice(removeIdx, 1);
+              for (const k of Object.keys(breaksByRule)) {
+                breaksByRule[k] = breaksByRule[k].map(i => i > removeIdx ? i - 1 : i).filter(i => i !== removeIdx);
+              }
+            }
+            const wpRemoveIdx = findWp(rb, instIdx);
+            if (wpRemoveIdx !== -1) attendanceWorkProgress.splice(wpRemoveIdx, 1);
+          } else if (rb.start || rb.end) {
+            const existingIdx = findExistingIdx(rb, instIdx);
+            if (existingIdx !== undefined) {
+              if (rb.start) attendanceBreaks[existingIdx].start = rb.start;
+              if (rb.end) attendanceBreaks[existingIdx].end = rb.end;
+            } else {
+              attendanceBreaks.push({ type: rb.type, name: rb.name || '', ruleIdx: rb.ruleIdx ?? null, start: rb.start || '', end: rb.end || null });
+            }
+
+            const wpIdx = findWp(rb, instIdx);
+            if (wpIdx !== -1) {
+              if (rb.start) attendanceWorkProgress[wpIdx].startTime = rb.start;
+              if (rb.end) {
+                attendanceWorkProgress[wpIdx].endTime = rb.end;
+                attendanceWorkProgress[wpIdx].status = 'completed';
+              }
+            } else {
+              attendanceWorkProgress.push({
+                type: rb.type, taskDetails: rb.name || (rb.type === 'lunch' ? 'Lunch break' : 'Break'),
+                startTime: rb.start || '', endTime: rb.end || null,
+                status: rb.end ? 'completed' : 'work_in_progress',
+                remarks: '', feedback: '',
+              });
+            }
+          }
         }
       }
 
@@ -257,8 +293,8 @@ export async function PUT(req) {
       attendance.workProgress = attendanceWorkProgress;
 
       // Recalculate hours worked
-      const empUser = await User.findById(reg.userId).select('shift').lean();
-      const regShiftDoc = await Shift.findOne({ name: empUser?.shift || 'Morning (9AM-6PM)' }).lean();
+      const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
+      const regShiftDoc = await resolveShift(empUser);
       const config = await getGlobalConfig();
       const regCfg = getShiftConfig(regShiftDoc, config);
 
@@ -280,7 +316,7 @@ export async function PUT(req) {
 
         // Recalculate lateFlag based on shift start
         if (empUser?.shift) {
-          const lateShiftDoc = await Shift.findOne({ name: empUser.shift }).lean();
+          const lateShiftDoc = regShiftDoc || await resolveShift(empUser);
           if (lateShiftDoc?.startTime) {
             const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
             const shiftStartMins = sH * 60 + sM;

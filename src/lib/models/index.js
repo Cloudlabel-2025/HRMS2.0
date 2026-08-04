@@ -338,6 +338,9 @@ const AttendanceRegularizationSchema = new mongoose.Schema({
   requestedOutNotYet:{ type: Boolean, default: false },
   requestedBreaks: [{
     type: { type: String, required: true },
+    name: { type: String, default: '' },
+    ruleIdx: { type: Number, default: null },
+    idx: { type: Number, default: null },
     start: { type: String, default: '' },
     end: { type: String, default: null },
     notYet: { type: Boolean, default: false },
