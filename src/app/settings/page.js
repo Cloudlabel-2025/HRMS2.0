@@ -90,6 +90,7 @@ export default function SettingsPage() {
   const [archiveYears, setArchiveYears] = useState(3);
   const [archivePreview, setArchivePreview] = useState(null);
   const [archiving, setArchiving] = useState(false);
+  const [endingSessions, setEndingSessions] = useState(false);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -226,6 +227,19 @@ export default function SettingsPage() {
       load();
     } catch (e) {
       showToast(e.message, 'error');
+    }
+  };
+
+  const endShiftSessions = async (shift) => {
+    if (!confirm(`End all active sessions for "${shift.name}"? This will clock out every employee currently clocked in on this shift.`)) return;
+    setEndingSessions(true);
+    try {
+      const res = await api.post('/api/attendance/end-shift-sessions', { shiftId: shift._id });
+      showToast(res?.message || 'Sessions ended');
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setEndingSessions(false);
     }
   };
 
@@ -542,6 +556,7 @@ export default function SettingsPage() {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                           <span style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</span>
                           <div style={{ display: 'flex', gap: 4 }}>
+                            <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => endShiftSessions(s)} disabled={endingSessions}>End Session</button>
                             <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...s }); setShiftErrs({}); setShowModal('shift'); }}>Edit</button>
                             <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('shifts', s._id)}>Delete</button>
                           </div>
