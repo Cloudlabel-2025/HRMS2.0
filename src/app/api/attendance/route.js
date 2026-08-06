@@ -40,6 +40,7 @@ export async function GET(req) {
     const date   = searchParams.get('date');
     const month  = searchParams.get('month');
     const scope  = searchParams.get('scope');
+    const openOnly = searchParams.get('openOnly') === '1';
 
     const employerIds = (await User.find({ role: 'super_admin' }).select('_id').lean()).map(u => u._id);
     const employerIdSet = new Set(employerIds.map(id => id.toString()));
@@ -87,6 +88,11 @@ export async function GET(req) {
       query.date = dateRange;
     } else if (month) {
       query.date = { $regex: '^' + month };
+    }
+
+    if (openOnly) {
+      query.clockIn = { $ne: null };
+      query.clockOut = null;
     }
 
     const raw = await Attendance.find(query)

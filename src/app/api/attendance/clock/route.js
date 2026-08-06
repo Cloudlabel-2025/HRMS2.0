@@ -53,19 +53,29 @@ export async function POST(req) {
     const ip = req.headers.get('x-forwarded-for') || '';
 
     if (action === 'in') {
-      const openRecord = await Attendance.findOne({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
+      const openRecords = await Attendance.find({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
+      const openRecord = openRecords[0] || null;
       if (openRecord) {
-        if (await checkAndApplyAutoLogout(openRecord, now, cfg, shiftDoc, isEmployer(user.role))) {
-          await openRecord.save();
-          record = await Attendance.findOne({ userId: user._id, date: today });
-        } else if (openRecord.date === today) {
-          // Idempotent: the open session is the resolved-date record. Return it as success
-          // instead of a lock-out so page refreshes / double-clicks can't wedge the user.
+        if (openRecord.date === today) {
+          // Idempotent: the open session is the resolved-date record. Return success so page
+          // refreshes / double-clicks can't wedge the user, but also close any OTHER orphaned
+          // open records from previous attendance dates.
+          for (const stale of openRecords) {
+            if (stale.date === today) continue;
+            await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
+            await stale.save();
+            auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
+          }
           return ok({ record: openRecord, alreadyClockedIn: true, time: timeStr });
-        } else {
-          auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in and active (${openRecord.date})`, 'low', ip, null, user._id);
-          return fail('You are already clocked in and have an active session.', 400);
         }
+        // The open session belongs to a PREVIOUS attendance date (overnight shift). Force-close
+        // it and proceed with today's clock-in — never return the old 400 lockout.
+        for (const stale of openRecords) {
+          await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
+          await stale.save();
+          auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
+        }
+        record = await Attendance.findOne({ userId: user._id, date: today });
       }
 
       if (record?.clockIn) {

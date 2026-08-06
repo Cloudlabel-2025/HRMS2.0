@@ -54,6 +54,7 @@ export default function AttendancePage() {
   const { formatDate, settings, formatTime, parseTime } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
+  const [staleOpenSession, setStaleOpenSession] = useState(null);
   const [teamToday, setTeamToday]       = useState([]);
   const [employees, setEmployees]       = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -313,9 +314,15 @@ export default function AttendancePage() {
 
   const loadTodayRecord = async () => {
     try {
-      const records = await api.get('/api/attendance?date=' + today + '&scope=my');
-      setTodayRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
-    } catch { setTodayRecord(null); }
+      const [todayRecs, openRecs] = await Promise.all([
+        api.get('/api/attendance?date=' + today + '&scope=my'),
+        api.get('/api/attendance?openOnly=1&scope=my'),
+      ]);
+      const todayRec = Array.isArray(todayRecs) && todayRecs.length > 0 ? todayRecs[0] : null;
+      const openRec = Array.isArray(openRecs) && openRecs.length > 0 ? openRecs[0] : null;
+      setTodayRecord(todayRec);
+      setStaleOpenSession(openRec && openRec.date !== today ? openRec : null);
+    } catch { setTodayRecord(null); setStaleOpenSession(null); }
   };
 
   const loadTeamToday = async () => {
@@ -1363,6 +1370,12 @@ export default function AttendancePage() {
                     </div>
                   ) : (
                     <div className="empty-state">
+                      {staleOpenSession && (
+                        <div className="alert alert-warning" style={{ fontSize: 13, width: '100%' }}>
+                          <i className="bi bi-exclamation-triangle me-2" />
+                          You have an active session from {staleOpenSession.date} at {formatTime(staleOpenSession.clockIn)}. Clocking in will close it automatically.
+                        </div>
+                      )}
                       <i className="bi bi-clock" />
                       <h6>No attendance record for today</h6>
                       <p>Click &quot;Clock In&quot; to mark your attendance</p>

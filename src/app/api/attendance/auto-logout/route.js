@@ -4,7 +4,6 @@ import User from '@/lib/models/User';
 import { Shift, Notification } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
@@ -59,27 +58,7 @@ export async function POST(req) {
       }
 
       const effectiveNowMinutes = nowMinutes < effectiveEndMinutes ? nowMinutes + 24 * 60 : nowMinutes;
-
-      const shiftCfg = getShiftConfig(shift, globalConfig);
-      if (effectiveNowMinutes < effectiveEndMinutes + shiftCfg.autoLogoutBuffer) continue;
-
-      // Resolve attendance date for this shift at the current time
-      let attendanceToday;
-      try {
-        attendanceToday = getAttendanceDate(now, shift.startTime, shift.endTime);
-      } catch {
-        attendanceToday = todayStr;
-      }
-
-      // Also check yesterday (in case of overnight shifts where attendance date might be yesterday)
-      const yesterday = new Date(now);
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.getFullYear() + '-' + String(yesterday.getMonth() + 1).padStart(2, '0') + '-' + String(yesterday.getDate()).padStart(2, '0');
-
-      const searchDates = [attendanceToday];
-      if (attendanceToday !== yesterdayStr) {
-        searchDates.push(yesterdayStr);
-      }
+      if (effectiveNowMinutes < effectiveEndMinutes) continue;
 
       // Find users on this shift (by shiftId first, falling back to the shift
       // name so a stale user.shift string still matches) who haven't clocked out
@@ -95,7 +74,6 @@ export async function POST(req) {
 
       const records = await Attendance.find({
         userId: { $in: userIds },
-        date: { $in: searchDates },
         clockIn: { $ne: null },
         clockOut: null,
         autoLoggedOut: { $ne: true },
@@ -112,12 +90,15 @@ export async function POST(req) {
         const recordShiftCfg = getShiftConfig(userShift, globalConfig);
         const endMins = getShiftEndMinutes(userShift, globalConfig);
         const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);
-        if (deadlineMins <= clockInMins) continue;
-
-        const foh = Math.floor(deadlineMins / 60) % 24;
-        const fom = deadlineMins % 60;
+        const recordDateMs = new Date(record.date + 'T00:00:00').getTime();
+        const deadlineMs = recordDateMs + deadlineMins * 60 * 1000;
+        if (now.getTime() < deadlineMs) continue;
+        const elapsedNowMins = Math.max(clockInMins, Math.floor((now.getTime() - recordDateMs) / 60000));
+        const finalClockOutMins = Math.min(deadlineMins, elapsedNowMins);
+        const foh = Math.floor(finalClockOutMins / 60) % 24;
+        const fom = finalClockOutMins % 60;
         const finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
-        const finalMinutes = deadlineMins - clockInMins;
+        const finalMinutes = Math.max(0, finalClockOutMins - clockInMins);
 
         const deduction = record.breakDeduction || 0;
         const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);

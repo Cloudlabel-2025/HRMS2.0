@@ -12,7 +12,8 @@ import { getTzTime } from '@/lib/timezone';
 
 export { toMinutes, diffMins } from './attendance-constants';
 
-export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmployerUser = false) {
+export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmployerUser = false, options = {}) {
+  const { force = false } = options;
   if (isEmployerUser) return false;
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
@@ -25,12 +26,15 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
 
   const endMins = getShiftEndMinutes(shiftDoc, shiftCfg);
   const deadlineMins = endMins + (shiftCfg.autoLogoutBuffer ?? 360);
-  if (deadlineMins <= clockInMinutes) return false;
+  if (deadlineMins <= 0) return false;
 
   const deadlineMs = recordDateMs + deadlineMins * 60 * 1000;
-  if (now.getTime() < deadlineMs) return false;
+  if (!force && now.getTime() < deadlineMs) return false;
 
-  const clockOutMinutes = deadlineMins;
+  const elapsedNowMins = Math.floor((now.getTime() - recordDateMs) / 60000);
+  const clockOutMinutes = force
+    ? Math.min(deadlineMins, Math.max(clockInMinutes, elapsedNowMins))
+    : deadlineMins;
   const oh = Math.floor(clockOutMinutes / 60) % 24;
   const om = clockOutMinutes % 60;
   const clockOutTime = String(oh).padStart(2, '0') + ':' + String(om).padStart(2, '0');
