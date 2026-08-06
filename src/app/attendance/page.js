@@ -100,6 +100,7 @@ export default function AttendancePage() {
 
   // Available tasks (from Projects & Task Management)
   const [availableTasks, setAvailableTasks] = useState([]);
+  const [carriedTasks, setCarriedTasks] = useState([]);
   const [showTaskPicker, setShowTaskPicker] = useState(false);
   const taskPickerRef = useRef(null);
   const workProgressRef = useRef([]);
@@ -414,6 +415,9 @@ export default function AttendancePage() {
       loadRegRequests(regScope),
       api.get('/api/attendance/available-tasks').then(tasks => {
         setAvailableTasks(Array.isArray(tasks) ? tasks : []);
+      }).catch(() => {}),
+      api.get('/api/attendance/carried-forward').then(list => {
+        if (Array.isArray(list)) setCarriedTasks(list);
       }).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [user]);
@@ -795,6 +799,13 @@ export default function AttendancePage() {
 
   const clockedIn  = !!todayRecord?.clockIn;
   const clockedOut = !!todayRecord?.clockOut;
+  const todayDetails = new Set((todayRecord?.workProgress || []).map(r => r.taskDetails));
+  const pendingCarried = carriedTasks.filter(t => t && !todayDetails.has(t));
+  const todayIncompleteTasks = [...new Set(
+    (todayRecord?.workProgress || [])
+      .filter(r => r.type === 'task' && r.status !== 'completed' && !(r.startTime && !r.endTime) && r.taskDetails && String(r.taskDetails).trim())
+      .map(r => String(r.taskDetails).trim())
+  )];
   const todayStr = new Date().toLocaleDateString('en-CA');
   const breakRules = useMemo(() => (shiftConfig?.breaks?.length ? shiftConfig.breaks : DEFAULT_BREAK_RULES), [shiftConfig]);
   const activeRule = breakRules[breakRuleIdx] || breakRules[0];
@@ -1029,8 +1040,18 @@ export default function AttendancePage() {
                               onBlur={() => saveWorkProgress()}
                               style={{ fontSize: 12, minWidth: 210 }}
                             />
-                            {active && clockedIn && availableTasks.length > 0 && (
+                            {active && clockedIn && (availableTasks.length > 0 || pendingCarried.length > 0 || todayIncompleteTasks.length > 0) && (
                               <span ref={taskPickerRef} style={{ position: 'relative', flexShrink: 0 }}>
+                                {pendingCarried.length > 0 && (
+                                  <span
+                                    title={`${pendingCarried.length} incomplete task(s) carried forward`}
+                                    style={{
+                                      position: 'absolute', top: -3, right: -3, width: 8, height: 8,
+                                      borderRadius: '50%', background: '#ef4444', border: '1.5px solid #fff',
+                                      zIndex: 2,
+                                    }}
+                                  />
+                                )}
                                 <button
                                   className="btn btn-outline-primary"
                                   style={{ padding: '0 4px', fontSize: 11, lineHeight: '18px', borderRadius: 3, minWidth: 22, height: 22 }}
@@ -1049,6 +1070,47 @@ export default function AttendancePage() {
                                     <div style={{ padding: '8px 12px', fontSize: 11, fontWeight: 600, color: '#64748b', borderBottom: '1px solid #f1f5f9' }}>
                                       Select a task
                                     </div>
+                                    {pendingCarried.map((t, i) => (
+                                      <div
+                                        key={'carried-' + i}
+                                        onClick={() => selectTask({ title: t })}
+                                        style={{
+                                          padding: '10px 12px', cursor: 'pointer', fontSize: 12,
+                                          borderBottom: '1px solid #f8fafc', transition: 'background 0.1s',
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                      >
+                                        <div style={{ fontWeight: 600, color: '#1e293b' }}>
+                                          {t}
+                                          <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: '#ef4444', verticalAlign: 'middle' }}>
+                                            <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#ef4444', marginRight: 3 }} />
+                                            Carried
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    {todayIncompleteTasks.length > 0 && (
+                                      <>
+                                        <div style={{ padding: '6px 12px', fontSize: 10, fontWeight: 700, color: '#94a3b8', borderBottom: '1px solid #f1f5f9', background: '#f8fafc' }}>
+                                          Today's incomplete tasks
+                                        </div>
+                                        {todayIncompleteTasks.map((t, i) => (
+                                          <div
+                                            key={'today-' + i}
+                                            onClick={() => selectTask({ title: t })}
+                                            style={{
+                                              padding: '10px 12px', cursor: 'pointer', fontSize: 12,
+                                              borderBottom: '1px solid #f8fafc', transition: 'background 0.1s',
+                                            }}
+                                            onMouseEnter={e => e.currentTarget.style.background = '#f8fafc'}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                          >
+                                            <div style={{ fontWeight: 600, color: '#1e293b' }}>{t}</div>
+                                          </div>
+                                        ))}
+                                      </>
+                                    )}
                                     {availableTasks.map(task => (
                                       <div
                                         key={task._id}

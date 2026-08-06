@@ -10,6 +10,9 @@ Chart.register(...registerables);
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+const WORK_STATUS_COLORS = { pending: '#64748b', work_in_progress: '#3b82f6', stopped: '#f59e0b' };
+const WORK_STATUS_LABELS = { pending: 'Pending', work_in_progress: 'Work in Progress', stopped: 'Stopped' };
+
 function BarChart({ data }) {
   const ref = useRef(null);
   useEffect(() => {
@@ -280,23 +283,51 @@ export default function DashboardPage() {
           <div className="row g-3">
             <div className="col-lg-6">
               <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <i className="bi bi-person-lines-fill" style={{ color: '#3b82f6', fontSize: 15 }} />
-                  </div>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Employee Monitoring</span>
-                  {stats?.monitoring && <Link href="/monitoring" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Open monitoring <i className="bi bi-arrow-right" /></Link>}
-                </div>
-                {stats?.monitoring ? <>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
-                  {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
-                    <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
-                      <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
-                      <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
+                {isAdmin ? (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <i className="bi bi-person-lines-fill" style={{ color: '#3b82f6', fontSize: 15 }} />
+                      </div>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Employee Monitoring</span>
+                      {stats?.monitoring && <Link href="/monitoring" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Open monitoring <i className="bi bi-arrow-right" /></Link>}
                     </div>
-                  ))}
-                </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
+                    {stats?.monitoring ? <>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
+                      {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
+                        <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
+                          <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
+                          <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
+                          <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
+                        </div>
+                      ))}
+                    </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #8b5cf615, #3b82f615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <i className="bi bi-check2-square" style={{ color: '#8b5cf6', fontSize: 15 }} />
+                      </div>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
+                      <Link href="/attendance" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>View all <i className="bi bi-arrow-right" /></Link>
+                    </div>
+                    {stats?.pendingTasks?.length ? (
+                      <div style={{ maxHeight: 260, overflowY: 'auto' }}>
+                        {stats.pendingTasks.map((task, i) => (
+                          <div key={task._id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-list-task" /></div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
+                              {task.assignee && <div style={{ color: '#94a3b8', fontSize: 11.5 }}>{task.assignee}</div>}
+                            </div>
+                            <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
+                  </>
+                )}
               </div>
             </div>
 

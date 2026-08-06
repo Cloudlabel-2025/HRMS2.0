@@ -8,6 +8,7 @@ import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { Announcement, Employee } from '@/lib/models/index';
 import { getAccessibleDepartments } from '@/lib/rbac';
+import { getTzTime } from '@/lib/timezone';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -72,7 +73,7 @@ export async function GET(req) {
   ]);
 
   let monitoring = null;
-  if (isAdminRole || isTeamRole) {
+  if (isAdminRole) {
     const employeeFilter = isAdminRole
       ? { status: 'active', role: { $ne: 'super_admin' } }
       : { [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active', role: { $ne: 'super_admin' } };
@@ -101,6 +102,35 @@ export async function GET(req) {
     ? 12 - await Leave.countDocuments({ userId: user._id, status: 'approved', typeCode: 'CL' })
     : 0;
 
+  let pendingTasks = null;
+  if (!isAdminRole) {
+    const now = await getTzTime();
+    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+    const incompleteStatuses = ['pending', 'work_in_progress', 'stopped'];
+
+    let worksheetRecords = [];
+    if (isTeamRole) {
+      worksheetRecords = await Attendance.find({ userId: { $in: teamIds }, date: todayStr })
+        .populate('userId', 'name')
+        .select('userId workProgress')
+        .lean();
+    } else {
+      const rec = await Attendance.findOne({ userId: user._id, date: todayStr }).select('userId workProgress').lean();
+      if (rec) worksheetRecords = [rec];
+    }
+
+    const rows = [];
+    for (const rec of worksheetRecords) {
+      const assignee = rec.userId?.name || '';
+      for (const row of rec.workProgress || []) {
+        if (row.type === 'task' && incompleteStatuses.includes(row.status) && row.taskDetails && String(row.taskDetails).trim()) {
+          rows.push({ _id: row._id, text: String(row.taskDetails).trim(), status: row.status, assignee });
+        }
+      }
+    }
+    pendingTasks = rows.slice(0, 8);
+  }
+
   const lastPayslip = isSelfRole
     ? await Payroll.findOne({ userId: user._id }).sort({ createdAt: -1 })
     : null;
@@ -120,6 +150,7 @@ export async function GET(req) {
     openJobs,
     lastPayslip: lastPayslip ? { net: lastPayslip.netPay, month: lastPayslip.month } : null,
     monitoring,
+    pendingTasks,
     announcements: announcements.map(a => ({
       id: a._id, title: a.title, body: a.body, tag: a.tag, tagColor: a.tagColor, date: a.createdAt, attachment: a.attachment,
     })),

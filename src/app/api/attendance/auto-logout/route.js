@@ -5,7 +5,8 @@ import { Shift, Notification } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
-import { getShiftConfig, calculateHoursWorked, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { finalizeDayWork } from '@/lib/attendance-utils';
 import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 
@@ -112,12 +113,7 @@ export async function POST(req) {
         const updatedBreaks = (record.breaks || []).map(row => (
           row.start && !row.end ? { ...row, end: finalClockOut } : row
         ));
-        const updatedWorkProgress = (record.workProgress || []).map(row => {
-          const next = (row.startTime && !row.endTime)
-            ? { ...row, endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
-            : row;
-          return { ...next, duration: computeWorkRowDuration(next) };
-        });
+        const finalized = finalizeDayWork(record.workProgress, finalClockOut);
 
         // Atomically claim AND finalize — single operation prevents race & crash-orphaning
         const result = await Attendance.findOneAndUpdate(
@@ -127,7 +123,7 @@ export async function POST(req) {
               clockOut: finalClockOut,
               autoLoggedOut: true,
               breaks: updatedBreaks,
-              workProgress: updatedWorkProgress,
+              workProgress: finalized,
               baseHoursWorked: baseHours,
               breakDeduction: deduction,
               hoursWorked,

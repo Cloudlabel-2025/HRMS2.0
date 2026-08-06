@@ -231,7 +231,7 @@ export async function PUT(req) {
         if (oldClockOut) {
           attendance.workProgress = (attendance.workProgress || []).map(w =>
             (w.endTime === oldClockOut && (w.status === 'stopped' || w.status === 'task_blocked'))
-              ? { ...w, endTime: null, status: 'work_in_progress', duration: null }
+              ? { ...w, endTime: null, status: 'work_in_progress', duration: null, carriedForward: false }
               : w
           );
           attendance.breaks = (attendance.breaks || []).map(b =>

@@ -24,6 +24,7 @@ const AttendanceSchema = new mongoose.Schema({
     remarks: { type: String, default: '' },
     feedback: { type: String, default: '' },
     duration: { type: Number, default: null },
+    carriedForward: { type: Boolean, default: false },
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },

@@ -1,4 +1,4 @@
-import { calculateHoursWorked } from './attendance-constants';
+import { calculateHoursWorked, computeWorkRowDuration } from './attendance-constants';
 import { calculateBreakDeduction } from './attendance-breaks';
 import { getShiftEndMinutes, resolveShift, isShiftWorkingDay } from './shift-utils';
 import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
@@ -11,6 +11,21 @@ import { connectDB } from './db';
 import { getTzTime } from '@/lib/timezone';
 
 export { toMinutes, diffMins } from './attendance-constants';
+
+export function finalizeDayWork(rows, finalClockOut) {
+  return (rows || []).map(row => {
+    const base = row.toObject ? row.toObject() : row;
+    if (base.type === 'task' && ['pending', 'work_in_progress', 'stopped'].includes(base.status)) {
+      const next = { ...base, endTime: base.endTime || finalClockOut, status: 'completed', carriedForward: true };
+      return { ...next, duration: computeWorkRowDuration(next) };
+    }
+    if (base.startTime && !base.endTime) {
+      const next = { ...base, endTime: finalClockOut, status: base.status === 'work_in_progress' ? 'stopped' : base.status };
+      return { ...next, duration: computeWorkRowDuration(next) };
+    }
+    return { ...base, duration: computeWorkRowDuration(base) };
+  });
+}
 
 export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmployerUser = false, options = {}) {
   const { force = false } = options;
@@ -52,20 +67,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   }
 
   if (record.workProgress) {
-    record.workProgress = record.workProgress.map(w => {
-      if (w.startTime && !w.endTime) {
-        return {
-          type: w.type,
-          taskDetails: w.taskDetails,
-          startTime: w.startTime,
-          endTime: clockOutTime,
-          status: w.status === 'work_in_progress' ? 'stopped' : w.status,
-          remarks: w.remarks || '',
-          feedback: w.feedback || ''
-        };
-      }
-      return w;
-    });
+    record.workProgress = finalizeDayWork(record.workProgress, clockOutTime);
   }
 
   const elapsedMins = Math.max(0, clockOutMinutes - clockInMinutes);
