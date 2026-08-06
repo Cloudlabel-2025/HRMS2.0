@@ -66,6 +66,7 @@ export async function PUT(req, { params }) {
 
     // Full update — manager/admin only, subject to creator hierarchy
     if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
+    if (task.assignedTo?.toString() === user._id.toString()) return fail('Access denied', 403);
     if (!canEditTaskDetails(user, task)) return fail('Access denied', 403);
     if (!body.title || !body.description || !body.projectId || !body.assignedTo || !body.priority || !body.due) {
       return fail('All fields are required', 400);

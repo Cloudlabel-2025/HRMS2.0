@@ -85,6 +85,9 @@ export default function TasksPage() {
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
 
   const canEditTask = (task) => {
+    const uid = user?._id || user?.id;
+    const assignedToId = task?.assignedTo?._id || task?.assignedTo;
+    if (assignedToId && String(assignedToId) === String(uid)) return false;
     if (!task?.assignedBy) return ['super_admin', 'admin_full'].includes(user?.role);
     return rankOf(user?.role) >= rankOf(task.assignedBy?.role);
   };
@@ -330,7 +333,14 @@ export default function TasksPage() {
   const assignableEmployees = selectedProjectDepts.length > 0
     ? employees.filter(e => selectedProjectDepts.includes(e.department))
     : employees;
-  const assignableByRank = assignableEmployees.filter(e => e.role !== 'recruiter' && rankOf(user?.role) >= rankOf(e.role));
+  const assignableByRank = assignableEmployees.filter(e => {
+    if (e.role === 'recruiter') return false;
+    if (user?.role === 'super_admin') return true;
+    if (user?.role === 'admin_full') return e.role !== 'super_admin';
+    if (user?.role === 'team_lead') return e.department === user.department && ['team_admin', 'employee', 'intern'].includes(e.role);
+    if (user?.role === 'team_admin') return e.department === user.department && ['employee', 'intern'].includes(e.role);
+    return false;
+  });
   const canEditForm = !editTask || canEditTask(editTask);
 
   return (

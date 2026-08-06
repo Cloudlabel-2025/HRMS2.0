@@ -110,7 +110,7 @@ export async function POST(req) {
       }
     }
 
-    const assignee = await User.findById(body.assignedTo).select('role name').lean();
+    const assignee = await User.findById(body.assignedTo).select('role name department').lean();
     if (!assignee) return fail('Assigned user not found', 404);
     if (!await canAssignTask(user, assignee)) {
       auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to invalid assignee (${body.assignedTo})`, 'low', ip, null, user._id);

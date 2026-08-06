@@ -90,11 +90,19 @@ export function isFull(role, module) {
 export async function getManagedUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;
   if (user.role === 'team_lead') {
-    const members = await User.find({ teamLeadId: user._id, status: 'active' }).select('_id').lean();
+    const members = await User.find({
+      department: user.department,
+      status: 'active',
+      role: { $in: ['team_admin', 'employee', 'intern'] },
+    }).select('_id').lean();
     return [user._id, ...members.map(member => member._id)];
   }
   if (user.role === 'team_admin') {
-    const members = await User.find({ teamAdminId: user._id, status: 'active' }).select('_id').lean();
+    const members = await User.find({
+      department: user.department,
+      status: 'active',
+      role: { $in: ['employee', 'intern'] },
+    }).select('_id').lean();
     return [user._id, ...members.map(member => member._id)];
   }
   return [user._id];
@@ -109,14 +117,21 @@ export async function canManageUser(user, targetUserId) {
 
 /**
  * True when the user may assign a task to assigneeUser.
- * Recruiters can never be assignees; assignment upward is blocked (equal allowed);
- * non-admins must also manage the assignee (same team).
+ * Recruiters can never be assignees. Admins may assign cross-department
+ * (admin_full up to but not including super_admin); team leads/admins are
+ * strictly limited to their own department and allowed subordinate roles.
  */
 export async function canAssignTask(user, assigneeUser) {
   if (assigneeUser?.role === 'recruiter') return false;
-  if (rankOf(assigneeUser?.role) > rankOf(user.role)) return false;
-  if (['super_admin', 'admin_full'].includes(user.role)) return true;
-  return canManageUser(user, assigneeUser._id);
+  if (user.role === 'super_admin') return true;
+  if (user.role === 'admin_full') return rankOf(assigneeUser?.role) < rankOf(user.role);
+  if (user.role === 'team_lead') {
+    return !!user.department && user.department === assigneeUser?.department && ['team_admin', 'employee', 'intern'].includes(assigneeUser?.role);
+  }
+  if (user.role === 'team_admin') {
+    return !!user.department && user.department === assigneeUser?.department && ['employee', 'intern'].includes(assigneeUser?.role);
+  }
+  return false;
 }
 
 /**
