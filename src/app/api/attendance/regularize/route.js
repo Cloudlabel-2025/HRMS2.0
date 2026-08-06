@@ -7,7 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
 import { getDepartmentUserIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
-import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { resolveShift } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
@@ -89,11 +89,22 @@ export async function POST(req) {
       return fail('You already have a pending regularization request for this date', 400);
     }
 
+    let requestedOutTime = null;
+    if (requestedOutNotYet) {
+      const reqUser = await User.findById(user._id).select('shift shiftId').lean();
+      const reqShift = await resolveShift(reqUser);
+      if (!reqShift?.endTime) {
+        return fail('Cannot use "Not yet logged out" — no shift is assigned/resolvable. Contact your admin.', 400);
+      }
+      requestedOutTime = reqShift.endTime;
+    }
+
     const request = await AttendanceRegularization.create({
       userId: user._id, date,
       requestedIn: requestedIn || null,
       requestedOut: requestedOut || null,
       requestedOutNotYet: requestedOutNotYet || false,
+      requestedOutTime,
       requestedBreaks: (requestedBreaks || []).map(b => ({
         type: b.type,
         name: b.name || '',
@@ -158,6 +169,12 @@ export async function PUT(req) {
 
     const { action } = validation.data;
 
+    const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+    const shiftTime = (t, delta) => {
+      const total = (((toMins(t) + delta) % 1440) + 1440) % 1440;
+      return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
+    };
+
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
 
@@ -174,6 +191,8 @@ export async function PUT(req) {
       }
     }
 
+    const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
+
     // STEP 1: Atomically claim the regulation FIRST
     const updated = await AttendanceRegularization.findOneAndUpdate(
       { _id: id, status: 'pending' },
@@ -188,6 +207,8 @@ export async function PUT(req) {
     }
 
     // STEP 2: Now safely update the attendance record
+    let regShiftDoc = null;
+    let finalClockOut = null;
     if (action === 'approved') {
       let attendance = await Attendance.findOne({ userId: reg.userId, date: reg.date });
       if (!attendance) {
@@ -198,13 +219,45 @@ export async function PUT(req) {
         });
       }
 
-      if (reg.requestedIn)  attendance.clockIn = reg.requestedIn;
-      if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
       if (reg.requestedOutNotYet) {
-        const nyUser = await User.findById(reg.userId).select('shift shiftId').lean();
-        const nyShift = await resolveShift(nyUser);
-        if (nyShift?.endTime) attendance.clockOut = nyShift.endTime;
+        const oldClockOut = attendance.clockOut;
+        attendance.clockOut = null;
+        attendance.autoLoggedOut = false;
+        attendance.lateLogoutReason = '';
+        attendance.lateLogoutReasonProvidedAt = null;
+        attendance.hoursWorked = 0;
+        attendance.breakDeduction = 0;
+        attendance.status = 'present';
+        if (oldClockOut) {
+          attendance.workProgress = (attendance.workProgress || []).map(w =>
+            (w.endTime === oldClockOut && (w.status === 'stopped' || w.status === 'task_blocked'))
+              ? { ...w, endTime: null, status: 'work_in_progress', duration: null }
+              : w
+          );
+          attendance.breaks = (attendance.breaks || []).map(b =>
+            b.end === oldClockOut
+              ? { ...b, end: null }
+              : b
+          );
+        }
       }
+
+      const oldClockIn = attendance.clockIn;
+      if (reg.requestedIn) attendance.clockIn = reg.requestedIn;
+      if (reg.requestedIn && oldClockIn && reg.requestedIn !== oldClockIn) {
+        const delta = toMins(reg.requestedIn) - toMins(oldClockIn);
+        attendance.workProgress = (attendance.workProgress || []).map(w => ({
+          ...w,
+          startTime: w.startTime ? shiftTime(w.startTime, delta) : w.startTime,
+          endTime:   w.endTime   ? shiftTime(w.endTime, delta)   : w.endTime,
+        }));
+        attendance.breaks = (attendance.breaks || []).map(b => ({
+          ...b,
+          start: b.start ? shiftTime(b.start, delta) : b.start,
+          end:   b.end   ? shiftTime(b.end, delta)   : b.end,
+        }));
+      }
+      if (reg.requestedOut && !reg.requestedOutNotYet) attendance.clockOut = reg.requestedOut;
 
       // Apply requested breaks from regularization
       const attendanceBreaks = attendance.breaks ? [...attendance.breaks] : [];
@@ -276,6 +329,7 @@ export async function PUT(req) {
               if (rb.end) {
                 attendanceWorkProgress[wpIdx].endTime = rb.end;
                 attendanceWorkProgress[wpIdx].status = 'completed';
+                attendanceWorkProgress[wpIdx].duration = computeWorkRowDuration(attendanceWorkProgress[wpIdx]);
               }
             } else {
               attendanceWorkProgress.push({
@@ -283,6 +337,7 @@ export async function PUT(req) {
                 startTime: rb.start || '', endTime: rb.end || null,
                 status: rb.end ? 'completed' : 'work_in_progress',
                 remarks: '', feedback: '',
+                duration: rb.end ? computeWorkRowDuration({ startTime: rb.start || '', endTime: rb.end }) : null,
               });
             }
           }
@@ -293,15 +348,12 @@ export async function PUT(req) {
       attendance.workProgress = attendanceWorkProgress;
 
       // Recalculate hours worked
-      const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
-      const regShiftDoc = await resolveShift(empUser);
+      regShiftDoc = await resolveShift(empUser);
       const config = await getGlobalConfig();
       const regCfg = getShiftConfig(regShiftDoc, config);
 
       if (attendance.clockIn && attendance.clockOut) {
-        const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-        let base = toMins(attendance.clockOut) - toMins(attendance.clockIn);
-        if (base < 0 && reg.requestedOutNotYet) base += 24 * 60;
+        let base = diffMins(attendance.clockIn, attendance.clockOut);
         base = Math.max(0, base);
         attendance.baseHoursWorked = base;
 
@@ -330,6 +382,7 @@ export async function PUT(req) {
         }
       }
 
+      finalClockOut = attendance.clockOut || null;
       await attendance.save();
     }
 
@@ -347,7 +400,7 @@ export async function PUT(req) {
       `Attendance Regularization ${action}`,
       'Attendance',
       user._id,
-      `${action} regularization request for ${reg.userId} on ${reg.date}`,
+      `${action} regularization request for ${reg.userId} on ${reg.date} (shift: ${regShiftDoc?.name || 'unknown'}, clockOut: ${finalClockOut || 'none'})`,
       action === 'approved' ? 'medium' : 'low',
       req.headers.get('x-forwarded-for') || '',
       null,

@@ -8,7 +8,7 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
-import { getShiftConfig, determineStatus } from '@/lib/attendance-constants';
+import { getShiftConfig, determineStatus, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { matchBreakRule } from '@/lib/attendance-breaks';
 import { getDepartmentUserIds } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
@@ -315,6 +315,10 @@ export async function PUT(req) {
     const allowed = ['breaks', 'workProgress', 'hoursWorked', 'baseHoursWorked', 'breakDeduction', 'note', 'absenceReason'];
     const update = {};
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
+
+    if (update.workProgress) {
+      update.workProgress = update.workProgress.map(row => ({ ...row, duration: computeWorkRowDuration(row) }));
+    }
 
     // Enforce break limits from shift config
     if (body.breaks) {

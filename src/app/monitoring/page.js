@@ -7,6 +7,7 @@ import AppShell from '@/components/AppShell';
 import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
+import { formatTaskDuration } from '@/lib/attendance-constants';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present', icon: 'bi-check-circle' },
@@ -416,6 +417,7 @@ export default function MonitoringPage() {
                         <th>Task Details</th>
                         <th>Start</th>
                         <th>End</th>
+                        <th>Duration</th>
                         <th>Status</th>
                         <th>Remarks</th>
                       </tr>
@@ -436,6 +438,7 @@ export default function MonitoringPage() {
                           <td style={{ maxWidth: 200, wordBreak: 'break-word' }}>{wp.taskDetails || '—'}</td>
                           <td><Time value={wp.startTime} fallback="—" /></td>
                           <td><Time value={wp.endTime} fallback="—" /></td>
+                          <td>{formatTaskDuration(wp)}</td>
                           <td>
                             <span className={`badge ${
                               wp.status === 'completed' ? 'bg-success' :

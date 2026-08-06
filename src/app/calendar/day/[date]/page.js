@@ -7,6 +7,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Time from '@/components/Time';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
+import { formatTaskDuration } from '@/lib/attendance-constants';
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
@@ -286,6 +287,7 @@ export default function DayActivityPage() {
                         </div>
                         <div style={{ display: 'flex', gap: 12, marginTop: 4, fontSize: 11, color: '#64748b' }}>
                           {wp.startTime && <span>{formatTime(wp.startTime)}{wp.endTime ? ` - ${formatTime(wp.endTime)}` : ''}</span>}
+                          <span>• {formatTaskDuration(wp)}</span>
                         </div>
                         <span className="badge" style={{
                           background: wp.status === 'completed' ? '#dcfce7' :

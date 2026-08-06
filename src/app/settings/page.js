@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import ConfirmModal from '@/components/ConfirmModal';
 
 const NOTIFICATION_RULES = [
   ['Late Login Alert',       'Send alert when employee logs in after threshold', true],
@@ -91,6 +92,7 @@ export default function SettingsPage() {
   const [archivePreview, setArchivePreview] = useState(null);
   const [archiving, setArchiving] = useState(false);
   const [endingSessions, setEndingSessions] = useState(false);
+  const [endSessionTarget, setEndSessionTarget] = useState(null);
   const [loading, setLoading]       = useState(true);
   const [saving, setSaving]         = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -230,12 +232,17 @@ export default function SettingsPage() {
     }
   };
 
-  const endShiftSessions = async (shift) => {
-    if (!confirm(`End all active sessions for "${shift.name}"? This will clock out every employee currently clocked in on this shift.`)) return;
+  const endShiftSessions = (shift) => {
+    setEndSessionTarget(shift);
+  };
+
+  const confirmEndSessions = async () => {
+    if (!endSessionTarget) return;
     setEndingSessions(true);
     try {
-      const res = await api.post('/api/attendance/end-shift-sessions', { shiftId: shift._id });
+      const res = await api.post('/api/attendance/end-shift-sessions', { shiftId: endSessionTarget._id });
       showToast(res?.message || 'Sessions ended');
+      setEndSessionTarget(null);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -1115,6 +1122,20 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+      <ConfirmModal
+        open={!!endSessionTarget}
+        title="End Active Sessions"
+        confirmText="End Sessions"
+        variant="danger"
+        confirming={endingSessions}
+        onClose={() => setEndSessionTarget(null)}
+        onConfirm={confirmEndSessions}
+      >
+        <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+          End all active sessions for <strong>{endSessionTarget?.name}</strong>? This will clock out
+          every employee currently clocked in on this shift.
+        </p>
+      </ConfirmModal>
     </AppShell>
   );
 }

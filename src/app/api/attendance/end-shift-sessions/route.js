@@ -7,7 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
 import { getShiftEndMinutes } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
-import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, computeWorkRowDuration } from '@/lib/attendance-constants';
 
 export async function POST(req) {
   try {
@@ -69,11 +69,12 @@ export async function POST(req) {
       const updatedBreaks = (record.breaks || []).map(b =>
         b.start && !b.end ? { ...b, end: clockOutTime } : b
       );
-      const updatedWorkProgress = (record.workProgress || []).map(w =>
-        w.startTime && !w.endTime
+      const updatedWorkProgress = (record.workProgress || []).map(w => {
+        const next = (w.startTime && !w.endTime)
           ? { ...w, endTime: clockOutTime, status: w.status === 'work_in_progress' ? 'stopped' : w.status }
-          : w
-      );
+          : w;
+        return { ...next, duration: computeWorkRowDuration(next) };
+      });
 
       const result = await Attendance.findOneAndUpdate(
         { _id: record._id, clockOut: null },

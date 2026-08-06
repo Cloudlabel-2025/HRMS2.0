@@ -13,6 +13,23 @@ export function diffMins(start, end) {
   return e + (24 * 60) - s; // overnight crossover
 }
 
+export function computeWorkRowDuration(row) {
+  if (!row?.startTime || !row?.endTime) return null;
+  return diffMins(row.startTime, row.endTime);
+}
+
+export function formatTaskDuration(row) {
+  if (!row?.startTime) return '—';
+  if (!row?.endTime) return 'Running';
+  const mins = typeof row.duration === 'number' ? row.duration : computeWorkRowDuration(row);
+  if (mins == null) return '—';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h > 0 && m > 0) return `${h}h ${m}m`;
+  if (h > 0) return `${h}h`;
+  return `${m}m`;
+}
+
 export function getShiftConfig(shiftDoc, globalConfig) {
   return {
     startTime:        shiftDoc?.startTime || '',

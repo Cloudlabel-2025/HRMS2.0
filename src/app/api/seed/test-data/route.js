@@ -9,6 +9,7 @@ import { Goal, Review, Document, Announcement, Asset, AuditLog, Absence, Notific
 import { ok, fail } from '@/lib/jwt';
 import bcrypt from 'bcryptjs';
 import { calculatePayroll } from '@/lib/payroll-calculator';
+import { computeWorkRowDuration } from '@/lib/attendance-constants';
 
 function getSubmittedSetupToken(req, body = {}) {
   return req.headers.get('x-setup-token') || body.setupToken || '';
@@ -398,6 +399,7 @@ export async function POST(req) {
             status: wpStatus,
             remarks: Math.random() < 0.5 ? randomPick(['In progress', 'Almost done', 'Need help', 'Blocked by dependency', 'Completed']) : '',
             feedback: Math.random() < 0.3 ? randomPick(['Good work', 'Needs improvement', 'On track', 'Well done']) : '',
+            duration: computeWorkRowDuration({ startTime: `${String(startH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`, endTime: `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}` }),
           });
           lastEnd = endMins + randomInt(5, 15); // small gap between entries
           if (lastEnd >= clockOutMins) break;

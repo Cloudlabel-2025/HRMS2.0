@@ -11,6 +11,7 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
+import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
 import ExcelJS from 'exceljs';
 import jsPDF from 'jspdf';
@@ -725,7 +726,7 @@ export default function AttendancePage() {
       });
     }
 
-    const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Status', 'Remarks', 'Feedback'];
+    const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Duration', 'Status', 'Remarks', 'Feedback'];
     const csvRows = [headers.join(',')];
 
     exportRows.forEach((row, idx) => {
@@ -735,6 +736,7 @@ export default function AttendancePage() {
         `"${(row.taskDetails || '').replace(/"/g, '""')}"`,
         row.startTime || '',
         row.endTime || '',
+        computeWorkRowDuration(row) ?? '',
         row.status || '',
         `"${(row.remarks || '').replace(/"/g, '""')}"`,
         `"${(row.feedback || '').replace(/"/g, '""')}"`
@@ -986,6 +988,7 @@ export default function AttendancePage() {
                   <th style={{ minWidth: 220 }}>Task Details</th>
                   <th style={{ width: 110 }}>Start Time</th>
                   <th style={{ width: 110 }}>End Time</th>
+                  <th style={{ width: 90 }}>Duration</th>
                   <th style={{ minWidth: 160 }}>Status</th>
                   <th style={{ minWidth: 190 }}>Remarks</th>
                   <th style={{ minWidth: 190 }}>Feedback</th>
@@ -1018,7 +1021,7 @@ export default function AttendancePage() {
                         ) : (
                           <div style={{ display: 'flex', gap: 4, alignItems: 'flex-start' }}>
                             <textarea
-                              className="form-control"
+                              className="form-control hide-scrollbar"
                               rows={2}
                               placeholder={active ? 'Enter current task details' : 'Task details'}
                               value={row.taskDetails || ''}
@@ -1085,6 +1088,7 @@ export default function AttendancePage() {
                       </td>
                       <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.startTime} fallback="--:--" /></td>
                       <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.endTime} fallback={active ? 'Running' : '--:--'} /></td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}>{isVirtual ? '—' : formatTaskDuration(row)}</td>
                       <td>
                         <select
                           className="form-select form-select-sm"
@@ -1098,7 +1102,7 @@ export default function AttendancePage() {
                       <td>
                         {isVirtual ? null : (
                           <textarea
-                            className="form-control"
+                            className="form-control hide-scrollbar"
                             rows={2}
                             placeholder="Remarks"
                             value={row.remarks || ''}
@@ -1111,7 +1115,7 @@ export default function AttendancePage() {
                       <td>
                         {isVirtual ? null : (
                           <textarea
-                            className="form-control"
+                            className="form-control hide-scrollbar"
                             rows={2}
                             placeholder="Feedback"
                             value={row.feedback || ''}
@@ -1661,7 +1665,7 @@ export default function AttendancePage() {
           )}
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             {user?.role !== 'super_admin' && (
-              <button className="btn btn-primary btn-sm" onClick={() => setShowRegModal(true)}>
+              <button className="btn btn-primary btn-sm" onClick={() => { setRegForm(p => ({ ...p, date: today })); setShowRegModal(true); }}>
                 <i className="bi bi-plus-lg me-1" />New Request
               </button>
             )}
@@ -1820,11 +1824,11 @@ export default function AttendancePage() {
                         <div className="col-6">
                           <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock Out</label>
                           <input type="time" className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} disabled={regForm.requestedOutNotYet} />
-                          {regForm.date === todayStr && (
+                          {regForm.date === today && (
                             <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
                               <input type="checkbox" checked={regForm.requestedOutNotYet}
                                 onChange={e => setRegForm(p => ({ ...p, requestedOutNotYet: e.target.checked, requestedOut: e.target.checked ? '' : p.requestedOut }))} />
-                              Not yet (still on shift)
+                              I'm still working — remove my clock-out
                             </label>
                           )}
                         </div>
@@ -1872,7 +1876,7 @@ export default function AttendancePage() {
                                 value={getVal('end')}
                                 onChange={e => updateBreak('end', e.target.value)}
                                 disabled={notYet} />
-                              {regForm.date === todayStr && (
+                              {regForm.date === today && (
                                 <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
                                   <input type="checkbox" checked={notYet}
                                     onChange={e => {
@@ -1901,7 +1905,7 @@ export default function AttendancePage() {
                         <span style={{ color: '#ef4444', fontSize: 11 }}>*</span>
                         <span style={{ marginLeft: 'auto', fontSize: 10, color: '#94a3b8' }}>{regForm.reason.length}/1000</span>
                       </div>
-                      <textarea className="form-control" rows={3} style={{ fontSize: 13, resize: 'vertical' }} value={regForm.reason} onChange={e => setRegForm(p => ({ ...p, reason: e.target.value }))} placeholder="Explain why you need to regularize..." />
+                      <textarea className="form-control hide-scrollbar" rows={3} style={{ fontSize: 13 }} value={regForm.reason} onChange={e => setRegForm(p => ({ ...p, reason: e.target.value }))} placeholder="Explain why you need to regularize..." />
                     </div>
                   </div>
                   <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -2069,7 +2073,7 @@ export default function AttendancePage() {
                             });
                           }
 
-                          const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Status', 'Remarks', 'Feedback'];
+                          const headers = ['S.No', 'Type', 'Task Details', 'Start Time', 'End Time', 'Duration', 'Status', 'Remarks', 'Feedback'];
                           const csvRows = [headers.join(',')];
 
                           exportRows.forEach((row, idx) => {
@@ -2079,6 +2083,7 @@ export default function AttendancePage() {
                               `"${(row.taskDetails || '').replace(/"/g, '""')}"`,
                               row.startTime || '',
                               row.endTime || '',
+                              computeWorkRowDuration(row) ?? '',
                               row.status || '',
                               `"${(row.remarks || '').replace(/"/g, '""')}"`,
                               `"${(row.feedback || '').replace(/"/g, '""')}"`
@@ -2112,6 +2117,7 @@ export default function AttendancePage() {
                           <th style={{ minWidth: 220 }}>Task Details</th>
                           <th style={{ width: 110 }}>Start Time</th>
                           <th style={{ width: 110 }}>End Time</th>
+                          <th style={{ width: 90 }}>Duration</th>
                           <th style={{ minWidth: 160 }}>Status</th>
                           <th style={{ minWidth: 190 }}>Remarks</th>
                   <th style={{ minWidth: 190 }}>Feedback</th>
@@ -2172,6 +2178,7 @@ export default function AttendancePage() {
                                 </td>
                                 <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.startTime} fallback="--:--" /></td>
                                 <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.endTime} fallback="--:--" /></td>
+                                <td style={{ fontSize: 13, fontWeight: 600 }}>{isVirtual ? '—' : formatTaskDuration(row)}</td>
                                 <td>
                                   <span className="badge" style={{ background: '#e2e8f0', color: '#475569', fontSize: 12 }}>
                                     {row.status || 'pending'}
@@ -2211,7 +2218,7 @@ export default function AttendancePage() {
           <div className="modal-content" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
             <h6>Early Clock-In Reason</h6>
             <p style={{ fontSize: 13, color: '#64748b' }}>You are clocking in more than 2 hours before your shift. Please provide a reason.</p>
-            <textarea className="form-control" rows={3} placeholder="Reason (min 10 characters)..."
+            <textarea className="form-control hide-scrollbar" rows={3} placeholder="Reason (min 10 characters)..."
               value={earlyClockReason} onChange={e => setEarlyClockReason(e.target.value)} style={{ fontSize: 13 }} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn btn-sm btn-secondary" onClick={() => setShowEarlyClockModal(false)}>Cancel</button>

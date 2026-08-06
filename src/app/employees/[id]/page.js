@@ -12,6 +12,7 @@ import { canAccessDepartment } from '@/lib/auth';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
+import { formatTaskDuration } from '@/lib/attendance-constants';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -1106,6 +1107,7 @@ export default function EmployeeProfilePage() {
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', minWidth: 180 }}>Task Details</th>
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', width: 80 }}>Start</th>
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', width: 80 }}>End</th>
+                                              <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', width: 80 }}>Duration</th>
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', width: 120 }}>Status</th>
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', minWidth: 140 }}>Remarks</th>
                                               <th style={{ padding: '8px 12px', fontSize: 10.5, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, background: '#f8fafc', borderBottom: '1px solid #f1f5f9', minWidth: 140 }}>Feedback</th>
@@ -1131,6 +1133,7 @@ export default function EmployeeProfilePage() {
                                                   </td>
                                                   <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={wp.startTime} fallback="--" /></td>
                                                   <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}><Time value={wp.endTime} fallback="--" /></td>
+                                                  <td style={{ padding: '8px 12px', fontSize: 12.5, fontWeight: 600, color: '#334155', borderBottom: '1px solid #f1f5f9' }}>{formatTaskDuration(wp)}</td>
                                                   <td style={{ padding: '8px 12px', borderBottom: '1px solid #f1f5f9' }}>
                                                     <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: st.bg, color: st.color, textTransform: 'capitalize' }}>
                                                       {wp.status?.replace(/_/g, ' ') || 'pending'}

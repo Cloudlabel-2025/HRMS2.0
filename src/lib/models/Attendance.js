@@ -23,6 +23,7 @@ const AttendanceSchema = new mongoose.Schema({
     status: { type: String, enum: ['pending', 'work_in_progress', 'completed', 'task_blocked', 'stopped'], default: 'work_in_progress' },
     remarks: { type: String, default: '' },
     feedback: { type: String, default: '' },
+    duration: { type: Number, default: null },
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },

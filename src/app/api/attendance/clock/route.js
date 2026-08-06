@@ -10,7 +10,7 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
-import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -232,6 +232,7 @@ export async function POST(req) {
               status: 'work_in_progress',
               remarks: '',
               feedback: '',
+              duration: null,
             }],
             breaks: [],
             breakDeduction: 0,
@@ -330,14 +331,15 @@ export async function POST(req) {
         {
           clockOut: finalClockOut,
           hoursWorked,
-          baseHoursWorked: outRecord.baseHoursWorked ?? baseHours,
+          baseHoursWorked: baseHours,
           autoLoggedOut: isAutoLogout,
           status,
-          workProgress: (outRecord.workProgress || []).map(row => (
-            row.startTime && !row.endTime
+          workProgress: (outRecord.workProgress || []).map(row => {
+            const next = (row.startTime && !row.endTime)
               ? { ...(row.toObject ? row.toObject() : row), endTime: finalClockOut, status: row.status === 'work_in_progress' ? 'stopped' : row.status }
-              : row
-          )),
+              : row;
+            return { ...next, duration: computeWorkRowDuration(next) };
+          }),
           breaks: updatedBreaks,
         },
         { new: true }
