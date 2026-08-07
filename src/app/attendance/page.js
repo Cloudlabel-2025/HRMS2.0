@@ -2306,6 +2306,7 @@ export default function AttendancePage() {
 function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_STYLE, DAYS, isAdmin, handleOverrideAction }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [recordsPage, setRecordsPage] = useState(1);
   const pageSize = 10;
 
@@ -2325,9 +2326,13 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
   useEffect(() => {
     if (!uid) return;
     setLoading(true);
+    setError(null);
     api.get('/api/attendance' + query)
       .then(r => setRecords(Array.isArray(r) ? r : []))
-      .catch(() => setRecords([]))
+      .catch(e => {
+        setRecords([]);
+        setError(e?.message || 'Failed to load attendance records');
+      })
       .finally(() => setLoading(false));
   }, [query, uid]);
 
@@ -2338,6 +2343,18 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>;
+  }
+
+  if (error) {
+    const isAccessDenied = /access denied/i.test(error);
+    return (
+      <div className="card">
+        <div className="empty-state">
+          <i className="bi bi-shield-exclamation" />
+          <p>{isAccessDenied ? "Access denied. You don't have permission to view this employee's attendance records." : error}</p>
+        </div>
+      </div>
+    );
   }
 
   if (records.length === 0) {

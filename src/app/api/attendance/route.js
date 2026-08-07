@@ -1,6 +1,7 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
+import { Notification } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
@@ -10,7 +11,7 @@ import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, determineStatus, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { matchBreakRule } from '@/lib/attendance-breaks';
-import { getDepartmentUserIds } from '@/lib/rbac';
+import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 
@@ -52,20 +53,18 @@ export async function GET(req) {
       query.userId = user._id;
     } else if (scope === 'team') {
       if (!canViewDailyProgress(user)) return fail('Access denied', 403);
-      const ids = await getDepartmentUserIds(user);
+      const depts = await getAccessibleDepartments(user);
       if (userId) {
-        if (ids && !ids.some(id => id.toString() === userId)) return fail('Access denied', 403);
+        const targetUser = await User.findById(userId).select('department').lean();
+        if (!targetUser) return fail('Access denied', 403);
+        if (depts !== null && !depts.includes(targetUser.department)) return fail('Access denied', 403);
         query.userId = userId;
-      } else if (ids) {
-        query.userId = { $in: ids };
-      }
-      if (query.userId) {
-        query.$and = [{ userId: query.userId }, { userId: { $nin: employerIds } }];
-        delete query.userId;
+      } else if (depts) {
+        const deptUsers = await User.find({ department: { $in: depts } }).select('_id').lean();
+        query.userId = { $in: deptUsers.map(u => u._id), $nin: employerIds };
       } else {
         query.userId = { $nin: employerIds };
       }
-      // admins (ids === null) see all — no userId filter
     } else if (userId) {
       if (!['super_admin', 'admin_full'].includes(user.role) && userId !== user._id.toString()) {
         return fail('Access denied', 403);
