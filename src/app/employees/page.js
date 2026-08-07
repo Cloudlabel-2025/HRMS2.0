@@ -66,6 +66,7 @@ export default function EmployeesPage() {
   const [editProfileId, setEditProfileId]   = useState(null);
   const [editLoading, setEditLoading]       = useState(false);
   const [form, setForm]             = useState(EMPTY_FORM);
+  const [maskedIdentifiers, setMaskedIdentifiers] = useState({ pan: '', aadhaar: '' });
   const [toast, setToast]           = useState({ msg: '', type: 'success' });
   const [tempPasswordModal, setTempPasswordModal] = useState(null);
   const [departments, setDepartments] = useState([]);
@@ -139,10 +140,11 @@ export default function EmployeesPage() {
     );
   });
 
-  const openAdd  = () => { setEditEmp(null); setForm(EMPTY_FORM); clearFormErrs(); setShowModal(true); };
+  const openAdd  = () => { setEditEmp(null); setForm(EMPTY_FORM); setMaskedIdentifiers({ pan: '', aadhaar: '' }); clearFormErrs(); setShowModal(true); };
   const openEdit = async (emp) => {
     setEditEmp(emp);
-    setForm({ ...EMPTY_FORM, ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '' });
+    setMaskedIdentifiers({ pan: '', aadhaar: '' });
+    setForm({ ...EMPTY_FORM, ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '', joinDate: emp.joinDate ? String(emp.joinDate).slice(0, 10) : '' });
     setEditIdentityId(null); setEditProfileId(null);
     clearFormErrs(); setShowModal(true);
     setEditLoading(true);
@@ -152,16 +154,28 @@ export default function EmployeesPage() {
       const emergency = d?.identity?.emergencyContacts?.find(c => c.isPrimary) || d?.identity?.emergencyContacts?.[0] || {};
       setEditIdentityId(d?.identity?._id || null);
       setEditProfileId(d?.profile?._id || null);
+      setMaskedIdentifiers({
+        pan: d?.identity?.identifiers?.pan?.maskedValue || '',
+        aadhaar: d?.identity?.identifiers?.aadhaar?.maskedValue || '',
+      });
+      let addrLine1 = currentAddress.line1 || '';
+      let addrLine2 = currentAddress.line2 || '';
+      const addrLandmark = currentAddress.landmark || '';
+      if (!addrLine2 && addrLine1 && addrLine1.includes(', ')) {
+        const parts = addrLine1.split(',').map(v => v.trim()).filter(Boolean);
+        addrLine1 = parts[0] || '';
+        addrLine2 = parts[1] || '';
+      }
       setForm(p => ({
         ...p,
         bloodGroup: d?.identity?.bloodGroup || p.bloodGroup,
         gender: d?.identity?.gender || p.gender,
         maritalStatus: d?.identity?.maritalStatus || p.maritalStatus,
-        addressLine1: currentAddress.line1 || p.addressLine1,
-        addressLine2: currentAddress.line2 || p.addressLine2,
-        addressLine3: currentAddress.landmark || p.addressLine3,
-        cityTown: currentAddress.city && currentAddress.city !== 'N/A' ? currentAddress.city : p.cityTown,
-        pinCode: currentAddress.postalCode && currentAddress.postalCode !== '000000' ? currentAddress.postalCode : p.pinCode,
+        addressLine1: addrLine1 || p.addressLine1,
+        addressLine2: addrLine2 || p.addressLine2,
+        addressLine3: addrLandmark || p.addressLine3,
+        cityTown: currentAddress.city || p.cityTown,
+        pinCode: currentAddress.postalCode || p.pinCode,
         emergencyContactName: emergency.name || p.emergencyContactName,
         emergencyContactPhone: emergency.phone || p.emergencyContactPhone,
         employmentType: d?.profile?.employmentType || p.employmentType,
@@ -173,6 +187,8 @@ export default function EmployeesPage() {
     const name = form.name?.trim() || '';
     const email = form.email?.trim() || '';
     const phone = form.phone?.trim() || '';
+    const cityTown = form.cityTown === 'N/A' ? '' : form.cityTown;
+    const pinCode  = form.pinCode === '000000' ? '' : form.pinCode;
     const errs = {};
 
     if (!name) errs.name = 'Full name is required';
@@ -188,10 +204,10 @@ export default function EmployeesPage() {
     else if (form.addressLine1.trim().length > 30) errs.addressLine1 = 'Line 1 must be 30 characters or less';
     if (form.addressLine2?.trim() && form.addressLine2.trim().length > 30) errs.addressLine2 = 'Line 2 must be 30 characters or less';
     if (form.addressLine3?.trim() && form.addressLine3.trim().length > 30) errs.addressLine3 = 'Line 3 must be 30 characters or less';
-    if (!form.cityTown?.trim()) errs.cityTown = 'City or town name is required';
-    else if (!ALPHA_SPACE_REGEX.test(form.cityTown.trim())) errs.cityTown = 'City can only contain alphabets';
-    else if (form.cityTown.trim().length > 25) errs.cityTown = 'City must be 25 characters or less';
-    if (!/^[0-9]{6}$/.test(form.pinCode || '')) errs.pinCode = 'Pin code must be exactly 6 digits';
+    if (!cityTown?.trim()) errs.cityTown = 'City or town name is required';
+    else if (!ALPHA_SPACE_REGEX.test(cityTown.trim())) errs.cityTown = 'City can only contain alphabets';
+    else if (cityTown.trim().length > 25) errs.cityTown = 'City must be 25 characters or less';
+    if (!/^[0-9]{6}$/.test(pinCode || '')) errs.pinCode = 'Pin code must be exactly 6 digits';
     if (!form.emergencyContactName?.trim()) errs.emergencyContactName = 'Emergency contact name is required';
     else if (!NAME_REGEX.test(form.emergencyContactName.trim())) errs.emergencyContactName = 'Must contain only letters and spaces';
     else if (form.emergencyContactName.trim().length > 25) errs.emergencyContactName = 'Name must be 25 characters or less';
@@ -228,14 +244,15 @@ export default function EmployeesPage() {
             gender: form.gender || 'prefer_not_to_say',
             bloodGroup: form.bloodGroup || '',
             maritalStatus: form.maritalStatus || 'prefer_not_to_say',
-            addressHistory: form.addressLine1 || form.cityTown || form.pinCode ? [{
+            addressHistory: form.addressLine1 || cityTown || pinCode ? [{
               addressType: 'current',
-              line1: [form.addressLine1, form.addressLine2, form.addressLine3].map(v => String(v || '').trim()).filter(Boolean).join(', ') || form.addressLine1,
-              city: form.cityTown || 'N/A',
+              line1: String(form.addressLine1 || '').trim(),
+              line2: String(form.addressLine2 || '').trim(),
+              city: cityTown,
               state: 'N/A',
               country: 'India',
-              postalCode: form.pinCode || '000000',
-              landmark: form.addressLine3 || '',
+              postalCode: pinCode,
+              landmark: String(form.addressLine3 || '').trim(),
               isCurrent: true,
             }] : undefined,
             emergencyContacts: form.emergencyContactName || form.emergencyContactPhone ? [{
@@ -672,7 +689,7 @@ export default function EmployeesPage() {
                   {!editEmp && <div className="col-md-6"><label className="form-label">Password <span style={{ fontWeight: 400, color: '#94a3b8' }}>(auto-generated if blank)</span></label><input type="password" className="form-control" autoComplete="new-password" placeholder="Leave blank to auto-generate" value={form.password || ''} onChange={e => setForm(p => ({ ...p, password: e.target.value }))} /></div>}
                   <div className="col-12"><label className="form-label">Skills <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional, comma separated)</span></label><input className="form-control" placeholder="e.g. React, Node.js, AWS" value={form.skills || ''} onChange={e => setForm(p => ({ ...p, skills: e.target.value }))} /></div>
                   {/* PAN & Aadhaar */}
-                  {!editEmp && canManage && (
+                  {canManage && (
                     <>
                       <div className="col-12" style={{ marginTop: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10 }}>
@@ -684,15 +701,27 @@ export default function EmployeesPage() {
                       </div>
                       <div className="col-md-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>PAN Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+                        {editEmp && maskedIdentifiers.pan && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
+                            <i className="bi bi-lock-fill" style={{ fontSize: 11 }} />
+                            <span>Saved: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{maskedIdentifiers.pan}</strong></span>
+                          </div>
+                        )}
                         <input className="form-control" style={{ fontFamily: 'monospace', letterSpacing: 1, textTransform: 'uppercase' }}
-                          placeholder="ABCDE1234F" maxLength={10} value={form.panNumber || ''}
+                          placeholder={editEmp ? 'Enter new value to replace' : 'ABCDE1234F'} maxLength={10} value={form.panNumber || ''}
                           onChange={e => setForm(p => ({ ...p, panNumber: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') }))} />
                         <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>5 letters + 4 digits + 1 letter</div>
                       </div>
                       <div className="col-md-6">
                         <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Aadhaar Number <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional)</span></label>
+                        {editEmp && maskedIdentifiers.aadhaar && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, padding: '8px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, fontSize: 12, color: '#92400e' }}>
+                            <i className="bi bi-lock-fill" style={{ fontSize: 11 }} />
+                            <span>Saved: <strong style={{ fontFamily: 'monospace', letterSpacing: 1 }}>{maskedIdentifiers.aadhaar}</strong></span>
+                          </div>
+                        )}
                         <input className="form-control" style={{ fontFamily: 'monospace', letterSpacing: 1 }}
-                          placeholder="123456789012" maxLength={12} value={form.aadhaarNumber || ''}
+                          placeholder={editEmp ? 'Enter new value to replace' : '123456789012'} maxLength={12} value={form.aadhaarNumber || ''}
                           onChange={e => setForm(p => ({ ...p, aadhaarNumber: e.target.value.replace(/\D/g, '') }))} />
                         <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 3 }}>12-digit Aadhaar number</div>
                       </div>
@@ -701,7 +730,7 @@ export default function EmployeesPage() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); clearFormErrs(); }}>Cancel</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); setMaskedIdentifiers({ pan: '', aadhaar: '' }); clearFormErrs(); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={handleSave} disabled={saving || editLoading}>
                   {editLoading ? 'Loading...' : saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editEmp ? 'Save Changes' : 'Add Employee'}
                 </button>

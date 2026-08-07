@@ -340,18 +340,25 @@ export default function AttendancePage() {
       ]);
       
       const merged = {};
-      for (const r of [...(Array.isArray(r1) ? r1 : []), ...(Array.isArray(r2) ? r2 : [])]) {
+      for (const r of (Array.isArray(r1) ? r1 : [])) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
         if (!uid) continue;
-        
         const empShift = shifts.find(s => s.name === r.userId?.shift);
-        let key = uid;
         if (empShift?.startTime && empShift?.endTime) {
           const shiftAwareDate = getAttendanceDate(now, empShift.startTime, empShift.endTime);
           if (r.date !== shiftAwareDate) continue;
         }
-        
-        merged[key] = r;
+        merged[uid] = r;
+      }
+      for (const r of (Array.isArray(r2) ? r2 : [])) {
+        const uid = r.userId?._id?.toString() || r.userId?.toString();
+        if (!uid) continue;
+        if (merged[uid]) continue;
+        const empShift = shifts.find(s => s.name === r.userId?.shift);
+        if (!(empShift?.startTime && empShift?.endTime)) continue;
+        const shiftAwareDate = getAttendanceDate(now, empShift.startTime, empShift.endTime);
+        if (r.date !== shiftAwareDate) continue;
+        merged[uid] = r;
       }
       setTeamToday(Object.values(merged));
     } catch { setTeamToday([]); }
@@ -1289,8 +1296,9 @@ export default function AttendancePage() {
                   { label: 'Absent', value: teamToday.filter(r => r.status === 'absent').length, icon: 'bi-person-x', color: '#ef4444' },
                   { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
                   { label: 'Late', value: teamToday.filter(r => r.status === 'late').length, icon: 'bi-clock', color: '#f59e0b' },
+                  { label: 'Half Day', value: teamToday.filter(r => r.status === 'half_day').length, icon: 'bi-sun', color: '#ea580c' },
                 ].map((s, i) => (
-                  <div key={i} className="col-6 col-xl-3">
+                  <div key={i} className="col-6 col-xl">
                     <div className="stat-card">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>

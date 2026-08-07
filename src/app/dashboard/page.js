@@ -50,6 +50,7 @@ export default function DashboardPage() {
   const [continueTask, setContinueTask] = useState(null);
   const [continuing, setContinuing] = useState(false);
   const [taskMsg, setTaskMsg] = useState('');
+  const [overviewEmployee, setOverviewEmployee] = useState(null);
   const [announcementQueue, setAnnouncementQueue] = useState([]);
   const [acknowledgingAnnouncement, setAcknowledgingAnnouncement] = useState(false);
 
@@ -243,6 +244,161 @@ export default function DashboardPage() {
 
   const currentAnnouncement = announcementQueue[0];
 
+  const monitoringCard = (
+    <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
+      {isAdmin ? (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className="bi bi-person-lines-fill" style={{ color: '#3b82f6', fontSize: 15 }} />
+            </div>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Employee Monitoring</span>
+            {stats?.monitoring && <Link href="/monitoring" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Open monitoring <i className="bi bi-arrow-right" /></Link>}
+          </div>
+          {stats?.monitoring ? <>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
+            {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
+              <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
+                <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
+                <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
+              </div>
+            ))}
+          </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #8b5cf615, #3b82f615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className="bi bi-check2-square" style={{ color: '#8b5cf6', fontSize: 15 }} />
+            </div>
+            <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
+          </div>
+          {stats?.pendingTasks?.length ? (
+            <>
+              {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => {
+                const isOwn = task.assigneeId === String(user?._id);
+                return (
+                  <div key={task._id || i}
+                    onClick={isOwn ? () => { setTaskMsg(''); setContinueTask(task); } : undefined}
+                    onMouseEnter={isOwn ? e => { e.currentTarget.style.background = '#f8fafc'; } : undefined}
+                    onMouseLeave={isOwn ? e => { e.currentTarget.style.background = 'transparent'; } : undefined}
+                    style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', cursor: isOwn ? 'pointer' : 'default', transition: 'background 0.15s ease' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={isOwn ? 'bi bi-list-task' : 'bi bi-lock'} /></div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
+                        <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
+                          {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}{task.attempts > 0 ? ` · Tried ${task.attempts} time${task.attempts > 1 ? 's' : ''}` : ''}
+                        </div>
+                        {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
+                      </div>
+                      <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
+                    </div>
+                  </div>
+                );
+              })}
+              <Pagination currentPage={pendingPage} totalPages={Math.ceil((stats?.pendingTasks?.length || 0) / 8)} onPageChange={setPendingPage} totalItems={stats?.pendingTasks?.length || 0} pageSize={8} />
+            </>
+          ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
+        </>
+      )}
+    </div>
+  );
+
+  const announcementsCard = (
+    <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #f59e0b15, #ef444415)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <i className="bi bi-megaphone" style={{ color: '#f59e0b', fontSize: 15 }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Announcements</span>
+      </div>
+      {stats?.announcements?.length === 0 && <div className="empty-state"><i className="bi bi-megaphone" /><p>No announcements</p></div>}
+      {stats?.announcements?.map((a, i) => (
+        <div key={a.id || i} style={{
+          padding: 16, marginBottom: 12,
+          background: '#f8fafc', borderRadius: 12,
+          border: '1px solid #f1f5f9',
+          transition: 'all 0.2s',
+        }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)'; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#f1f5f9'; e.currentTarget.style.boxShadow = 'none'; }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span className="badge" style={{ background: (a.tagColor || '#3b82f6') + '18', color: a.tagColor || '#3b82f6', fontSize: 10.5, padding: '4px 10px' }}>{a.tag}</span>
+            <span style={{ fontSize: 11, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <i className="bi bi-calendar3" style={{ fontSize: 10 }} />{formatDate(a.date)}
+            </span>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 650, color: '#0f172a', marginBottom: 4, letterSpacing: '-0.01em' }}>{a.title}</div>
+          <div style={{ fontSize: 12.5, color: '#64748b', lineHeight: 1.55 }}>{a.body}</div>
+          {a.attachment?.url && <a href={a.attachment.url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, color: '#2563eb', fontSize: 11.5, fontWeight: 700, textDecoration: 'none' }}><i className="bi bi-paperclip" />{a.attachment.name || 'Open attachment'}</a>}
+        </div>
+      ))}
+    </div>
+  );
+
+  const pendingOverviewCard = (
+    <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #ef444415, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <i className="bi bi-clipboard-check" style={{ color: '#ef4444', fontSize: 15 }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
+        {stats?.overview?.length > 0 && <Link href="/employees" style={{ marginLeft: 'auto', color: '#ef4444', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>All employees <i className="bi bi-arrow-right" /></Link>}
+      </div>
+      {stats?.overview?.length ? (
+        stats.overview.map((emp, i) => (
+          <div key={emp.userId} style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', borderLeft: emp.high ? '3px solid #ef4444' : '3px solid transparent', background: emp.high ? '#fef2f2' : 'transparent' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    onClick={() => setOverviewEmployee(emp)}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#0f172a'; e.currentTarget.style.textDecoration = 'underline'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#334155'; e.currentTarget.style.textDecoration = 'none'; }}
+                    style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'pointer', transition: 'color 0.15s ease' }}
+                  >{emp.name}</span>
+                  {emp.high && <span className="badge" style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 9.5, fontWeight: 800, padding: '2px 7px', letterSpacing: 0.4 }}>HIGH</span>}
+                </div>
+                <div style={{ color: '#94a3b8', fontSize: 11.5 }}>{emp.department || 'No department'}</div>
+                {emp.high && emp.highTasks?.[0] && (
+                  <div style={{ marginTop: 5 }}>
+                    <div style={{ color: '#475569', fontSize: 11.5, display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+                      <i className="bi bi-dot" style={{ color: '#ef4444' }} />
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, flex: 1 }}>{emp.highTasks[0].text}</span>
+                      <span style={{ color: '#b91c1c', fontWeight: 700, flexShrink: 0 }}>{emp.highTasks[0].attempts} {emp.highTasks[0].attempts === 1 ? 'try' : 'tries'}{emp.highTasks[0].durationMins > 0 ? ` · ${formatMins(emp.highTasks[0].durationMins)}` : ''}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <span className="badge" style={{ background: emp.high ? '#fee2e2' : '#f1f5f9', color: emp.high ? '#b91c1c' : '#64748b', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{emp.pendingCount} pending</span>
+            </div>
+          </div>
+        ))
+      ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
+    </div>
+  );
+
+  const renderOverviewTask = (t, i, showHigh) => {
+    const st = t.carriedForward ? WORK_STATUS_COLORS.pending : (WORK_STATUS_COLORS[t.status] || WORK_STATUS_COLORS.pending);
+    const stLabel = t.carriedForward ? 'Pending' : (WORK_STATUS_LABELS[t.status] || t.status);
+    return (
+      <div key={i} style={{ padding: '10px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+          <span style={{ minWidth: 0, flex: 1, color: '#334155', fontSize: 13.5, fontWeight: 650, wordBreak: 'break-word' }}>{t.text}</span>
+          {showHigh && <span className="badge" style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 9.5, fontWeight: 800, padding: '2px 7px', letterSpacing: 0.4 }}>HIGH</span>}
+          <span className="badge" style={{ background: st + '20', color: st, fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>{stLabel}</span>
+        </div>
+        <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
+          Tried {t.attempts} time{t.attempts > 1 ? 's' : ''}{t.durationMins > 0 ? ` · ${formatMins(t.durationMins)}` : ''} · Last worked {formatDate(t.date)}
+          {t.completedDate ? ` · Completed on ${formatDate(t.completedDate)}` : ''}
+        </div>
+        {t.remarks ? <div style={{ color: '#64748b', fontSize: 11.5, marginTop: 3 }}>{t.remarks}</div> : null}
+      </div>
+    );
+  };
+
   return (
     <AppShell title="Dashboard">
       {/* Greeting banner */}
@@ -329,101 +485,22 @@ export default function DashboardPage() {
           </div>
 
           {/* Employee monitoring + announcements */}
-          <div className="row g-3">
-            <div className="col-lg-6">
-              <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
-                {isAdmin ? (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #3b82f615, #8b5cf615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <i className="bi bi-person-lines-fill" style={{ color: '#3b82f6', fontSize: 15 }} />
-                      </div>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Employee Monitoring</span>
-                      {stats?.monitoring && <Link href="/monitoring" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Open monitoring <i className="bi bi-arrow-right" /></Link>}
-                    </div>
-                    {stats?.monitoring ? <>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
-                      {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
-                        <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
-                          <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
-                          <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
-                          <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
-                        </div>
-                      ))}
-                    </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
-                  </>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #8b5cf615, #3b82f615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <i className="bi bi-check2-square" style={{ color: '#8b5cf6', fontSize: 15 }} />
-                      </div>
-                      <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
-                    </div>
-                    {stats?.pendingTasks?.length ? (
-                      <>
-                        {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => {
-                          const isOwn = task.assigneeId === String(user?._id);
-                          return (
-                            <div key={task._id || i}
-                              onClick={isOwn ? () => { setTaskMsg(''); setContinueTask(task); } : undefined}
-                              onMouseEnter={isOwn ? e => { e.currentTarget.style.background = '#f8fafc'; } : undefined}
-                              onMouseLeave={isOwn ? e => { e.currentTarget.style.background = 'transparent'; } : undefined}
-                              style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', cursor: isOwn ? 'pointer' : 'default', transition: 'background 0.15s ease' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={isOwn ? 'bi bi-list-task' : 'bi bi-lock'} /></div>
-                                <div style={{ minWidth: 0, flex: 1 }}>
-                                  <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
-                                  <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
-                                    {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}{task.attempts > 0 ? ` · Tried ${task.attempts} time${task.attempts > 1 ? 's' : ''}` : ''}
-                                  </div>
-                                  {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
-                                </div>
-                                <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
-                              </div>
-                            </div>
-                          );
-                        })}
-                        <Pagination currentPage={pendingPage} totalPages={Math.ceil((stats?.pendingTasks?.length || 0) / 8)} onPageChange={setPendingPage} totalItems={stats?.pendingTasks?.length || 0} pageSize={8} />
-                      </>
-                    ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
-                  </>
-                )}
+          {isSuperAdmin ? (
+            <>
+              <div className="row g-3">
+                <div className="col-lg-6">{pendingOverviewCard}</div>
+                <div className="col-lg-6">{announcementsCard}</div>
               </div>
-            </div>
-
-            <div className="col-lg-6">
-              <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #f59e0b15, #ef444415)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <i className="bi bi-megaphone" style={{ color: '#f59e0b', fontSize: 15 }} />
-                  </div>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Announcements</span>
-                </div>
-                {stats?.announcements?.length === 0 && <div className="empty-state"><i className="bi bi-megaphone" /><p>No announcements</p></div>}
-                {stats?.announcements?.map((a, i) => (
-                  <div key={a.id || i} style={{
-                    padding: 16, marginBottom: 12,
-                    background: '#f8fafc', borderRadius: 12,
-                    border: '1px solid #f1f5f9',
-                    transition: 'all 0.2s',
-                  }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#e2e8f0'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.04)'; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#f1f5f9'; e.currentTarget.style.boxShadow = 'none'; }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span className="badge" style={{ background: (a.tagColor || '#3b82f6') + '18', color: a.tagColor || '#3b82f6', fontSize: 10.5, padding: '4px 10px' }}>{a.tag}</span>
-                      <span style={{ fontSize: 11, color: '#94a3b8', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <i className="bi bi-calendar3" style={{ fontSize: 10 }} />{formatDate(a.date)}
-                      </span>
-                    </div>
-                    <div style={{ fontSize: 14, fontWeight: 650, color: '#0f172a', marginBottom: 4, letterSpacing: '-0.01em' }}>{a.title}</div>
-                    <div style={{ fontSize: 12.5, color: '#64748b', lineHeight: 1.55 }}>{a.body}</div>
-                    {a.attachment?.url && <a href={a.attachment.url} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, color: '#2563eb', fontSize: 11.5, fontWeight: 700, textDecoration: 'none' }}><i className="bi bi-paperclip" />{a.attachment.name || 'Open attachment'}</a>}
-                  </div>
-                ))}
+              <div className="row g-3">
+                <div className="col-12">{monitoringCard}</div>
               </div>
+            </>
+          ) : (
+            <div className="row g-3">
+              <div className="col-lg-6">{monitoringCard}</div>
+              <div className="col-lg-6">{announcementsCard}</div>
             </div>
-          </div>
+          )}
         </>
       )}
 
@@ -526,6 +603,52 @@ export default function DashboardPage() {
             <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">
               <button type="button" className="btn btn-outline-secondary px-3 py-2 btn-sm fw-bold" onClick={() => { setContinueTask(null); setTaskMsg(''); }} disabled={continuing}>Cancel</button>
               <button type="button" className="btn btn-primary px-3 py-2 btn-sm fw-bold" onClick={handleContinue} disabled={continuing}>{continuing ? 'Please wait...' : 'Yes, Continue'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {overviewEmployee && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+          backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 9999, transition: 'all 0.3s ease-in-out'
+        }}>
+          <div className="card shadow-lg" style={{ width: '100%', maxWidth: 520, borderRadius: 16, border: 'none', overflow: 'hidden' }}>
+            <div className="card-header border-0 bg-white pt-4 px-4 d-flex justify-content-between align-items-center">
+              <h5 className="fw-bold m-0" style={{ color: '#0f172a' }}>{overviewEmployee.name}</h5>
+              <button type="button" className="btn-close" onClick={() => setOverviewEmployee(null)}></button>
+            </div>
+            <div className="card-header border-0 bg-white pb-3 px-4 pt-0" style={{ fontSize: 12.5, color: '#64748b' }}>{overviewEmployee.department || 'No department'}</div>
+            <div className="card-body px-4 py-3">
+              {overviewEmployee.tasks?.length ? (
+                <>
+                  {(() => {
+                    const highTasks = overviewEmployee.tasks.filter(t => t.high);
+                    const lowTasks = overviewEmployee.tasks.filter(t => !t.high);
+                    return (
+                      <>
+                        {highTasks.length > 0 && (
+                          <>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, margin: '6px 0 8px' }}>High flagged tasks</div>
+                            {highTasks.map((t, i) => renderOverviewTask(t, i, true))}
+                          </>
+                        )}
+                        {lowTasks.length > 0 && (
+                          <>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, margin: '10px 0 8px' }}>Pending tasks</div>
+                            {lowTasks.map((t, i) => renderOverviewTask(t, i, false))}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                </>
+              ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
+            </div>
+            <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end">
+              <button type="button" className="btn btn-outline-secondary px-4 py-2 btn-sm fw-bold" onClick={() => setOverviewEmployee(null)}>Close</button>
             </div>
           </div>
         </div>

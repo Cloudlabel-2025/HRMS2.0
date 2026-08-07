@@ -8,6 +8,7 @@ import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { Announcement, Employee } from '@/lib/models/index';
 import { getAccessibleDepartments } from '@/lib/rbac';
+import { computeWorkRowDuration } from '@/lib/attendance-constants';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -18,6 +19,7 @@ export async function GET(req) {
   const today = new Date().toISOString().split('T')[0];
   const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0];
   const role = user.role;
+  const isSuperAdmin = role === 'super_admin';
 
   // Scope team member IDs for team_lead / team_admin
   let teamIds = null;
@@ -72,6 +74,7 @@ export async function GET(req) {
   ]);
 
   let monitoring = null;
+  let overview = null;
   if (isAdminRole) {
     const employeeFilter = isAdminRole
       ? { status: 'active', role: { $ne: 'super_admin' } }
@@ -95,6 +98,76 @@ export async function GET(req) {
       if (status === 'absent') alerts.push({ name: employee.name, department: employee.department, status: 'Absent', time: '' });
     }
     monitoring = { counts, alerts: alerts.slice(0, 5) };
+
+    if (isSuperAdmin) {
+      const allRecords = await Attendance.find({ userId: { $in: monitoredIds } }).select('userId date workProgress').sort({ date: -1 }).lean();
+      const empInfo = new Map(monitoredEmployees.map(e => [e.userId.toString(), { name: e.name, department: e.department }]));
+
+      const computeOverview = (records) => {
+        const byUser = new Map();
+        for (const rec of records) {
+          const uid = rec.userId.toString();
+          if (!byUser.has(uid)) byUser.set(uid, { latest: new Map(), attemptDates: new Map(), completedDates: new Map(), totalMins: new Map() });
+          const { latest, attemptDates, completedDates, totalMins } = byUser.get(uid);
+          for (const row of [...(rec.workProgress || [])].reverse()) {
+            if (row.type !== 'task') continue;
+            const text = row.taskDetails ? String(row.taskDetails).trim() : '';
+            if (!text) continue;
+            let dates = attemptDates.get(text);
+            if (!dates) { dates = new Set(); attemptDates.set(text, dates); }
+            dates.add(rec.date);
+            totalMins.set(text, (totalMins.get(text) || 0) + (typeof row.duration === 'number' ? row.duration : (computeWorkRowDuration(row) || 0)));
+            if (!latest.has(text)) {
+              latest.set(text, { status: row.status, carriedForward: !!row.carriedForward, date: rec.date, remarks: row.remarks || '' });
+            }
+            if (row.status === 'completed' && !row.carriedForward && !completedDates.has(text)) {
+              completedDates.set(text, rec.date);
+            }
+          }
+        }
+        const rows = [];
+        for (const [uid, { latest, attemptDates, completedDates, totalMins }] of byUser) {
+          const info = empInfo.get(uid);
+          if (!info) continue;
+          const tasks = [];
+          for (const [text, l] of latest) {
+            if (l.carriedForward === true || ['pending', 'stopped', 'work_in_progress'].includes(l.status)) {
+              const attempts = attemptDates.get(text).size;
+              tasks.push({
+                text,
+                status: l.status,
+                carriedForward: l.carriedForward,
+                attempts,
+                completedDate: completedDates.get(text) || null,
+                date: l.date,
+                remarks: l.remarks,
+                high: attempts > 1,
+                durationMins: totalMins.get(text) || 0,
+              });
+            }
+          }
+          const totalTries = tasks.reduce((sum, t) => sum + t.attempts, 0);
+          rows.push({
+            userId: uid,
+            name: info.name,
+            department: info.department,
+            pendingCount: tasks.length,
+            high: tasks.some(t => t.high),
+            totalTries,
+            highTasks: tasks.filter(t => t.high),
+            tasks,
+          });
+        }
+        rows.sort((a, b) => {
+          if (a.high !== b.high) return a.high ? -1 : 1;
+          if (a.pendingCount !== b.pendingCount) return b.pendingCount - a.pendingCount;
+          return a.name.localeCompare(b.name);
+        });
+        return rows;
+      };
+
+      overview = computeOverview(allRecords);
+    }
   }
 
   const myLeaveBalance = isSelfRole
@@ -172,6 +245,7 @@ export async function GET(req) {
     openJobs,
     lastPayslip: lastPayslip ? { net: lastPayslip.netPay, month: lastPayslip.month } : null,
     monitoring,
+    overview: isSuperAdmin ? overview : null,
     pendingTasks,
     announcements: announcements.map(a => ({
       id: a._id, title: a.title, body: a.body, tag: a.tag, tagColor: a.tagColor, date: a.createdAt, attachment: a.attachment,

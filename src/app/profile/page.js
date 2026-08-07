@@ -10,7 +10,7 @@ import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
-import { formatTaskDuration } from '@/lib/attendance-constants';
+import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -253,35 +253,41 @@ export default function ProfilePage() {
   const taskLedger = useMemo(() => {
     const latest = new Map();
     const attemptDates = new Map();
+    const completedDates = new Map();
+    const totalMins = new Map();
     for (const cycle of wpCycles) {
       for (const d of cycle.dates || []) {
-        for (const row of d.workProgress || []) {
+        for (const row of [...(d.workProgress || [])].reverse()) {
           if (row.type !== 'task') continue;
           const text = row.taskDetails ? String(row.taskDetails).trim() : '';
           if (!text) continue;
           let dates = attemptDates.get(text);
           if (!dates) { dates = new Set(); attemptDates.set(text, dates); }
           dates.add(d.date);
+          totalMins.set(text, (totalMins.get(text) || 0) + (typeof row.duration === 'number' ? row.duration : (computeWorkRowDuration(row) || 0)));
           if (!latest.has(text)) {
             latest.set(text, { status: row.status, carriedForward: !!row.carriedForward, date: d.date });
+          }
+          if (row.status === 'completed' && !row.carriedForward && !completedDates.has(text)) {
+            completedDates.set(text, d.date);
           }
         }
       }
     }
-    const entries = [];
+    const pending = [];
     for (const [text, l] of latest) {
-      const done = l.status === 'completed' && l.carriedForward === false;
-      entries.push({
-        text,
-        status: l.status,
-        carriedForward: l.carriedForward,
-        completedDate: done ? l.date : null,
-        attempts: attemptDates.get(text).size,
-        done,
-      });
+      if (l.carriedForward === true || ['pending', 'stopped', 'work_in_progress'].includes(l.status)) {
+        pending.push({
+          text,
+          status: l.status,
+          carriedForward: l.carriedForward,
+          attempts: attemptDates.get(text).size,
+          completedDate: completedDates.get(text) || null,
+          totalMins: totalMins.get(text) || 0,
+        });
+      }
     }
-    const pending = entries.filter(e => !e.done);
-    const completed = entries.filter(e => e.done);
+    const completed = pending.filter(t => t.completedDate).map(t => ({ text: t.text, completedDate: t.completedDate, attempts: t.attempts, totalMins: t.totalMins }));
     return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
   }, [wpCycles]);
   const toCsvRows = (cycles) => {
@@ -1233,7 +1239,7 @@ export default function ProfilePage() {
                         <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <div style={{ color: '#334155', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.text}</div>
-                            <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Tried {t.attempts} time{t.attempts > 1 ? 's' : ''}</div>
+                            <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Tried {t.attempts} time{t.attempts > 1 ? 's' : ''}{t.totalMins > 0 ? ` · ${formatMins(t.totalMins)}` : ''}</div>
                           </div>
                           <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
                             {t.carriedForward ? 'Pending' : (st.label || t.status)}
@@ -1250,7 +1256,7 @@ export default function ProfilePage() {
                       <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
                         <div style={{ minWidth: 0, flex: 1 }}>
                           <div style={{ color: '#334155', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.text}</div>
-                          <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Completed on {formatDate(t.completedDate)} · took {t.attempts} {t.attempts === 1 ? 'try' : 'tries'}</div>
+                          <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Completed on {formatDate(t.completedDate)} · took {t.attempts} {t.attempts === 1 ? 'try' : 'tries'}{t.totalMins > 0 ? ` · ${formatMins(t.totalMins)}` : ''}</div>
                         </div>
                         <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: WP_STATUS_STYLE.completed.bg, color: WP_STATUS_STYLE.completed.color, whiteSpace: 'nowrap' }}>Completed</span>
                       </div>
