@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useAuth, ROLE_COLORS, ROLE_LABELS, setImpersonatedUser } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
+import { parseStoredAddress } from '@/lib/format';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
@@ -144,7 +145,11 @@ export default function EmployeesPage() {
   const openEdit = async (emp) => {
     setEditEmp(emp);
     setMaskedIdentifiers({ pan: '', aadhaar: '' });
-    setForm({ ...EMPTY_FORM, ...emp, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '', joinDate: emp.joinDate ? String(emp.joinDate).slice(0, 10) : '' });
+    const init = { ...EMPTY_FORM };
+    for (const key of Object.keys(EMPTY_FORM)) {
+      if (emp[key] !== undefined) init[key] = emp[key];
+    }
+    setForm({ ...init, skills: (emp.skills || []).join(', '), panNumber: '', aadhaarNumber: '', joinDate: emp.joinDate ? String(emp.joinDate).slice(0, 10) : '' });
     setEditIdentityId(null); setEditProfileId(null);
     clearFormErrs(); setShowModal(true);
     setEditLoading(true);
@@ -152,30 +157,23 @@ export default function EmployeesPage() {
       const d = await api.get(`/api/employees/${emp._id}/details`);
       const currentAddress = d?.identity?.addressHistory?.find(a => a.isCurrent) || d?.identity?.addressHistory?.[0] || {};
       const emergency = d?.identity?.emergencyContacts?.find(c => c.isPrimary) || d?.identity?.emergencyContacts?.[0] || {};
+      const parsedAddress = parseStoredAddress(currentAddress);
       setEditIdentityId(d?.identity?._id || null);
       setEditProfileId(d?.profile?._id || null);
       setMaskedIdentifiers({
         pan: d?.identity?.identifiers?.pan?.maskedValue || '',
         aadhaar: d?.identity?.identifiers?.aadhaar?.maskedValue || '',
       });
-      let addrLine1 = currentAddress.line1 || '';
-      let addrLine2 = currentAddress.line2 || '';
-      const addrLandmark = currentAddress.landmark || '';
-      if (!addrLine2 && addrLine1 && addrLine1.includes(', ')) {
-        const parts = addrLine1.split(',').map(v => v.trim()).filter(Boolean);
-        addrLine1 = parts[0] || '';
-        addrLine2 = parts[1] || '';
-      }
       setForm(p => ({
         ...p,
         bloodGroup: d?.identity?.bloodGroup || p.bloodGroup,
         gender: d?.identity?.gender || p.gender,
         maritalStatus: d?.identity?.maritalStatus || p.maritalStatus,
-        addressLine1: addrLine1 || p.addressLine1,
-        addressLine2: addrLine2 || p.addressLine2,
-        addressLine3: addrLandmark || p.addressLine3,
-        cityTown: currentAddress.city || p.cityTown,
-        pinCode: currentAddress.postalCode || p.pinCode,
+        addressLine1: parsedAddress.line1 || p.addressLine1,
+        addressLine2: parsedAddress.line2 || p.addressLine2,
+        addressLine3: parsedAddress.line3 || p.addressLine3,
+        cityTown: parsedAddress.cityTown || p.cityTown,
+        pinCode: parsedAddress.pinCode || p.pinCode,
         emergencyContactName: emergency.name || p.emergencyContactName,
         emergencyContactPhone: emergency.phone || p.emergencyContactPhone,
         employmentType: d?.profile?.employmentType || p.employmentType,

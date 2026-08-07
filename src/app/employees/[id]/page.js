@@ -7,7 +7,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Time from '@/components/Time';
-import { formatMins } from '@/lib/format';
+import { formatMins, parseStoredAddress } from '@/lib/format';
 import { canAccessDepartment } from '@/lib/auth';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
@@ -127,6 +127,7 @@ export default function EmployeeProfilePage() {
     if (!emp) return;
     const currentAddress = data?.identity?.addressHistory?.find(a => a.isCurrent) || data?.identity?.addressHistory?.[0] || {};
     const emergency = data?.identity?.emergencyContacts?.find(c => c.isPrimary) || data?.identity?.emergencyContacts?.[0] || {};
+    const parsedAddress = parseStoredAddress(currentAddress);
     setEditForm({
       name: emp.name || '',
       email: emp.email || '',
@@ -135,11 +136,11 @@ export default function EmployeeProfilePage() {
       gender: data?.identity?.gender || '',
       maritalStatus: data?.identity?.maritalStatus || '',
       employmentType: data?.profile?.employmentType || '',
-      addressLine1: currentAddress.line1 || '',
-      addressLine2: currentAddress.line2 || '',
-      addressLine3: currentAddress.landmark || '',
-      cityTown: currentAddress.city || '',
-      pinCode: currentAddress.postalCode || '',
+      addressLine1: parsedAddress.line1,
+      addressLine2: parsedAddress.line2,
+      addressLine3: parsedAddress.line3,
+      cityTown: parsedAddress.cityTown,
+      pinCode: parsedAddress.pinCode,
       emergencyContactName: emergency.name || '',
       emergencyContactPhone: emergency.phone || '',
       department: emp.department || '',

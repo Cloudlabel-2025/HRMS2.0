@@ -69,9 +69,9 @@ export const CreateEmployeeSchema = z.object({
   skills: z.array(z.string().max(50)).optional().default([]),
   joinDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date({ required_error: 'Join date required' })),
   status: z.enum(['active', 'inactive', 'alumni']).default('active'),
-  teamLeadId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
-  teamAdminId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
-  smeId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
+  teamLeadId: ObjectIdSchema.optional().or(z.literal('')).or(z.null()).transform(v => v === '' || v == null ? undefined : v),
+  teamAdminId: ObjectIdSchema.optional().or(z.literal('')).or(z.null()).transform(v => v === '' || v == null ? undefined : v),
+  smeId: ObjectIdSchema.optional().or(z.literal('')).or(z.null()).transform(v => v === '' || v == null ? undefined : v),
   // Sensitive identifiers — stored encrypted in UsrIdentity, not in Employee
   panNumber: z.string().regex(/^[A-Z]{5}[0-9]{4}[A-Z]$/i, 'Invalid PAN format').optional(),
   aadhaarNumber: z.string().regex(/^[0-9]{12}$/, 'Aadhaar must be 12 digits').optional(),
