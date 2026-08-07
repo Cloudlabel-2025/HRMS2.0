@@ -5,6 +5,8 @@ import { useAuth, ROLE_COLORS, ROLE_LABELS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
+import { formatMins } from '@/lib/format';
 import { Chart, registerables } from 'chart.js';
 Chart.register(...registerables);
 
@@ -44,6 +46,7 @@ export default function DashboardPage() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [pendingPage, setPendingPage] = useState(1);
   const [announcementQueue, setAnnouncementQueue] = useState([]);
   const [acknowledgingAnnouncement, setAcknowledgingAnnouncement] = useState(false);
 
@@ -107,6 +110,10 @@ export default function DashboardPage() {
       .then(notes => setAnnouncementQueue((Array.isArray(notes) ? notes : []).filter(note => note.type === 'announcement' && !note.read)))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    setPendingPage(1);
+  }, [stats?.pendingTasks?.length]);
 
   const acknowledgeAnnouncement = async () => {
     const announcement = announcementQueue[0];
@@ -310,21 +317,26 @@ export default function DashboardPage() {
                         <i className="bi bi-check2-square" style={{ color: '#8b5cf6', fontSize: 15 }} />
                       </div>
                       <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
-                      <Link href="/attendance" style={{ marginLeft: 'auto', color: '#3b82f6', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>View all <i className="bi bi-arrow-right" /></Link>
                     </div>
                     {stats?.pendingTasks?.length ? (
-                      <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-                        {stats.pendingTasks.map((task, i) => (
-                          <div key={task._id || i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
-                            <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-list-task" /></div>
-                            <div style={{ minWidth: 0, flex: 1 }}>
-                              <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
-                              {task.assignee && <div style={{ color: '#94a3b8', fontSize: 11.5 }}>{task.assignee}</div>}
+                      <>
+                        {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => (
+                          <div key={task._id || i} style={{ padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-list-task" /></div>
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
+                                <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
+                                  {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}
+                                </div>
+                                {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
+                              </div>
+                              <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
                             </div>
-                            <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
                           </div>
                         ))}
-                      </div>
+                        <Pagination currentPage={pendingPage} totalPages={Math.ceil((stats?.pendingTasks?.length || 0) / 8)} onPageChange={setPendingPage} totalItems={stats?.pendingTasks?.length || 0} pageSize={8} />
+                      </>
                     ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
                   </>
                 )}

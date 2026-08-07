@@ -8,7 +8,6 @@ import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { Announcement, Employee } from '@/lib/models/index';
 import { getAccessibleDepartments } from '@/lib/rbac';
-import { getTzTime } from '@/lib/timezone';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -66,7 +65,7 @@ export async function GET(req) {
       : Promise.resolve(0),
     Task.countDocuments(
       isAdminRole ? { status: { $in: ['To Do', 'In Progress'] } }
-        : isTeamRole ? { assignedTo: { $in: teamIds }, status: { $in: ['To Do', 'In Progress'] } }
+        : isTeamRole ? { assignedTo: { $in: [...teamIds, user._id] }, status: { $in: ['To Do', 'In Progress'] } }
         : { assignedTo: user._id, status: { $in: ['To Do', 'In Progress'] } }
     ),
     Announcement.find(announcementFilter).sort({ createdAt: -1 }).limit(3),
@@ -104,31 +103,27 @@ export async function GET(req) {
 
   let pendingTasks = null;
   if (!isAdminRole) {
-    const now = await getTzTime();
-    const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     const incompleteStatuses = ['pending', 'work_in_progress', 'stopped'];
 
-    let worksheetRecords = [];
-    if (isTeamRole) {
-      worksheetRecords = await Attendance.find({ userId: { $in: teamIds }, date: todayStr })
-        .populate('userId', 'name')
-        .select('userId workProgress')
-        .lean();
-    } else {
-      const rec = await Attendance.findOne({ userId: user._id, date: todayStr }).select('userId workProgress').lean();
-      if (rec) worksheetRecords = [rec];
-    }
+    const ownerFilter = isTeamRole ? { $in: [...teamIds, user._id] } : user._id;
+    const worksheetRecords = await Attendance.find({ userId: ownerFilter })
+      .populate('userId', 'name')
+      .select('userId date workProgress')
+      .sort({ date: -1 })
+      .lean();
 
     const rows = [];
     for (const rec of worksheetRecords) {
       const assignee = rec.userId?.name || '';
       for (const row of rec.workProgress || []) {
-        if (row.type === 'task' && incompleteStatuses.includes(row.status) && row.taskDetails && String(row.taskDetails).trim()) {
-          rows.push({ _id: row._id, text: String(row.taskDetails).trim(), status: row.status, assignee });
+        const details = row.taskDetails ? String(row.taskDetails).trim() : '';
+        const incomplete = row.type === 'task' && details && (incompleteStatuses.includes(row.status) || row.carriedForward === true);
+        if (incomplete) {
+          rows.push({ _id: row._id, text: details, status: row.status, assignee, duration: row.duration ?? null, remarks: row.remarks || '', date: rec.date });
         }
       }
     }
-    pendingTasks = rows.slice(0, 8);
+    pendingTasks = rows;
   }
 
   const lastPayslip = isSelfRole
