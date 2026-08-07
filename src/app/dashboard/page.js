@@ -47,6 +47,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingPage, setPendingPage] = useState(1);
+  const [continueTask, setContinueTask] = useState(null);
+  const [continuing, setContinuing] = useState(false);
+  const [taskMsg, setTaskMsg] = useState('');
   const [announcementQueue, setAnnouncementQueue] = useState([]);
   const [acknowledgingAnnouncement, setAcknowledgingAnnouncement] = useState(false);
 
@@ -114,6 +117,45 @@ export default function DashboardPage() {
   useEffect(() => {
     setPendingPage(1);
   }, [stats?.pendingTasks?.length]);
+
+  const refresh = () => api.get('/api/dashboard').then(setStats).catch(e => setError(e.message));
+
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+
+  useEffect(() => {
+    const refetch = () => {
+      if (document.visibilityState === 'hidden') return;
+      refreshRef.current();
+    };
+    window.addEventListener('focus', refetch);
+    window.addEventListener('popstate', refetch);
+    window.addEventListener('pageshow', refetch);
+    document.addEventListener('visibilitychange', refetch);
+    return () => {
+      window.removeEventListener('focus', refetch);
+      window.removeEventListener('popstate', refetch);
+      window.removeEventListener('pageshow', refetch);
+      document.removeEventListener('visibilitychange', refetch);
+    };
+  }, []);
+
+  const handleContinue = async () => {
+    setContinuing(true);
+    try {
+      await api.post('/api/attendance/continue-task', { taskDetails: continueTask.text });
+      setTaskMsg('Task added to today\'s worksheet.');
+      setTimeout(() => {
+        setContinueTask(null);
+        setTaskMsg('');
+        refresh();
+      }, 1500);
+    } catch (e) {
+      setTaskMsg(e.message || 'Failed to continue task');
+    } finally {
+      setContinuing(false);
+    }
+  };
 
   const acknowledgeAnnouncement = async () => {
     const announcement = announcementQueue[0];
@@ -320,21 +362,28 @@ export default function DashboardPage() {
                     </div>
                     {stats?.pendingTasks?.length ? (
                       <>
-                        {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => (
-                          <div key={task._id || i} style={{ padding: '9px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-list-task" /></div>
-                              <div style={{ minWidth: 0, flex: 1 }}>
-                                <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
-                                <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
-                                  {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}
+                        {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => {
+                          const isOwn = task.assigneeId === String(user?._id);
+                          return (
+                            <div key={task._id || i}
+                              onClick={isOwn ? () => { setTaskMsg(''); setContinueTask(task); } : undefined}
+                              onMouseEnter={isOwn ? e => { e.currentTarget.style.background = '#f8fafc'; } : undefined}
+                              onMouseLeave={isOwn ? e => { e.currentTarget.style.background = 'transparent'; } : undefined}
+                              style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', cursor: isOwn ? 'pointer' : 'default', transition: 'background 0.15s ease' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={isOwn ? 'bi bi-list-task' : 'bi bi-lock'} /></div>
+                                <div style={{ minWidth: 0, flex: 1 }}>
+                                  <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.text}</div>
+                                  <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
+                                    {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}{task.attempts > 0 ? ` · Tried ${task.attempts} time${task.attempts > 1 ? 's' : ''}` : ''}
+                                  </div>
+                                  {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
                                 </div>
-                                {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
+                                <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
                               </div>
-                              <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                         <Pagination currentPage={pendingPage} totalPages={Math.ceil((stats?.pendingTasks?.length || 0) / 8)} onPageChange={setPendingPage} totalItems={stats?.pendingTasks?.length || 0} pageSize={8} />
                       </>
                     ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
@@ -443,6 +492,40 @@ export default function DashboardPage() {
             <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">
               <button type="button" className="btn btn-outline-secondary px-3 py-2 btn-sm fw-bold" onClick={() => { setShowPermissionModal(false); resetForm(); }} disabled={submitting}>Cancel</button>
               <button type="button" className="btn btn-primary px-3 py-2 btn-sm fw-bold" onClick={submitPermission} disabled={submitting}>{submitting ? 'Submitting...' : 'Submit Request'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {continueTask && (
+        <div
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="continue-task-modal-title"
+          style={{
+            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+            backgroundColor: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 9999, transition: 'all 0.3s ease-in-out'
+          }}>
+          <div className="card shadow-lg" style={{ width: '100%', maxWidth: 500, borderRadius: 16, border: 'none', overflow: 'hidden' }}>
+            <div className="card-header border-0 bg-white pt-4 px-4 d-flex justify-content-between align-items-center">
+              <h5 id="continue-task-modal-title" className="fw-bold m-0" style={{ color: '#0f172a' }}>Continue Task</h5>
+              <button type="button" className="btn-close" onClick={() => { setContinueTask(null); setTaskMsg(''); }}></button>
+            </div>
+            <div className="card-body px-4 py-3">
+              {taskMsg && (
+                <div className={`alert ${taskMsg.startsWith('Task added') ? 'alert-success' : 'alert-danger'} py-2`} style={{ fontSize: 13 }}>{taskMsg}</div>
+              )}
+              <div style={{ color: '#475569', fontSize: 13.5, marginBottom: 8 }}>Do you want to continue this task?</div>
+              <div style={{
+                padding: '11px 13px', borderRadius: 10, background: '#f8fafc', border: '1px solid #f1f5f9',
+                color: '#0f172a', fontSize: 13.5, fontWeight: 650, wordBreak: 'break-word'
+              }}>{continueTask.text}</div>
+            </div>
+            <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">
+              <button type="button" className="btn btn-outline-secondary px-3 py-2 btn-sm fw-bold" onClick={() => { setContinueTask(null); setTaskMsg(''); }} disabled={continuing}>Cancel</button>
+              <button type="button" className="btn btn-primary px-3 py-2 btn-sm fw-bold" onClick={handleContinue} disabled={continuing}>{continuing ? 'Please wait...' : 'Yes, Continue'}</button>
             </div>
           </div>
         </div>

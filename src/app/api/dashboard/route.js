@@ -103,8 +103,6 @@ export async function GET(req) {
 
   let pendingTasks = null;
   if (!isAdminRole) {
-    const incompleteStatuses = ['pending', 'work_in_progress', 'stopped'];
-
     const ownerFilter = isTeamRole ? { $in: [...teamIds, user._id] } : user._id;
     const worksheetRecords = await Attendance.find({ userId: ownerFilter })
       .populate('userId', 'name')
@@ -112,16 +110,45 @@ export async function GET(req) {
       .sort({ date: -1 })
       .lean();
 
-    const rows = [];
+    const latest = new Map();
+    const attemptDates = new Map();
+
     for (const rec of worksheetRecords) {
       const assignee = rec.userId?.name || '';
-      for (const row of rec.workProgress || []) {
-        const details = row.taskDetails ? String(row.taskDetails).trim() : '';
-        const incomplete = row.type === 'task' && details && (incompleteStatuses.includes(row.status) || row.carriedForward === true);
-        if (incomplete) {
-          rows.push({ _id: row._id, text: details, status: row.status, assignee, duration: row.duration ?? null, remarks: row.remarks || '', date: rec.date });
+      const assigneeId = (rec.userId?._id || '').toString();
+      for (const row of [...(rec.workProgress || [])].reverse()) {
+        if (row.type !== 'task') continue;
+        const text = row.taskDetails ? String(row.taskDetails).trim() : '';
+        if (!text) continue;
+        const key = assigneeId + '::' + text;
+
+        let dates = attemptDates.get(key);
+        if (!dates) {
+          dates = new Set();
+          attemptDates.set(key, dates);
+        }
+        dates.add(rec.date);
+
+        if (!latest.has(key)) {
+          latest.set(key, { text, status: row.status, carriedForward: !!row.carriedForward, date: rec.date, _id: row._id, duration: row.duration ?? null, remarks: row.remarks || '', assignee, assigneeId, startTime: row.startTime });
         }
       }
+    }
+
+    const rows = [];
+    for (const [key, l] of latest) {
+      if (l.status === 'completed' && l.carriedForward === false) continue;
+      rows.push({
+        _id: l._id,
+        text: l.text,
+        status: l.status,
+        assignee: l.assignee,
+        assigneeId: l.assigneeId,
+        duration: l.duration,
+        remarks: l.remarks,
+        date: l.date,
+        attempts: attemptDates.get(key).size,
+      });
     }
     pendingTasks = rows;
   }

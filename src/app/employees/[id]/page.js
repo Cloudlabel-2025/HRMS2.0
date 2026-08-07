@@ -19,6 +19,7 @@ const TABS = [
   { key: 'personal',    label: 'Personal Info',  icon: 'bi-card-personal' },
   { key: 'attendance',  label: 'Attendance',     icon: 'bi-clock-history' },
   { key: 'workprogress',label: 'Daily Work Sheet',icon: 'bi-list-check' },
+  { key: 'pendingtasks',label: 'Pending Tasks',   icon: 'bi-check2-square' },
   { key: 'assets',      label: 'Assets & Docs',  icon: 'bi-box-seam' },
   { key: 'payroll',     label: 'Payroll',        icon: 'bi-cash-stack' },
   { key: 'audit',       label: 'Audit Log',      icon: 'bi-shield-check' },
@@ -214,7 +215,7 @@ export default function EmployeeProfilePage() {
 
   // Work progress — fetch data
   useEffect(() => {
-    if (tab === 'workprogress' && id && wpCycles.length === 0 && !wpLoading) {
+    if ((tab === 'workprogress' || tab === 'pendingtasks') && id && wpCycles.length === 0 && !wpLoading) {
       setWpLoading(true);
       api.get(`/api/employees/${id}/work-progress`)
         .then(data => setWpCycles(data || []))
@@ -269,6 +270,40 @@ export default function EmployeeProfilePage() {
     for (const c of filteredCycles) for (const d of c.dates) count += d.workProgress?.length || 0;
     return count;
   }, [filteredCycles]);
+  const taskLedger = useMemo(() => {
+    const latest = new Map();
+    const attemptDates = new Map();
+    for (const cycle of wpCycles) {
+      for (const d of cycle.dates || []) {
+        for (const row of d.workProgress || []) {
+          if (row.type !== 'task') continue;
+          const text = row.taskDetails ? String(row.taskDetails).trim() : '';
+          if (!text) continue;
+          let dates = attemptDates.get(text);
+          if (!dates) { dates = new Set(); attemptDates.set(text, dates); }
+          dates.add(d.date);
+          if (!latest.has(text)) {
+            latest.set(text, { status: row.status, carriedForward: !!row.carriedForward, date: d.date });
+          }
+        }
+      }
+    }
+    const entries = [];
+    for (const [text, l] of latest) {
+      const done = l.status === 'completed' && l.carriedForward === false;
+      entries.push({
+        text,
+        status: l.status,
+        carriedForward: l.carriedForward,
+        completedDate: done ? l.date : null,
+        attempts: attemptDates.get(text).size,
+        done,
+      });
+    }
+    const pending = entries.filter(e => !e.done);
+    const completed = entries.filter(e => e.done);
+    return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
+  }, [wpCycles]);
   const toCsvRows = (cycles) => {
     const rows = [['Cycle', 'Date', 'Status', 'Clock In', 'Clock Out', 'Hours', '#', 'Type', 'Task Details', 'Start Time', 'End Time', 'Task Status', 'Remarks', 'Feedback']];
     for (const cycle of cycles) {
@@ -349,7 +384,7 @@ export default function EmployeeProfilePage() {
   const visibleTabs = TABS.filter(t => {
     if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
     if (t.key === 'audit' && (!['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString())) return false;
-    if (t.key === 'workprogress' && !(['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString() || (['team_admin', 'team_lead'].includes(user?.role) && canAccessDepartment(user, emp.department)))) return false;
+    if ((t.key === 'workprogress' || t.key === 'pendingtasks') && !(['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString() || (['team_admin', 'team_lead'].includes(user?.role) && canAccessDepartment(user, emp.department)))) return false;
     return true;
   });
 
@@ -987,7 +1022,6 @@ export default function EmployeeProfilePage() {
       {/* WORK PROGRESS TAB */}
       {tab === 'workprogress' && (
         <>
-          {/* Header */}
           <div className="card mb-3" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
             <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1190,6 +1224,65 @@ export default function EmployeeProfilePage() {
             </div>
           )}
         </>
+      )}
+
+      {/* PENDING TASKS TAB */}
+      {tab === 'pendingtasks' && (
+        <div className="card" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #6366f115, #4f46e508)', border: '1px solid #6366f110', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <i className="bi bi-clipboard-check" style={{ color: '#6366f1', fontSize: 15 }} />
+            </div>
+            <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>Pending Tasks</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '3px 12px', borderRadius: 999, background: '#fef3c7', color: '#b45309', border: '1px solid #fde68a' }}>{taskLedger.pendingCount} pending</span>
+              <span style={{ fontSize: 12, fontWeight: 600, padding: '3px 12px', borderRadius: 999, background: '#dcfce7', color: '#16a34a', border: '1px solid #bbf7d0' }}>{taskLedger.completedCount} completed</span>
+            </div>
+          </div>
+          <div style={{ padding: '12px 20px' }}>
+            {wpCycles.length === 0 && wpLoading ? (
+              <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>
+            ) : taskLedger.pendingCount === 0 && taskLedger.completedCount === 0 ? (
+              <div className="empty-state"><i className="bi bi-check2-circle" /><p>No tasks yet</p></div>
+            ) : (
+              <>
+                {taskLedger.pendingCount > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, margin: '6px 0 8px' }}>Pending</div>
+                    {taskLedger.pending.map((t, i) => {
+                      const st = t.carriedForward ? WP_STATUS_STYLE.pending : (WP_STATUS_STYLE[t.status] || WP_STATUS_STYLE.pending);
+                      return (
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ color: '#334155', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.text}</div>
+                            <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Tried {t.attempts} time{t.attempts > 1 ? 's' : ''}</div>
+                          </div>
+                          <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: st.bg, color: st.color, whiteSpace: 'nowrap' }}>
+                            {t.carriedForward ? 'Pending' : (st.label || t.status)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+                {taskLedger.completedCount > 0 && (
+                  <>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5, margin: '10px 0 8px' }}>Completed</div>
+                    {taskLedger.completed.map((t, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <div style={{ color: '#334155', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.text}</div>
+                          <div style={{ color: '#94a3b8', fontSize: 11.5 }}>Completed on {formatDate(t.completedDate)} · took {t.attempts} {t.attempts === 1 ? 'try' : 'tries'}</div>
+                        </div>
+                        <span style={{ fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 8, background: WP_STATUS_STYLE.completed.bg, color: WP_STATUS_STYLE.completed.color, whiteSpace: 'nowrap' }}>Completed</span>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Inline Edit Modal */}
