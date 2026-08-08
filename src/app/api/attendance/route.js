@@ -120,6 +120,7 @@ export async function GET(req) {
         await Attendance.findByIdAndUpdate(rec._id, {
           clockOut: rec.clockOut,
           autoLoggedOut: rec.autoLoggedOut,
+          regularizationOutOpen: rec.regularizationOutOpen,
           breaks: rec.breaks,
           workProgress: rec.workProgress,
           baseHoursWorked: rec.baseHoursWorked,
@@ -316,6 +317,10 @@ export async function PUT(req) {
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
 
     if (update.workProgress) {
+      const activeRows = update.workProgress.filter(row => row.startTime && !row.endTime);
+      if (activeRows.length > 1) {
+        return fail('Multiple active work rows detected. End the current row before starting another.', 400);
+      }
       update.workProgress = update.workProgress.map(row => ({ ...row, duration: computeWorkRowDuration(row) }));
     }
 

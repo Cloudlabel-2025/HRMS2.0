@@ -32,6 +32,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   if (isEmployerUser) return false;
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
+  if (record.regularizationOutOpen && !force) return false;
 
   const shiftCfg = cfg || { expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
 
@@ -56,6 +57,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
 
   record.clockOut = clockOutTime;
   record.autoLoggedOut = true;
+  record.regularizationOutOpen = false;
 
   if (record.breaks) {
     record.breaks = record.breaks.map(b => {

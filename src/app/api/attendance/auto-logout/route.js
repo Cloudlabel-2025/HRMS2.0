@@ -78,6 +78,7 @@ export async function POST(req) {
         clockIn: { $ne: null },
         clockOut: null,
         autoLoggedOut: { $ne: true },
+        regularizationOutOpen: { $ne: true },
       }).lean();
 
       for (const record of records) {

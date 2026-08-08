@@ -31,6 +31,7 @@ const AttendanceSchema = new mongoose.Schema({
   note:       { type: String, default: '' },
   absenceReason: { type: String, default: '' },
   autoLoggedOut: { type: Boolean, default: false },
+  regularizationOutOpen: { type: Boolean, default: false },
   lateLogoutReason: { type: String, default: '' },
   lateLogoutReasonProvidedAt: { type: Date, default: null },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },

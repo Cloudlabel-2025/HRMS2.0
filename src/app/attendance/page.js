@@ -535,6 +535,13 @@ export default function AttendancePage() {
     return updated;
   };
 
+  // Keep workProgressRef and the debounced auto-save in sync so a pending save
+  // can never overwrite a newer change (e.g. a task resumed right after a break).
+  const syncWorkRef = (rows) => {
+    workProgressRef.current = rows;
+    if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
+  };
+
   const buildTaskRow = (startTime, taskDetails = '') => ({
     type: 'task',
     taskDetails,
@@ -590,6 +597,7 @@ export default function AttendancePage() {
 
   const commitWorkRow = async (idx, patch) => {
     const rows = (todayRecord?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row);
+    syncWorkRef(rows);
     try { await persistTodayRecord({ workProgress: rows }); }
     catch (e) { showToast(e.message, 'error'); }
   };
@@ -602,7 +610,7 @@ export default function AttendancePage() {
 
     if (activeIdx !== -1 && rows[activeIdx].type === 'task') {
       const updatedRows = rows.map((row, i) => i === activeIdx ? { ...row, taskDetails: taskTitle } : row);
-      workProgressRef.current = updatedRows;
+      syncWorkRef(updatedRows);
       setTodayRecord(prev => ({
         ...prev,
         workProgress: updatedRows,
@@ -614,10 +622,13 @@ export default function AttendancePage() {
   };
 
   const endCurrentTask = async () => {
-    if (!clockedIn || clockedOut || anyActiveBreak()) return;
+    if (!clockedIn) { showToast('Clock in first to end a task.', 'error'); return; }
+    if (clockedOut) { showToast('You have already clocked out today.', 'error'); return; }
+    if (anyActiveBreak()) { showToast('End your current break first.', 'error'); return; }
     const now = nowTimeStr();
     let rows = closeActiveWork([...(todayRecord?.workProgress || [])], now, 'completed');
     rows.push(buildTaskRow(now));
+    syncWorkRef(rows);
     try {
       await persistTodayRecord({ workProgress: rows });
       showToast('Task ended at ' + now);
@@ -637,6 +648,7 @@ export default function AttendancePage() {
       rows[prevIdx] = { ...rows[prevIdx], endTime: null, status: 'work_in_progress' };
     }
 
+    syncWorkRef(rows);
     try {
       await persistTodayRecord({ workProgress: rows });
       setDeleteConfirmIdx(null);
@@ -677,9 +689,13 @@ export default function AttendancePage() {
         showToast(`${label} started at ${now}`);
       } else {
         // End break/lunch
-        const idx = updatedBreaks.findIndex(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.start && !b.end);
+        // Match by rule first; fall back to any open break of the same type so a
+        // stale ruleIdx (e.g. after a shift config change) can never wedge the day.
+        let idx = updatedBreaks.findIndex(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.start && !b.end);
+        if (idx === -1) idx = updatedBreaks.findIndex(b => b.type === type && b.start && !b.end);
         if (idx !== -1) updatedBreaks[idx] = { ...updatedBreaks[idx], end: now };
-        const workIdx = updatedWorkProgress.findIndex(row => row.type === type && (rule.name ? row.taskDetails === rule.name : true) && row.startTime && !row.endTime);
+        let workIdx = updatedWorkProgress.findIndex(row => row.type === type && (rule.name ? row.taskDetails === rule.name : true) && row.startTime && !row.endTime);
+        if (workIdx === -1) workIdx = updatedWorkProgress.findIndex(row => row.type === type && row.startTime && !row.endTime);
         if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
         if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
@@ -700,6 +716,7 @@ export default function AttendancePage() {
       const baseHours = todayRecord?.baseHoursWorked ?? todayRecord?.hoursWorked ?? 0;
       const effectiveHours = Math.max(0, baseHours - totalDeduction);
 
+      syncWorkRef(updatedWorkProgress);
       await persistTodayRecord({
         breaks: updatedBreaks,
         workProgress: updatedWorkProgress,
@@ -790,9 +807,12 @@ export default function AttendancePage() {
 
   const reviewRegularization = async (id, action) => {
     try {
-      await api.put('/api/attendance/regularize', { id, action });
+      const result = await api.put('/api/attendance/regularize', { id, action });
       showToast('Request ' + action);
       loadRegRequests('approvals'); // always reload approvals after review
+      // A reopened "still working" day affects the live record — refresh it so
+      // tasks become endable and the Clock Out button reflects the new state.
+      if (result?.date === today) loadTodayRecord();
     } catch (e) { showToast(e.message, 'error'); }
   };
 
@@ -1258,9 +1278,11 @@ export default function AttendancePage() {
                 </button>
               )}
               {clockedIn && clockedOut && (
-                <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
-                  <i className="bi bi-check-circle me-2" />Attendance Complete
-                </span>
+                <>
+                  <span className="badge bg-success d-flex align-items-center px-3" style={{ fontSize: 13 }}>
+                    <i className="bi bi-check-circle me-2" />Attendance Complete
+                  </span>
+                </>
               )}
             </>
           )}

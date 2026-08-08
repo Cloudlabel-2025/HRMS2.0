@@ -40,6 +40,7 @@ export async function POST(req) {
       userId: { $in: userIds },
       clockIn: { $ne: null },
       clockOut: null,
+      regularizationOutOpen: { $ne: true },
     }).lean();
 
     let count = 0;

@@ -334,6 +334,7 @@ export async function POST(req) {
           hoursWorked,
           baseHoursWorked: baseHours,
           autoLoggedOut: isAutoLogout,
+          regularizationOutOpen: false,
           status,
           workProgress: finalized,
           breaks: updatedBreaks,

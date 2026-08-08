@@ -5,7 +5,7 @@ import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
-import { getDepartmentUserIds } from '@/lib/rbac';
+import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
@@ -21,6 +21,16 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const scope = searchParams.get('scope'); // 'my' | 'approvals' | 'history'
 
+    // Strict own-department scoping for team roles (no cross-department viewing).
+    const strictDeptMemberIds = async (roles) => {
+      const members = await User.find({
+        department: user.department,
+        status: 'active',
+        role: { $in: roles },
+      }).select('_id').lean();
+      return [user._id, ...members.map(m => m._id)];
+    };
+
     let query = {};
     if (scope === 'history') {
       if (user.role === 'super_admin') {
@@ -29,8 +39,10 @@ export async function GET(req) {
         const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
         const excludeIds = excludeUsers.map(u => u._id);
         query = { userId: { $nin: excludeIds } };
-      } else if (['team_lead', 'team_admin'].includes(user.role)) {
-        query = { userId: { $in: await getDepartmentUserIds(user) } };
+      } else if (user.role === 'team_lead') {
+        query = { userId: { $in: await strictDeptMemberIds(['team_admin', 'employee', 'intern', 'sme']) } };
+      } else if (user.role === 'team_admin') {
+        query = { userId: { $in: await strictDeptMemberIds(['employee', 'intern', 'sme']) } };
       } else {
         query = { userId: user._id };
       }
@@ -38,23 +50,37 @@ export async function GET(req) {
       if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role)) {
         return fail('Access denied', 403);
       }
-      if (user.role === 'super_admin') {
-        query = { status: 'pending' };
-      } else if (user.role === 'admin_full') {
-        const excludeUsers = await User.find({ $or: [{ _id: user._id }, { role: 'admin_full' }] }).select('_id');
-        const excludeIds = excludeUsers.map(u => u._id);
-        query = { userId: { $nin: excludeIds }, status: 'pending' };
-      } else if (['team_lead', 'team_admin'].includes(user.role)) {
-        query = { userId: { $in: await getDepartmentUserIds(user) }, status: 'pending' };
-      }
+      query = { status: 'pending' };
     } else {
       query = { userId: user._id };
     }
 
-    const requests = await AttendanceRegularization.find(query)
+    let requests = await AttendanceRegularization.find(query)
       .populate('userId', 'name avatar department role')
       .populate('reviewedBy', 'name')
       .sort({ createdAt: -1 });
+
+    // Approval queue scoping: no self-approval, no cross-department, and only
+    // requests the viewer's role is actually allowed to act on.
+    if (scope === 'approvals') {
+      const canSeeApproval = (viewer, req) => {
+        const requester = req.userId;
+        if (!requester?._id) return false;
+        if (String(requester._id) === String(viewer._id)) return false;
+        if (viewer.role === 'super_admin') return true;
+        if (viewer.role === 'admin_full') return requester.role !== 'admin_full';
+        if (viewer.role === 'team_lead') {
+          return requester.department === viewer.department &&
+            ['team_admin', 'employee', 'intern', 'sme'].includes(requester.role);
+        }
+        if (viewer.role === 'team_admin') {
+          return requester.department === viewer.department &&
+            ['employee', 'intern', 'sme'].includes(requester.role);
+        }
+        return false;
+      };
+      requests = requests.filter(r => canSeeApproval(user, r));
+    }
 
     return ok(requests);
   } catch (e) {
@@ -117,11 +143,11 @@ export async function POST(req) {
       reason, status: 'pending',
     });
 
-    // Send notification to reviewers (super admins, admins, team leads, team admins)
-    const reviewers = await User.find({ role: { $in: ['super_admin', 'admin_full', 'team_lead', 'team_admin'] }, status: 'active' }).lean();
-    const notificationPromises = reviewers.map(reviewer =>
+    // Send notification only to reviewers allowed to act on this requester's role
+    const approverIds = await getRegularizationApproverIds(user);
+    const notificationPromises = approverIds.map(approverId =>
       Notification.create({
-        userId: reviewer._id,
+        userId: approverId,
         title: 'Attendance Regularization Requested',
         message: `${user.name} requested attendance regularization for ${date}. Reason: ${reason}`,
         type: 'attendance',
@@ -178,17 +204,10 @@ export async function PUT(req) {
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
 
-    // Role-based scope verification
-    if (user.role === 'admin_full') {
-      const requester = await User.findById(reg.userId).select('role').lean();
-      if (!requester || requester.role === 'admin_full' || reg.userId.toString() === user._id.toString()) {
-        return fail('Access denied', 403);
-      }
-    } else if (['team_lead', 'team_admin'].includes(user.role)) {
-      const ids = await getDepartmentUserIds(user);
-      if (!ids.some(id => id.toString() === reg.userId.toString())) {
-        return fail('Access denied', 403);
-      }
+    // Role-based scope verification (regularization approval matrix)
+    const requester = await User.findById(reg.userId).select('role department').lean();
+    if (!requester || !(await canApproveRegularization(user, requester))) {
+      return fail('Access denied', 403);
     }
 
     const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
@@ -223,6 +242,7 @@ export async function PUT(req) {
         const oldClockOut = attendance.clockOut;
         attendance.clockOut = null;
         attendance.autoLoggedOut = false;
+        attendance.regularizationOutOpen = true;
         attendance.lateLogoutReason = '';
         attendance.lateLogoutReasonProvidedAt = null;
         attendance.hoursWorked = 0;
@@ -230,7 +250,7 @@ export async function PUT(req) {
         attendance.status = 'present';
         if (oldClockOut) {
           attendance.workProgress = (attendance.workProgress || []).map(w =>
-            (w.endTime === oldClockOut && (w.status === 'stopped' || w.status === 'task_blocked'))
+            w.endTime === oldClockOut
               ? { ...w, endTime: null, status: 'work_in_progress', duration: null, carriedForward: false }
               : w
           );

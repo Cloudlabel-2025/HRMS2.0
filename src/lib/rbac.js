@@ -143,3 +143,65 @@ export function canEditTaskDetails(user, task) {
   if (!task.assignedBy) return ['super_admin', 'admin_full'].includes(user.role);
   return rankOf(user.role) >= rankOf(task.assignedBy?.role);
 }
+
+// ── Regularization approval matrix ────────────────────────────────────────────
+
+/**
+ * True when `user` may approve a regularization request submitted by `requester`.
+ *
+ *   Requester     | Approvers
+ *   ------------- | ------------------------------------------------
+ *   admin_full    | super_admin
+ *   team_lead     | super_admin, admin_full (never self/other leads)
+ *   team_admin    | own-department team_lead, admin_full, super_admin
+ *   employee/intern/sme | own-department team_admin + team_lead, admin_full, super_admin
+ *
+ * Self-approval is never allowed. Team roles may never approve cross-department.
+ */
+export async function canApproveRegularization(user, requester) {
+  if (!requester) return false;
+  if (String(user._id) === String(requester._id)) return false;
+
+  const rRole = requester.role;
+  if (rRole === 'admin_full') return user.role === 'super_admin';
+  if (rRole === 'team_lead') return ['super_admin', 'admin_full'].includes(user.role);
+  if (rRole === 'team_admin') {
+    if (['super_admin', 'admin_full'].includes(user.role)) return true;
+    return user.role === 'team_lead' && user.department === requester.department;
+  }
+  if (['super_admin', 'admin_full'].includes(user.role)) return true;
+  if (['team_lead', 'team_admin'].includes(user.role)) {
+    return user.department === requester.department;
+  }
+  return false;
+}
+
+/**
+ * Returns active approver _ids for a regularization request from `requester`,
+ * so notifications only reach reviewers who may actually act on it.
+ */
+export async function getRegularizationApproverIds(requester) {
+  if (!requester) return [];
+  const selfId = String(requester._id);
+  const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+  const collect = (users) => users.map(u => u._id).filter(id => id.toString() !== selfId);
+
+  switch (requester.role) {
+    case 'admin_full':
+      return collect(admins.filter(u => u.role === 'super_admin'));
+    case 'team_lead':
+      return collect(admins);
+    case 'team_admin': {
+      const leads = await User.find({ role: 'team_lead', department: requester.department, status: 'active' }).select('_id').lean();
+      return collect([...admins, ...leads]);
+    }
+    default: { // employee, intern, sme, etc.
+      const teams = await User.find({
+        role: { $in: ['team_lead', 'team_admin'] },
+        department: requester.department,
+        status: 'active',
+      }).select('_id').lean();
+      return collect([...admins, ...teams]);
+    }
+  }
+}
