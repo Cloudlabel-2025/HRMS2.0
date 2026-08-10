@@ -14,6 +14,7 @@ import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from 
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
+import { publishAttendance } from '@/lib/sse';
 
 export async function POST(req) {
   try {
@@ -33,7 +34,9 @@ export async function POST(req) {
     const { action } = validation.data; // 'in' | 'out'
     const geo = body.geo;
     let deductionBreakdown;
-    const now   = await getTzTime();
+    // Trust the user's system time when present; fall back to the configured tz.
+    const clientNow = body.clientTime ? new Date(body.clientTime) : null;
+    const now = clientNow && !isNaN(clientNow.getTime()) ? clientNow : await getTzTime();
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
     const shiftDoc = await resolveShift(user);
@@ -50,6 +53,23 @@ export async function POST(req) {
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
+    // Non-fatal: never let SSE publishing break the primary clock response.
+    const publishRecordEvent = (type, rec) => {
+      try {
+        publishAttendance({
+          type,
+          userId: user._id.toString(),
+          name: user.name,
+          date: rec.date,
+          clockIn: rec.clockIn,
+          clockOut: rec.clockOut || null,
+          hoursWorked: rec.hoursWorked,
+          status: rec.status,
+          autoLoggedOut: !!rec.autoLoggedOut,
+        });
+      } catch (e) { /* ignore */ }
+    };
+
     const ip = req.headers.get('x-forwarded-for') || '';
 
     if (action === 'in') {
@@ -64,6 +84,7 @@ export async function POST(req) {
             if (stale.date === today) continue;
             await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
             await stale.save();
+            publishRecordEvent('clockout', stale);
             auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
           }
           return ok({ record: openRecord, alreadyClockedIn: true, time: timeStr });
@@ -73,6 +94,7 @@ export async function POST(req) {
         for (const stale of openRecords) {
           await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
           await stale.save();
+          publishRecordEvent('clockout', stale);
           auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
         }
         record = await Attendance.findOne({ userId: user._id, date: today });
@@ -265,6 +287,8 @@ export async function POST(req) {
 
       await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}`, 'low', ip, null, user._id);
 
+      publishRecordEvent('clockin', record);
+
       // Late notification
       if (status === 'late' || (lateFlag && status !== 'leave')) {
         const lateMinutes = minutesSinceShiftStart - (cfg?.lateThreshold || 15);
@@ -343,6 +367,8 @@ export async function POST(req) {
       );
 
       await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${finalClockOut}, Hours worked: ${Math.floor(hoursWorked/60)}h ${hoursWorked%60}m${isAutoLogout ? ' (Auto Clock Out)' : ''}`, 'low', ip, null, user._id);
+
+      publishRecordEvent('clockout', record);
 
     } else {
       return fail('Invalid action. Use "in" or "out"', 400);

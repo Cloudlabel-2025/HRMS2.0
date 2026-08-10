@@ -105,6 +105,8 @@ export default function AttendancePage() {
   const taskPickerRef = useRef(null);
   const workProgressRef = useRef([]);
   const workProgressSaveTimer = useRef(null);
+  const pinRef = useRef(null);
+  const todayRecordRef = useRef(null);
 
   // Work progress save
   const [saveWorkLoading, setSaveWorkLoading] = useState(false);
@@ -284,6 +286,8 @@ export default function AttendancePage() {
   // Re-evaluate the shift-aware "today" every 60s and when the tab regains
   // visibility, so night-shift users don't get stuck on a stale date after
   // midnight (and don't get a spurious "clock in" on the calendar date).
+  // While a session is open the date is pinned to the session date (no 12am
+  // refresh); after clock-out it stays pinned for 10 minutes before rolling.
   const computeToday = useCallback((d, shiftsList, u) => {
     if ((u?.shift || u?.shiftId) && shiftsList.length > 0) {
       const matched = shiftsList.find(s => (u?.shiftId && s._id === u.shiftId) || s.name === u?.shift);
@@ -297,6 +301,21 @@ export default function AttendancePage() {
   useEffect(() => {
     if (!user) return;
     const apply = () => {
+      const rec = todayRecordRef.current;
+      if (rec?.clockIn && !rec?.clockOut) {
+        // Open session: pin today to the session's shift-aware date.
+        setToday(prev => prev === rec.date ? prev : rec.date);
+        return;
+      }
+      if (pinRef.current && Date.now() < pinRef.current.until) {
+        // Post-clockout grace: keep showing the completed sheet.
+        setToday(prev => prev === pinRef.current.date ? prev : pinRef.current.date);
+        return;
+      }
+      pinRef.current = null;
+      todayRecordRef.current = null;
+      setTodayRecord(null);
+      setStaleOpenSession(null);
       const next = computeToday(new Date(), shifts, user);
       setToday(prev => prev === next ? prev : next);
     };
@@ -322,6 +341,15 @@ export default function AttendancePage() {
       ]);
       const todayRec = Array.isArray(todayRecs) && todayRecs.length > 0 ? todayRecs[0] : null;
       const openRec = Array.isArray(openRecs) && openRecs.length > 0 ? openRecs[0] : null;
+      if (openRec && openRec.date !== today) {
+        // Overnight worker: pin today to the open session's date and show that
+        // record directly — no today-dependent reload needed to surface the sheet.
+        setToday(openRec.date);
+        pinRef.current = { date: openRec.date, until: Date.now() + 10 * 60 * 1000 };
+        setTodayRecord(openRec);
+        setStaleOpenSession(null);
+        return;
+      }
       setTodayRecord(todayRec);
       setStaleOpenSession(openRec && openRec.date !== today ? openRec : null);
     } catch { setTodayRecord(null); setStaleOpenSession(null); }
@@ -384,11 +412,79 @@ export default function AttendancePage() {
     finally { setProgressLoading(false); }
   };
 
+  // Keep a live copy of todayRecord so the 60s tick never reads a stale closure.
+  useEffect(() => {
+    todayRecordRef.current = todayRecord;
+  }, [todayRecord]);
+
+  // Latest handlers ref so SSE callbacks never act on stale closures.
+  const latestHandlers = useRef({});
+  useEffect(() => {
+    latestHandlers.current = {
+      loadTodayRecord,
+      loadProgressRecord,
+      loadTeamToday,
+      user,
+      isAdmin,
+      selectedProgressUserId,
+    };
+  });
+
+  // Live per-employee refresh: listen for clock in/out events pushed by the
+  // server and refresh only the affected data.
+  useEffect(() => {
+    if (!user) return;
+    let es = null;
+    let teamTimer = null;
+    const debounceTeam = () => {
+      if (teamTimer) clearTimeout(teamTimer);
+      teamTimer = setTimeout(() => latestHandlers.current.loadTeamToday(), 1000);
+    };
+    const connect = () => {
+      es = new EventSource('/api/attendance/events');
+      es.onmessage = (e) => {
+        let evt;
+        try { evt = JSON.parse(e.data); } catch { return; }
+        if (!evt || (evt.type !== 'clockin' && evt.type !== 'clockout')) return;
+        const h = latestHandlers.current;
+        if (String(evt.userId) === String(h.user?._id)) {
+          if (evt.type === 'clockout') {
+            // Keep the completed sheet visible for 10 minutes even when the
+            // clock-out happened in another tab.
+            pinRef.current = { date: evt.date, until: Date.now() + 10 * 60 * 1000 };
+          }
+          h.loadTodayRecord();
+        }
+        if (h.isAdmin && String(evt.userId) === String(h.selectedProgressUserId)) {
+          h.loadProgressRecord(h.selectedProgressUserId);
+        }
+        if (h.isAdmin) debounceTeam();
+      };
+      es.onerror = () => {
+        if (es && es.readyState === EventSource.CLOSED) {
+          if (es) es.close();
+          es = null;
+          fetch('/api/auth/refresh', { method: 'POST', credentials: 'same-origin' })
+            .then(() => connect())
+            .catch(() => { /* stay disconnected; next reload retries */ });
+        }
+      };
+    };
+    connect();
+    return () => {
+      if (teamTimer) clearTimeout(teamTimer);
+      if (es) es.close();
+    };
+  }, [user]);
+
   useEffect(() => {
     if (tab === 'progress' && selectedProgressUserId) {
       loadProgressRecord(selectedProgressUserId);
     }
-  }, [selectedProgressUserId, tab, today]);
+    // No `today` dependency: new-day data for the selected employee arrives via
+    // SSE and on re-selection, never from a midnight rollover.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProgressUserId, tab]);
 
   useEffect(() => {
     const handleClick = (e) => {
@@ -433,7 +529,11 @@ export default function AttendancePage() {
     if (!user || !shiftsLoaded) return;
     loadTodayRecord();
     if (isAdmin) loadTeamToday();
-  }, [today, shiftsLoaded, user]);
+    // Deliberately independent of `today`: this runs once context is ready, so
+    // a midnight rollover never triggers a GET. New-day data comes from SSE
+    // events and the explicit actions below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, shiftsLoaded]);
 
   // Warn on unsaved work progress
   useEffect(() => {
@@ -464,9 +564,13 @@ export default function AttendancePage() {
   const handleClock = async (action) => {
     setClockLoading(true);
     try {
-      let payload = { action };
+      let payload = { action, clientTime: new Date().toISOString() };
       const result = await api.post('/api/attendance/clock', payload);
       setTodayRecord(result.record);
+      if (action === 'out') {
+        // Show the completed sheet for 10 minutes, then roll to the new day.
+        pinRef.current = { date: result.record.date, until: Date.now() + 10 * 60 * 1000 };
+      }
       if (action === 'in' && result.alreadyClockedIn) {
         showToast('You are already clocked in', 'info');
       } else if (action === 'in' && result.record?.lateFlag) {
@@ -505,7 +609,7 @@ export default function AttendancePage() {
     setShowEarlyClockModal(false);
     setClockLoading(true);
     try {
-      const result = await api.post('/api/attendance/clock', { action: 'in', reason });
+      const result = await api.post('/api/attendance/clock', { action: 'in', reason, clientTime: new Date().toISOString() });
       setTodayRecord(result.record);
       showToast('Clocked in at ' + result.time);
     } catch (retryErr) {

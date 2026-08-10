@@ -9,6 +9,7 @@ import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants
 import { finalizeDayWork } from '@/lib/attendance-utils';
 import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { publishAttendance } from '@/lib/sse';
 
 function parseTimeToMinutes(timeStr) {
   if (!timeStr) return null;
@@ -67,7 +68,7 @@ export async function POST(req) {
         $or: [{ shift: shift.name }, { shiftId: shift._id }],
         status: 'active',
         role: { $ne: 'super_admin' },
-      }).select('shift shiftId').lean();
+      }).select('shift shiftId name').lean();
       const userIds = users.map(u => u._id);
       const usersById = new Map(users.map(u => [u._id.toString(), u]));
 
@@ -134,6 +135,20 @@ export async function POST(req) {
           { new: true }
         );
         if (!result) continue; // Another cron instance already processed this record
+
+        try {
+          publishAttendance({
+            type: 'clockout',
+            userId: record.userId.toString(),
+            name: usersById.get(record.userId.toString())?.name || null,
+            date: record.date,
+            clockIn: record.clockIn,
+            clockOut: finalClockOut,
+            hoursWorked,
+            status,
+            autoLoggedOut: true,
+          });
+        } catch (e) { /* non-fatal */ }
 
         autoLoggedOut.push({
           userId: record.userId,

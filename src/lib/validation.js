@@ -351,6 +351,7 @@ export const ApproveLeaveSchema = z.object({
 export const ClockInOutSchema = z.object({
   action: z.enum(['in', 'out']),
   reason: z.string().optional(),
+  clientTime: z.string().optional(),
 }).strict();
 
 export const AttendanceRegularizeSchema = z.object({

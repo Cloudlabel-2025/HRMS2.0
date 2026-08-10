@@ -14,6 +14,7 @@ import { matchBreakRule } from '@/lib/attendance-breaks';
 import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
+import { publishAttendance } from '@/lib/sse';
 
 async function getShiftAwareToday(targetUserId) {
   const now = await getTzTime();
@@ -127,6 +128,19 @@ export async function GET(req) {
           hoursWorked: rec.hoursWorked,
           status: rec.status,
         });
+        try {
+          publishAttendance({
+            type: 'clockout',
+            userId: (rec.userId?._id || rec.userId).toString(),
+            name: rec.userId?.name,
+            date: rec.date,
+            clockIn: rec.clockIn,
+            clockOut: rec.clockOut,
+            hoursWorked: rec.hoursWorked,
+            status: rec.status,
+            autoLoggedOut: true,
+          });
+        } catch (e) { /* non-fatal */ }
       }
     }
 
