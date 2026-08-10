@@ -7,7 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
 import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
-import { getTzTime } from '@/lib/timezone';
+import { getTzTime, toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
@@ -36,7 +36,7 @@ export async function POST(req) {
     let deductionBreakdown;
     // Trust the user's system time when present; fall back to the configured tz.
     const clientNow = body.clientTime ? new Date(body.clientTime) : null;
-    const now = clientNow && !isNaN(clientNow.getTime()) ? clientNow : await getTzTime();
+    const now = clientNow && !isNaN(clientNow.getTime()) ? await toTzLocal(clientNow) : await getTzTime();
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
     const shiftDoc = await resolveShift(user);
