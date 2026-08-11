@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import Pagination from '@/components/Pagination';
+import ShiftManagement from '@/components/ShiftManagement';
 
 const STATUS_CONFIG = {
   onboarding: { color: '#3b82f6', bg: '#eff6ff', label: 'Onboarding' },
@@ -36,6 +37,7 @@ export default function CoreHrPage() {
   const { user } = useAuth();
   const { formatDate } = useSettings();
   const router = useRouter();
+  const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
   const [profiles, setProfiles]         = useState([]);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState('');
@@ -44,6 +46,7 @@ export default function CoreHrPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [page, setPage]                 = useState(1);
   const pageSize = 10;
+  const [section, setSection]           = useState('directory');
 
   useEffect(() => {
     setPage(1);
@@ -109,6 +112,28 @@ export default function CoreHrPage() {
         </div>
       )}
 
+      {/* Section toggle */}
+      <ul className="nav nav-pills mb-4" style={{ gap: 8 }}>
+        <li className="nav-item">
+          <button className={`btn btn-sm ${section === 'directory' ? 'btn-primary' : 'btn-outline-secondary'}`} style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => setSection('directory')}>
+            <i className="bi bi-diagram-3" />Employment Lifecycle
+          </button>
+        </li>
+        {isAdmin && (
+          <li className="nav-item">
+            <button className={`btn btn-sm ${section === 'shifts' ? 'btn-primary' : 'btn-outline-secondary'}`} style={{ fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}
+              onClick={() => setSection('shifts')}>
+              <i className="bi bi-arrow-left-right" />Shift Management
+            </button>
+          </li>
+        )}
+      </ul>
+
+      {section === 'shifts' && isAdmin ? (
+        <ShiftManagement />
+      ) : (
+        <>
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12, marginBottom: 24 }}>
         {[
@@ -227,6 +252,8 @@ export default function CoreHrPage() {
         </>
         )}
       </div>
+        </>
+      )}
 
       <style>{`.spin { animation: spin 1s linear infinite; } @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </AppShell>

@@ -419,6 +419,24 @@ const ShiftSchema = new mongoose.Schema({
 
 ShiftSchema.index({ name: 1 });
 
+// ── Scheduled / Bulk Shift Assignment ────────────────────────────────────────
+const ShiftChangeSchema = new mongoose.Schema({
+  targetShiftId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', required: true },
+  targetShiftName: { type: String, required: true },
+  fromShiftId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+  departments:     { type: String, default: '' },
+  roles:           { type: String, default: '' },
+  userIds:         [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  effectiveDate:   { type: String, required: true },
+  reason:          { type: String, required: true, trim: true },
+  status:          { type: String, enum: ['pending', 'applied', 'cancelled'], default: 'pending', index: true },
+  appliedAt:       { type: Date, default: null },
+  appliedCount:    { type: Number, default: 0 },
+  createdBy:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+}, { timestamps: true });
+
+ShiftChangeSchema.index({ status: 1, effectiveDate: 1 });
+
 const HolidaySchema = new mongoose.Schema({
   name: { type: String, required: true },
   date: { type: String, required: true },
@@ -486,6 +504,8 @@ export const JobPosting   = mongoose.models.Job         || mongoose.model('Job',
 export const Applicant   = mongoose.models.Applicant   || mongoose.model('Applicant', ApplicantSchema);
 export const Department  = mongoose.models.Department  || mongoose.model('Department', DepartmentSchema);
 export const Shift       = mongoose.models.Shift       || mongoose.model('Shift', ShiftSchema);
+if (process.env.NODE_ENV === 'development' && mongoose.models.ShiftChange) delete mongoose.models.ShiftChange;
+export const ShiftChange = mongoose.models.ShiftChange || mongoose.model('ShiftChange', ShiftChangeSchema);
 export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holiday', HolidaySchema);
 export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('SystemConfig', SystemConfigSchema);
 export const Settings    = mongoose.models.Settings    || mongoose.model('Settings', SettingsSchema);

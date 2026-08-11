@@ -10,6 +10,12 @@ const ProjectSchema = new mongoose.Schema({
   endDate:     { type: String, required: true },
   progress:    { type: Number, default: 0 },
   status:      { type: String, enum: ['active','completed','on_hold'], default: 'active' },
+  approvalStatus:    { type: String, enum: ['approved','pending','rejected'], default: 'approved' },
+  approvalRequired:  { type: Boolean, default: false },
+  approvalRequestedAt:{ type: Date, default: null },
+  approvedBy:        { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  approvedAt:        { type: Date, default: null },
+  rejectionComment:  { type: String, default: '' },
   createdBy:   { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   reminderSent:{ type: Boolean, default: false },
 }, {

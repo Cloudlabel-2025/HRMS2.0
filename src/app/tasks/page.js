@@ -15,8 +15,13 @@ const STATUSES  = ['To Do', 'In Progress', 'Pending', 'Completed', 'Blocked'];
 const PRIORITIES = ['low', 'medium', 'high'];
 const PRIORITY_COLORS = { low: '#10b981', medium: '#f59e0b', high: '#ef4444' };
 const STATUS_COLORS   = { 'To Do': '#64748b', 'In Progress': '#3b82f6', 'Pending': '#f59e0b', 'Completed': '#10b981', 'Blocked': '#ef4444' };
+const APPROVAL_STATUS_COLORS = { approved: { background: '#f0fdf4', color: '#15803d' }, pending: { background: '#fef3c7', color: '#b45309' }, rejected: { background: '#fef2f2', color: '#dc2626' } };
 const EMPTY_TASK = { title: '', description: '', projectId: '', assignedTo: '', priority: 'medium', status: 'To Do', due: '' };
 const MIN_PROJECT_DATE = '2022-03-01';
+
+function formatRole(role) {
+  return String(role || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 function formatProjectDuration(startDate, endDate) {
   if (!startDate || !endDate) return '—';
@@ -74,6 +79,15 @@ export default function TasksPage() {
   const [listPage, setListPage] = useState(1);
   const [projPage, setProjPage] = useState(1);
   const [expandedProjectId, setExpandedProjectId] = useState(null);
+  const [approvalRequests, setApprovalRequests] = useState([]);
+  const [approvalFilter, setApprovalFilter] = useState('all');
+  const [rejectProject, setRejectProject] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [rejectSaving, setRejectSaving] = useState(false);
+  const [projectCandidates, setProjectCandidates] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [taskCandidates, setTaskCandidates] = useState([]);
+  const [loadingTaskCandidates, setLoadingTaskCandidates] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -120,6 +134,84 @@ export default function TasksPage() {
       console.warn('Failed to load departments/employees:', e);
     }
   };
+
+  const loadApprovals = async () => {
+    try {
+      const scopeParam = ['super_admin', 'admin_full'].includes(user?.role) ? '?scope=all' : '';
+      const res = await api.get(`/api/projects/approval${scopeParam}`);
+      setApprovalRequests(Array.isArray(res) ? res : []);
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  };
+
+  const handleApprovalAction = async (project, action) => {
+    if (action === 'reject') {
+      setRejectProject(project);
+      setRejectReason('');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post('/api/projects/approval', { projectId: project._id, action, comment: '' });
+      showToast(action === 'approve' ? 'Project approved' : 'Project resubmitted for approval');
+      loadApprovals();
+      loadAll();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmReject = async () => {
+    setRejectSaving(true);
+    try {
+      await api.post('/api/projects/approval', { projectId: rejectProject._id, action: 'reject', comment: rejectReason });
+      showToast('Project rejected');
+      loadApprovals();
+      loadAll();
+      setRejectProject(null);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setRejectSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === 'permissions') loadApprovals();
+  }, [tab]);
+
+  useEffect(() => {
+    if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role)) return;
+    if (!projectForm.departments.length) { setProjectCandidates([]); return; }
+    let cancelled = false;
+    setLoadingCandidates(true);
+    api.get(`/api/projects/candidates?departments=${encodeURIComponent(projectForm.departments.join(','))}`)
+      .then(res => { if (!cancelled) setProjectCandidates(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setProjectCandidates([]); })
+      .finally(() => { if (!cancelled) setLoadingCandidates(false); });
+    return () => { cancelled = true; };
+  }, [projectForm.departments.join(',')]);
+
+  useEffect(() => {
+    if (!['team_lead', 'team_admin'].includes(user?.role)) { setTaskCandidates([]); return; }
+    const depts = selectedProjectObj?.departments || [];
+    const isStakeholder = String(selectedProjectObj?.createdBy?._id || selectedProjectObj?.createdBy) === String(user?._id || user?.id)
+      || (Array.isArray(depts) && depts.includes(user?.department));
+    if (!selectedProjectObj || selectedProjectObj?.approvalStatus !== 'approved' || depts.length === 0 || !depts.some(d => d !== user?.department) || !isStakeholder) {
+      setTaskCandidates([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingTaskCandidates(true);
+    api.get(`/api/projects/candidates?departments=${encodeURIComponent(depts.join(','))}`)
+      .then(res => { if (!cancelled) setTaskCandidates(Array.isArray(res) ? res : []); })
+      .catch(() => { if (!cancelled) setTaskCandidates([]); })
+      .finally(() => { if (!cancelled) setLoadingTaskCandidates(false); });
+    return () => { cancelled = true; };
+  }, [selectedProjectObj]);
 
   useEffect(() => {
     if (!user) return;
@@ -313,8 +405,8 @@ export default function TasksPage() {
     if (projectForm.endDate < MIN_PROJECT_DATE) { showToast('End date cannot be before March 2022', 'error'); return; }
     setSaving(true);
     try {
-      await api.post('/api/projects', projectForm);
-      showToast('Project created');
+      const created = await api.post('/api/projects', projectForm);
+      showToast(created?.approvalStatus === 'pending' ? 'Project submitted for approval' : 'Project created');
       setShowProjectModal(false);
       setProjectForm({ name: '', description: '', departments: [], startDate: '', endDate: '', team: [], responsibleTo: '' });
       loadAll();
@@ -330,15 +422,28 @@ export default function TasksPage() {
   const visibleProjects = projects.filter(p => userProjectIds.includes(p._id));
 
   const selectedProjectDepts = selectedProjectObj?.departments || [];
-  const assignableEmployees = selectedProjectDepts.length > 0
-    ? employees.filter(e => selectedProjectDepts.includes(e.department))
-    : employees;
+  const projectIsCrossDept = selectedProjectDepts.some(d => d !== user?.department);
+  const userIsProjectCreator = String(selectedProjectObj?.createdBy?._id || selectedProjectObj?.createdBy) === String(user?._id || user?.id);
+  const projectApprovedCrossDept = projectIsCrossDept && selectedProjectObj?.approvalStatus === 'approved' && ['team_lead', 'team_admin'].includes(user?.role) && (userIsProjectCreator || selectedProjectDepts.includes(user?.department));
+  const assignableEmployees = projectApprovedCrossDept && taskCandidates.length
+    ? taskCandidates
+    : (selectedProjectDepts.length > 0 ? employees.filter(e => selectedProjectDepts.includes(e.department)) : employees);
+  const canSendRequest = ['team_lead', 'team_admin'].includes(user?.role) && !!user?.department && projectForm.departments.some(d => d !== user.department);
+  const responsibleOptions = ['team_lead', 'team_admin'].includes(user?.role)
+    ? (projectCandidates.length ? projectCandidates : employees.filter(employee => projectForm.departments.includes(employee.department)))
+    : employees.filter(employee => projectForm.departments.includes(employee.department));
   const assignableByRank = assignableEmployees.filter(e => {
     if (e.role === 'recruiter') return false;
     if (user?.role === 'super_admin') return true;
     if (user?.role === 'admin_full') return e.role !== 'super_admin';
-    if (user?.role === 'team_lead') return e.department === user.department && ['team_admin', 'employee', 'intern'].includes(e.role);
-    if (user?.role === 'team_admin') return e.department === user.department && ['employee', 'intern'].includes(e.role);
+    if (user?.role === 'team_lead') {
+      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['team_admin', 'employee', 'intern'].includes(e.role);
+      return e.department === user.department && ['team_admin', 'employee', 'intern'].includes(e.role);
+    }
+    if (user?.role === 'team_admin') {
+      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['employee', 'intern'].includes(e.role);
+      return e.department === user.department && ['employee', 'intern'].includes(e.role);
+    }
     return false;
   });
   const canEditForm = !editTask || canEditTask(editTask);
@@ -371,15 +476,15 @@ export default function TasksPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
-        {['kanban', 'list', 'projects'].map(t => (
+        {['kanban', 'list', 'projects', ...(isAdmin ? ['permissions'] : [])].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#1e293b' : '#64748b', boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
-            {t === 'kanban' ? 'Kanban Board' : t === 'list' ? 'List View' : 'Projects'}
+            {t === 'kanban' ? 'Kanban Board' : t === 'list' ? 'List View' : t === 'permissions' ? 'Permissions' : 'Projects'}
           </button>
         ))}
       </div>
 
-      {tab !== 'projects' && visibleProjects.length > 0 && (
+      {tab !== 'projects' && tab !== 'permissions' && visibleProjects.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <select className="form-select" style={{ width: 220, fontSize: 13 }} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
             <option value="">All Projects</option>
@@ -519,6 +624,8 @@ export default function TasksPage() {
                           )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {proj.approvalStatus === 'pending' && <span className="badge" style={APPROVAL_STATUS_COLORS.pending}>Approval Pending</span>}
+                          {proj.approvalStatus === 'rejected' && <span className="badge" style={APPROVAL_STATUS_COLORS.rejected}>Approval Rejected</span>}
                           <span className={`badge ${proj.status === 'completed' ? 'status-approved' : 'status-pending'}`}>{proj.status || 'active'}</span>
                           <button className="project-info-btn" onClick={() => setInfoProject(proj)} title="Project details"><i className="bi bi-info" /></button>
                         </div>
@@ -563,6 +670,61 @@ export default function TasksPage() {
             )}
           </>
           )}
+
+          {/* Permissions */}
+          {tab === 'permissions' && (
+            <div className="card">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
+                <div style={{ fontSize: 13, fontWeight: 700 }}>Project Approval Requests</div>
+                <select className="form-select" style={{ width: 150, fontSize: 12 }} value={approvalFilter} onChange={e => setApprovalFilter(e.target.value)}>
+                  <option value="all">All</option>
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+              <div className="table-responsive">
+                <table className="table mb-0">
+                  <thead><tr><th>Project</th><th>Requested By</th><th>Departments</th><th>Start – End</th><th>Status</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {(() => {
+                      const filteredApprovalRequests = approvalRequests.filter(p => approvalFilter === 'all' || p.approvalStatus === approvalFilter);
+                      if (filteredApprovalRequests.length === 0) return (
+                        <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-kanban" /><p>No approval requests</p></div></td></tr>
+                      );
+                      return filteredApprovalRequests.map(proj => {
+                      const isCreator = String(proj.createdBy?._id || proj.createdBy) === String(user?._id || user?.id);
+                      const canApprove = ['super_admin', 'admin_full'].includes(user?.role) && proj.approvalStatus === 'pending';
+                      const canResubmit = isCreator && proj.approvalStatus === 'rejected';
+                      return (
+                        <tr key={proj._id} onClick={() => setInfoProject(proj)} style={{ cursor: 'pointer' }}>
+                          <td>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{proj.name}</div>
+                            {proj.description && <div style={{ fontSize: 11, color: '#94a3b8', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{proj.description}</div>}
+                          </td>
+                          <td style={{ fontSize: 12 }}>{proj.createdBy?.name || '—'}{proj.createdBy?.department ? ` (${proj.createdBy.department})` : ''}</td>
+                          <td style={{ fontSize: 12 }}>{(proj.departments || []).join(', ') || '—'}</td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{proj.startDate || '—'} → {proj.endDate || '—'}</td>
+                          <td>
+                            <span className="badge" style={APPROVAL_STATUS_COLORS[proj.approvalStatus] || APPROVAL_STATUS_COLORS.approved}>{proj.approvalStatus}</span>
+                            {proj.approvalStatus === 'rejected' && proj.rejectionComment && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 3 }}>{proj.rejectionComment}</div>}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-sm btn-outline-secondary" title="View details" onClick={e => { e.stopPropagation(); setInfoProject(proj); }}><i className="bi bi-eye" /></button>
+                              {canApprove && <><button className="btn btn-sm btn-outline-success" disabled={saving} onClick={e => { e.stopPropagation(); handleApprovalAction(proj, 'approve'); }}><i className="bi bi-check-lg me-1" />Approve</button><button className="btn btn-sm btn-outline-danger" disabled={saving} onClick={e => { e.stopPropagation(); handleApprovalAction(proj, 'reject'); }}><i className="bi bi-x-lg me-1" />Reject</button></>}
+                              {canResubmit && <button className="btn btn-sm btn-outline-primary" disabled={saving} onClick={e => { e.stopPropagation(); handleApprovalAction(proj, 'resubmit'); }}><i className="bi bi-arrow-repeat me-1" />Resubmit</button>}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -601,7 +763,7 @@ export default function TasksPage() {
                         {assignableByRank.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}{selectedProjectDepts.length > 0 ? ` (${e.department})` : ''}</option>)}
                       </select>
                       {selectedProjectDepts.length > 0 && (
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Showing employees from selected project's departments</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{projectApprovedCrossDept ? 'Cross-department project approved — showing candidates from all project departments' : "Showing employees from selected project's departments"}</div>
                       )}
                     </div>
                   )}
@@ -806,14 +968,21 @@ export default function TasksPage() {
                           {projectForm.departments.map(d => (
                             <span key={d} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe', fontSize: 12, fontWeight: 600 }}>
                               {d}
-                              <button type="button" onClick={() => setProjectForm(p => ({ ...p, departments: p.departments.filter(x => x !== d), responsibleTo: p.departments.filter(x => x !== d).includes(employees.find(employee => String(employee.userId || employee._id) === String(p.responsibleTo))?.department) ? p.responsibleTo : '' }))} style={{ border: 'none', background: 'none', padding: 0, color: '#2563eb', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex' }}>&times;</button>
+                              <button type="button" onClick={() => setProjectForm(p => ({ ...p, departments: p.departments.filter(x => x !== d), responsibleTo: p.departments.filter(x => x !== d).includes(responsibleOptions.find(employee => String(employee.userId || employee._id) === String(p.responsibleTo))?.department) ? p.responsibleTo : '' }))} style={{ border: 'none', background: 'none', padding: 0, color: '#2563eb', cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex' }}>&times;</button>
                             </span>
                           ))}
                         </div>
                       )}
                     </div>
                   </div>
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *</label><select className="form-select" value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} disabled={projectForm.departments.length === 0}><option value="">{projectForm.departments.length ? 'Select responsible person' : 'Select department first'}</option>{employees.filter(employee => projectForm.departments.includes(employee.department)).map(employee => <option key={employee.userId || employee._id} value={employee.userId || employee._id}>{employee.name} ({employee.department})</option>)}</select></div>
+                  {projectForm.departments.some(d => d !== user?.department) && (
+                    <div className="col-12" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '9px 12px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, color: '#b45309', fontSize: 12.5, fontWeight: 600 }}>
+                      <i className="bi bi-info-circle" />This project requires super admin/admin approval
+                    </div>
+                  )}
+                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *{loadingCandidates && <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 500, marginLeft: 6 }}>Loading...</span>}</label><select className="form-select" value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} disabled={projectForm.departments.length === 0}><option value="">{projectForm.departments.length ? 'Select responsible person' : 'Select department first'}</option>{responsibleOptions.map(employee => <option key={employee.userId || employee._id} value={employee.userId || employee._id}>{employee.name} ({employee.department} · {formatRole(employee.role)})</option>)}</select>
+                    {canSendRequest && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Responsible person from another department is included in the approval request and shown to the approver.</div>}
+                  </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Start Date *</label>
                     <DateInput className="form-control" value={projectForm.startDate} min={MIN_PROJECT_DATE} onChange={e => setProjectForm(p => ({ ...p, startDate: e.target.value }))} />
@@ -827,7 +996,7 @@ export default function TasksPage() {
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowProjectModal(false)}>Cancel</button>
                 <button className="btn btn-primary" onClick={handleCreateProject} disabled={saving}>
-                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Creating...</> : 'Create Project'}
+                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />{canSendRequest ? 'Sending...' : 'Creating...'}</> : canSendRequest ? <><i className="bi bi-send me-2" />Send Request</> : 'Create Project'}
                 </button>
               </div>
             </div>
@@ -847,6 +1016,29 @@ export default function TasksPage() {
                 <div className="project-info-label">Description</div>
                 <div className="project-info-value">{infoProject.description || '—'}</div>
               </div>
+              {infoProject.approvalRequired && (
+                <>
+                  <div className="project-info-section">
+                    <div className="project-info-label">Requested By</div>
+                    <div className="project-info-value">
+                      {infoProject.createdBy?.name || '—'}
+                      {infoProject.createdBy?.role ? ` · ${infoProject.createdBy.role}` : ''}
+                      {infoProject.createdBy?.department ? ` (${infoProject.createdBy.department})` : ''}
+                    </div>
+                  </div>
+                  <div className="project-info-section">
+                    <div className="project-info-label">Project Responsible</div>
+                    <div className="project-info-value">{infoProject.responsibleTo?.name || '—'}{infoProject.responsibleTo?.department ? ` (${infoProject.responsibleTo.department})` : ''}</div>
+                  </div>
+                  <div className="project-info-section">
+                    <div className="project-info-label">Approval Status</div>
+                    <div className="project-info-value">
+                      <span className="badge" style={APPROVAL_STATUS_COLORS[infoProject.approvalStatus] || APPROVAL_STATUS_COLORS.approved}>{infoProject.approvalStatus}</span>
+                      {infoProject.approvalStatus === 'rejected' && infoProject.rejectionComment && <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>{infoProject.rejectionComment}</div>}
+                    </div>
+                  </div>
+                </>
+              )}
               <div className="project-info-section">
                 <div className="project-info-label">Departments</div>
                 <div className="project-info-chips">
@@ -894,6 +1086,28 @@ export default function TasksPage() {
           <div style={{ padding: '14px 28px', background: '#f8fafc', borderTop: '1px solid #eef2f7', display: 'flex', justifyContent: 'flex-end', gap: 10 }}><button className="btn btn-light" style={{ border: '1px solid #cbd5e1', fontWeight: 650 }} onClick={() => setStatusChange(null)}>Cancel</button><button className="btn btn-primary" style={{ fontWeight: 700, paddingInline: 20 }} onClick={() => { const change = statusChange; setStatusChange(null); if (change.action === 'save') handleSave(true); else moveTask(change.task._id, change.newStatus, true); }}>Confirm change</button></div>
         </div>
       </div>}
+
+      {rejectProject && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }}>
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Reject Project</h5>
+                <button className="btn-close" onClick={() => setRejectProject(null)} />
+              </div>
+              <div className="modal-body">
+                <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>{rejectProject.name}</div>
+                <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Rejection reason (optional)</label>
+                <textarea className="form-control" rows={3} value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setRejectProject(null)}>Cancel</button>
+                <button className="btn btn-danger btn-sm" onClick={confirmReject} disabled={rejectSaving}>{rejectSaving ? 'Rejecting…' : 'Reject'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

@@ -35,7 +35,7 @@ export async function GET(req) {
       query.assignedTo = user._id;
     } else {
       const ids = await getManagedUserIds(user);
-      if (ids) query.assignedTo = { $in: ids };
+      if (ids) query.$or = [{ assignedTo: { $in: ids } }, { assignedBy: user._id }];
     }
 
     const tasks = await Task.find(query)
@@ -95,10 +95,12 @@ export async function POST(req) {
     }
 
     // Validate due date is within project's date range
-    const taskProject = await Project.findById(body.projectId).select('startDate endDate team').lean();
+    const taskProject = await Project.findById(body.projectId).select('startDate endDate team departments approvalRequired approvalStatus createdBy').lean();
     if (!taskProject) return fail('Project not found', 404);
     const managedIds = await getManagedUserIds(user);
-    if (managedIds !== null && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
+    const projectStakeholder = String(taskProject.createdBy) === String(user._id) || (Array.isArray(taskProject.departments) && taskProject.departments.includes(user.department));
+    const crossDeptApproved = taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder;
+    if (managedIds !== null && !crossDeptApproved && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
       return fail('Access denied', 403);
     }
     if (taskProject) {
@@ -112,7 +114,15 @@ export async function POST(req) {
 
     const assignee = await User.findById(body.assignedTo).select('role name department').lean();
     if (!assignee) return fail('Assigned user not found', 404);
-    if (!await canAssignTask(user, assignee)) {
+    let canAssign = await canAssignTask(user, assignee);
+    if (!canAssign && ['team_lead', 'team_admin'].includes(user.role) && taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder) {
+      const projectDepts = Array.isArray(taskProject.departments) ? taskProject.departments : [];
+      const roleOk = user.role === 'team_lead'
+        ? ['team_admin', 'employee', 'intern'].includes(assignee.role)
+        : ['employee', 'intern'].includes(assignee.role);
+      if (roleOk && projectDepts.includes(assignee.department)) canAssign = true;
+    }
+    if (!canAssign) {
       auditLog('Task Create Failed', 'Tasks', user._id, `Attempted to assign task to invalid assignee (${body.assignedTo})`, 'low', ip, null, user._id);
       return fail('You can only assign tasks to team members of equal or lower rank', 403);
     }

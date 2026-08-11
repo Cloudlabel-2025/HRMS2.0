@@ -402,6 +402,18 @@ export const CreateShiftSchema = z.object({
   days: z.array(z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])).optional(),
 }).strict();
 
+export const ShiftAssignSchema = z.object({
+  shiftId: z.string().min(1, 'Target shift is required'),
+  reason: z.string().trim().min(1, 'Reason is required'),
+  effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD').or(z.literal('')).optional().transform(v => (v === '' || v == null ? undefined : v)),
+  targets: z.object({
+    userIds: z.array(z.string()).optional().default([]),
+    departments: z.array(z.string()).optional().default([]),
+    roles: z.array(z.string()).optional().default([]),
+    fromShiftId: z.string().or(z.literal('')).optional().transform(v => (v === '' || v == null ? undefined : v)),
+  }).optional().default({}),
+}).strict();
+
 export const CreateHolidaySchema = z.object({
   name: z.string().min(2).max(100),
   date: DateSchema,

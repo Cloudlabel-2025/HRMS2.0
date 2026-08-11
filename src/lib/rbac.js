@@ -73,6 +73,32 @@ export async function canViewUser(user, targetUser) {
   return targetUser?._id?.toString() === user._id.toString();
 }
 
+// ── Cross-department project approval rules ───────────────────────────────────
+
+/**
+ * True when `user` (team_lead/team_admin) is requesting a project that spans
+ * departments beyond their own — such projects require super_admin/admin_full
+ * approval. The project may be a plain object with `departments` and/or a
+ * `team` of populated users.
+ */
+export async function isCrossDeptProject(user, project) {
+  if (!['team_lead', 'team_admin'].includes(user.role)) return false;
+  const departments = Array.isArray(project?.departments) ? project.departments : [];
+  if (departments.some(dept => dept && dept !== user.department)) return true;
+  const team = Array.isArray(project?.team) ? project.team : [];
+  for (const member of team) {
+    const memberDept = member && typeof member === 'object' ? member.department : null;
+    if (memberDept && memberDept !== user.department) return true;
+  }
+  return false;
+}
+
+/** Active super_admin + admin_full _ids, used to notify project approval reviewers. */
+export async function getApproverIds() {
+  const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+  return admins.map(admin => admin._id);
+}
+
 // ── Public helpers ────────────────────────────────────────────────────────────
 
 /** True if the role can write/mutate in this module */

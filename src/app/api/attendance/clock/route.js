@@ -39,9 +39,17 @@ export async function POST(req) {
     const now = clientNow && !isNaN(clientNow.getTime()) ? await toTzLocal(clientNow) : await getTzTime();
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
-    const shiftDoc = await resolveShift(user);
+    // Lazy fallback: apply any due scheduled shift changes for this user before
+    // resolving their shift, so a missed cron never leaves the user on a stale shift.
+    try {
+      const { applyDueShiftChangesForUser } = await import('@/lib/shift-assign');
+      await applyDueShiftChangesForUser(user);
+    } catch (e) {
+      /* non-fatal */
+    }
+
+    let shiftDoc = await resolveShift(user);
     const config = await getGlobalConfig();
-    const cfg = getShiftConfig(shiftDoc, config);
 
     // Resolve shift-aware attendance date
     let today;
@@ -50,6 +58,8 @@ export async function POST(req) {
     } catch {
       today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     }
+
+    const cfg = getShiftConfig(shiftDoc, config);
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
