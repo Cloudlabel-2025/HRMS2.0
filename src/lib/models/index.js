@@ -427,6 +427,7 @@ const ShiftChangeSchema = new mongoose.Schema({
   departments:     { type: String, default: '' },
   roles:           { type: String, default: '' },
   userIds:         [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  exactUserIds:    { type: Boolean, default: false },
   effectiveDate:   { type: String, required: true },
   reason:          { type: String, required: true, trim: true },
   status:          { type: String, enum: ['pending', 'applied', 'cancelled'], default: 'pending', index: true },

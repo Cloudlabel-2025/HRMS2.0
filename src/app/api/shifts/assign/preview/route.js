@@ -29,6 +29,7 @@ export async function POST(req) {
       departments: targets?.departments || [],
       roles: targets?.roles || [],
       fromShiftId: targets?.fromShiftId || null,
+      exactUserIds: !!targets?.exactUserIds,
     });
 
     let users = [];

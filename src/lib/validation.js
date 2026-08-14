@@ -410,6 +410,7 @@ export const ShiftAssignSchema = z.object({
     userIds: z.array(z.string()).optional().default([]),
     departments: z.array(z.string()).optional().default([]),
     roles: z.array(z.string()).optional().default([]),
+    exactUserIds: z.boolean().optional().default(false),
     fromShiftId: z.string().or(z.literal('')).optional().transform(v => (v === '' || v == null ? undefined : v)),
   }).optional().default({}),
 }).strict();

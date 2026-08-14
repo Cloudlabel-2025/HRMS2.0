@@ -12,6 +12,11 @@ export async function GET(req) {
     const { searchParams } = new URL(req.url);
     const scope = searchParams.get('scope');
     const type = searchParams.get('type');
+    const module = searchParams.get('module');
+    const from = searchParams.get('from');
+    const to = searchParams.get('to');
+    const pageParam = searchParams.get('page');
+    const limit = parseInt(searchParams.get('limit') || '20', 10) || 20;
 
     const filter = {};
     if (scope === 'all') {
@@ -20,13 +25,29 @@ export async function GET(req) {
       filter.userId = user._id;
     }
     if (type) filter.type = type;
-    if (!type && req.headers.get('x-impersonate')) filter.type = { $ne: 'viewing' };
+    if (module) filter.type = module;
+    if (!type && !module && req.headers.get('x-impersonate')) filter.type = { $ne: 'viewing' };
+    if (from) filter.createdAt = { ...(filter.createdAt || {}), $gte: new Date(from + 'T00:00:00.000Z') };
+    if (to) filter.createdAt = { ...(filter.createdAt || {}), $lte: new Date(to + 'T23:59:59.999Z') };
 
-    const notes = await Notification.find(filter)
-      .populate('userId', 'name email department role')
-      .sort({ createdAt: -1 })
-      .limit(scope === 'all' ? 100 : 50);
-    return ok(notes);
+    if (!pageParam) {
+      const notes = await Notification.find(filter)
+        .populate('userId', 'name email department role')
+        .sort({ createdAt: -1 })
+        .limit(scope === 'all' ? 100 : 50);
+      return ok(notes);
+    }
+
+    const page = parseInt(pageParam, 10) || 1;
+    const [total, notes] = await Promise.all([
+      Notification.countDocuments(filter),
+      Notification.find(filter)
+        .populate('userId', 'name email department role')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
+    ]);
+    return ok({ notifications: notes, total, page, pages: Math.max(1, Math.ceil(total / limit)) });
   } catch (e) {
     return fail(e.message, 500);
   }
@@ -58,6 +79,21 @@ export async function PATCH(req) {
     } else {
       await Notification.updateMany({ userId: user._id, read: false }, { read: true });
     }
+    return ok({ success: true });
+  } catch (e) {
+    return fail(e.message, 500);
+  }
+}
+
+export async function DELETE(req) {
+  try {
+    const { user, error } = await requireAuth(req);
+    if (error) return error;
+    await connectDB();
+    const { id } = await req.json();
+    if (!id) return fail('id is required', 400);
+    const deleted = await Notification.findOneAndDelete({ _id: id, userId: user._id });
+    if (!deleted) return fail('Notification not found', 404);
     return ok({ success: true });
   } catch (e) {
     return fail(e.message, 500);

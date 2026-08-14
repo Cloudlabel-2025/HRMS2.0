@@ -31,6 +31,7 @@ export const MODULE_ACCESS = {
   monitoring:    { super_admin:'full', admin_full:'full', recruiter:false,     team_lead:'dept',   team_admin:'team', employee:false,      intern:false,      sme:false },
   core_hr:       { super_admin:'full', admin_full:'full', recruiter:'view',    team_lead:'dept',   team_admin:'team', employee:false,      intern:false,      sme:false },
   self_service:  { super_admin:'full', admin_full:'full', recruiter:'self',    team_lead:'self',   team_admin:'self', employee:'self',     intern:'self',     sme:'self' },
+  notifications: { super_admin:'self', admin_full:'self', recruiter:'self',    team_lead:'self',   team_admin:'self', employee:'self',     intern:'self',     sme:'self' },
   settings:      { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   sme:           { super_admin:'full', admin_full:false,   recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },

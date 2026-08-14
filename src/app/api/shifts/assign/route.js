@@ -29,6 +29,7 @@ export async function POST(req) {
       departments: targets?.departments || [],
       roles: targets?.roles || [],
       fromShiftId: targets?.fromShiftId || null,
+      exactUserIds: !!targets?.exactUserIds,
     });
 
     if (!userIds.length) return fail('No matching employees found for the selected filters', 400);
@@ -48,6 +49,7 @@ export async function POST(req) {
       departments: (targets?.departments || []).join(', '),
       roles: (targets?.roles || []).join(', '),
       userIds,
+      exactUserIds: !!targets?.exactUserIds,
       effectiveDate,
       reason: reason.trim(),
       createdBy: user._id,

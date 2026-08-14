@@ -30,9 +30,29 @@ function toIdStr(id) {
  * Resolve the target User _ids for a set of filters.
  * Base set: active, non-super_admin users. Filters are AND-ed, then explicit
  * userIds are unioned in.
+ *
+ * When exactUserIds is true, ONLY the explicit userIds are targeted (still
+ * filtered to active, non-super_admin users and optionally to fromShiftId).
  */
-export async function computeTargetUserIds({ userIds = [], departments = [], roles = [], fromShiftId = null } = {}) {
+export async function computeTargetUserIds({ userIds = [], departments = [], roles = [], fromShiftId = null, exactUserIds = false } = {}) {
   await connectDB();
+  const explicit = (userIds || []).map(toIdStr).filter(Boolean);
+
+  if (exactUserIds) {
+    if (!explicit.length) return [];
+    const query = { _id: { $in: explicit }, status: 'active', role: { $ne: 'super_admin' } };
+    if (fromShiftId) {
+      const fromShift = await Shift.findById(fromShiftId).lean().catch(() => null);
+      if (fromShift) {
+        query.$or = [{ shiftId: fromShift._id }, { shift: fromShift.name }];
+      } else {
+        query.shiftId = fromShiftId;
+      }
+    }
+    const users = await User.find(query).select('_id').lean();
+    return users.map(u => toIdStr(u._id));
+  }
+
   const query = { status: 'active', role: { $ne: 'super_admin' } };
 
   if (Array.isArray(departments) && departments.length) {
@@ -71,7 +91,6 @@ export async function computeTargetUserIds({ userIds = [], departments = [], rol
   }
 
   // Explicit picks are merged in, but the employer account (super_admin) is always excluded
-  const explicit = (userIds || []).map(toIdStr).filter(Boolean);
   if (explicit.length) {
     const bad = await User.find({ _id: { $in: explicit }, role: 'super_admin' }).select('_id').lean();
     const badIds = new Set(bad.map(u => toIdStr(u._id)));
@@ -166,6 +185,7 @@ export async function applyShiftChange(changeId, actorUser = null, ip = '') {
     departments: parseList(change.departments),
     roles: parseList(change.roles),
     fromShiftId: change.fromShiftId || null,
+    exactUserIds: !!change.exactUserIds,
   });
 
   const count = await applyShiftToUsers(userIds, shiftDoc, actorUser, ip, change.reason);
@@ -241,8 +261,10 @@ export async function applyDueShiftChangesForUser(user) {
  */
 export async function userMatchesChange(user, change) {
   const uid = toIdStr(user?._id);
-  if ((change.userIds || []).some(id => toIdStr(id) === uid)) return true;
+  const listed = (change.userIds || []).some(id => toIdStr(id) === uid);
+  if (listed) return true;
 
+  if (change.exactUserIds) return false;
   if (!user || user.role === 'super_admin' || user.status !== 'active') return false;
 
   const depts = parseList(change.departments);

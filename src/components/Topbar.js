@@ -4,22 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
-
-const NOTIF_ICONS = { leave: 'bi-calendar-check', attendance: 'bi-clock', announcement: 'bi-megaphone', general: 'bi-bell', performance: 'bi-graph-up-arrow', self_service: 'bi-person-badge', lifecycle: 'bi-diagram-3', payroll: 'bi-cash-stack', shift: 'bi-arrow-repeat' };
-const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', announcement: '#2563eb', general: '#3b82f6', performance: '#8b5cf6', self_service: '#8b5cf6', lifecycle: '#06b6d4', payroll: '#f97316', shift: '#0d9488' };
-
-function getNotifRoute(n, role) {
-  if (n.type === 'leave') return '/leave';
-  if (n.type === 'attendance') return '/attendance';
-  if (n.type === 'self_service') {
-    return ['super_admin', 'admin_full'].includes(role) ? '/core-hr/requests' : '/self-service';
-  }
-  if (n.type === 'lifecycle') return '/core-hr';
-  if (n.type === 'payroll') return '/payroll';
-  if (n.type === 'performance') return '/performance?tab=reviews';
-  if (n.type === 'announcement') return '/communication';
-  return null;
-}
+import { NOTIF_ICONS, NOTIF_COLORS, getNotifRoute } from '@/lib/notifications-constants';
 
 export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const { user } = useAuth();
@@ -30,6 +15,8 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const [notifications, setNotifications] = useState([]);
   const [newsAnnouncements, setNewsAnnouncements] = useState([]);
   const pollRef = useRef(null);
+  const notifRef = useRef(null);
+  const profileRef = useRef(null);
   const [pendingRequests, setPendingRequests] = useState(0);
 
   const loadNotifs = () => {
@@ -65,6 +52,15 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
     pollRef.current = setInterval(() => { loadNotifs(); loadPendingRequests(); loadNewsAnnouncements(); }, 30000);
     return () => clearInterval(pollRef.current);
   }, [user]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setShowNotif(false);
+      if (profileRef.current && !profileRef.current.contains(e.target)) setShowProfile(false);
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const handleNotifClick = async (n) => {
     await markRead(n._id);
@@ -112,7 +108,7 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
           </span>
         </button>
 
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative' }} ref={notifRef}>
           <button className="topbar-icon-btn" onClick={() => { setShowNotif(p => !p); setShowProfile(false); if (!showNotif) loadNotifs(); }}>
             <i className="bi bi-bell" />
             {unreadCount > 0 && (
@@ -128,20 +124,22 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
                 {unreadCount > 0 && <span style={{ fontSize: 11, color: '#3b82f6', cursor: 'pointer' }} onClick={markAllRead}>Mark all read</span>}
               </div>
               {notifications.length === 0 && <div style={{ padding: '20px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}><i className="bi bi-bell-slash d-block mb-2" style={{ fontSize: 24 }} />No notifications</div>}
-              {notifications.slice(0, 8).map(n => (
-                <div key={n._id} className="notif-item" onClick={() => handleNotifClick(n)}
-                  style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: getNotifRoute(n, user?.role) ? 'pointer' : 'default' }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 8, background: (NOTIF_COLORS[n.type] || '#3b82f6') + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <i className={`bi ${NOTIF_ICONS[n.type] || 'bi-bell'}`} style={{ color: NOTIF_COLORS[n.type] || '#3b82f6', fontSize: 14 }} />
+              <div className="notif-list">
+                {notifications.slice(0, 8).map(n => (
+                  <div key={n._id} className="notif-item" onClick={() => handleNotifClick(n)}
+                    style={{ background: n.read ? 'transparent' : '#f0f9ff', cursor: getNotifRoute(n, user?.role) ? 'pointer' : 'default' }}>
+                    <div style={{ width: 32, height: 32, borderRadius: 8, background: (NOTIF_COLORS[n.type] || '#3b82f6') + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <i className={`bi ${NOTIF_ICONS[n.type] || 'bi-bell'}`} style={{ color: NOTIF_COLORS[n.type] || '#3b82f6', fontSize: 14 }} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12.5, color: '#1e293b', fontWeight: n.read ? 400 : 600, lineHeight: 1.4 }}>{n.title}</div>
+                      <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</div>
+                      <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(n.createdAt)}</div>
+                    </div>
+                    {!n.read && <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', flexShrink: 0, marginTop: 4 }} />}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12.5, color: '#1e293b', fontWeight: n.read ? 400 : 600, lineHeight: 1.4 }}>{n.title}</div>
-                    <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.message}</div>
-                    <div style={{ fontSize: 10, color: '#94a3b8', marginTop: 2 }}>{formatDateTime(n.createdAt)}</div>
-                  </div>
-                  {!n.read && <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#3b82f6', flexShrink: 0, marginTop: 4 }} />}
-                </div>
-              ))}
+                ))}
+              </div>
               {['super_admin', 'admin_full'].includes(user.role) && pendingRequests > 0 && (
                 <div style={{ padding: '10px 16px', borderTop: '1px solid #f1f5f9' }}>
                   <button onClick={() => { setShowNotif(false); router.push('/core-hr/requests'); }}
@@ -151,12 +149,21 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
                   </button>
                 </div>
               )}
+              <div style={{ borderTop: '1px solid #f1f5f9' }}>
+                <button onClick={() => { setShowNotif(false); router.push('/notifications'); }}
+                  style={{ width: '100%', background: 'none', border: 'none', padding: '10px 16px', fontSize: 12.5, fontWeight: 600, color: '#3b82f6', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'background 0.15s' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#f8fafc'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}>
+                  View all notifications
+                  <i className="bi bi-arrow-right" />
+                </button>
+              </div>
             </div>
           )}
         </div>
 
 
-        <div style={{ position: 'relative' }}>
+        <div style={{ position: 'relative' }} ref={profileRef}>
           <div className="avatar" onClick={() => { setShowProfile(p => !p); setShowNotif(false); }}
             style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)`, overflow: 'hidden' }}>
             {user.profilePhoto ? <img src={user.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : user.avatar}

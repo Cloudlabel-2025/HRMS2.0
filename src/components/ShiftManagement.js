@@ -4,12 +4,12 @@ import { useEffect, useMemo, useState } from 'react';
 import DateInput from '@/components/DateInput';
 import ConfirmModal from '@/components/ConfirmModal';
 import { api } from '@/lib/api';
-import { useAuth } from '@/lib/auth';
+import { useAuth, ROLE_LABELS } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 
 // All User roles except super_admin (see ROLES in User model)
 const ASSIGNABLE_ROLES = ['admin_full', 'recruiter', 'team_lead', 'team_admin', 'employee', 'intern', 'sme'];
-const EMP_PAGE_SIZE = 10;
+const EMP_DEPT_PAGE_SIZE = 5;
 
 const STATUS_CONFIG = {
   pending:   { color: '#f59e0b', bg: '#fffbeb', label: 'Pending' },
@@ -44,33 +44,6 @@ function Field({ label, children, col = 'col-md-6', hint }) {
   );
 }
 
-function CheckboxGroup({ title, options, selected, onToggle, valueOf = o => o, labelOf = o => o, hint }) {
-  const items = Array.isArray(options) ? options : [];
-  const checkedValues = Array.isArray(selected) ? selected : [];
-  return (
-    <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', background: '#fbfdff' }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>{title}</div>
-      {hint && <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>{hint}</div>}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', maxHeight: 160, overflow: 'auto' }}>
-        {items.map((opt, idx) => {
-          if (opt === null || opt === undefined) return null;
-          let val;
-          try { val = valueOf(opt); } catch { return null; }
-          if (val === null || val === undefined) return null;
-          let label;
-          try { label = labelOf(opt); } catch { label = String(val); }
-          return (
-            <label key={`${String(val)}-${idx}`} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12.5, color: '#334155', cursor: 'pointer' }}>
-              <input type="checkbox" checked={checkedValues.includes(val)} onChange={() => onToggle(val)} />
-              {label}
-            </label>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function filtersSummary(change) {
   const parts = [];
   if (change.userIds?.length) parts.push(`${change.userIds.length} specific employee(s)`);
@@ -85,7 +58,6 @@ export default function ShiftManagement() {
   const { formatDate, formatDateTime } = useSettings();
 
   const [shifts, setShifts]       = useState([]);
-  const [departments, setDepartments] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [pending, setPending]     = useState([]);
   const [history, setHistory]     = useState([]);
@@ -103,7 +75,6 @@ export default function ShiftManagement() {
     effectiveDate: todayLocal(),
     reason: '',
     userIds: [],
-    departments: [],
     roles: [...ASSIGNABLE_ROLES],
     fromShiftId: '',
     empSearch: '',
@@ -114,14 +85,12 @@ export default function ShiftManagement() {
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [shiftRes, deptRes, empRes, assignRes] = await Promise.all([
+      const [shiftRes, empRes, assignRes] = await Promise.all([
         api.get('/api/settings?type=shifts'),
-        api.get('/api/settings?type=departments'),
         api.get('/api/employees'),
         api.get('/api/shifts/assign'),
       ]);
       setShifts((Array.isArray(shiftRes) ? shiftRes : []).filter(s => s && typeof s === 'object' && s._id));
-      setDepartments((Array.isArray(deptRes) ? deptRes : []).map(d => d?.name).filter(Boolean).sort());
       setEmployees((Array.isArray(empRes) ? empRes : []).filter(e => e && typeof e === 'object' && e.userId));
       setPending(Array.isArray(assignRes?.pending) ? assignRes.pending : []);
       setHistory(Array.isArray(assignRes?.history) ? assignRes.history : []);
@@ -136,7 +105,6 @@ export default function ShiftManagement() {
     if (user) loadData();
   }, [user]);
 
-  const toggleDept = dept => setForm(p => ({ ...p, departments: p.departments.includes(dept) ? p.departments.filter(d => d !== dept) : [...p.departments, dept] }));
   const toggleUser = uid => setForm(p => ({ ...p, userIds: p.userIds.includes(uid) ? p.userIds.filter(x => x !== uid) : [...p.userIds, uid] }));
 
   const filteredEmployees = useMemo(() => {
@@ -146,29 +114,35 @@ export default function ShiftManagement() {
     return list;
   }, [employees, form.empSearch]);
 
-  const pageCount = Math.max(1, Math.ceil(filteredEmployees.length / EMP_PAGE_SIZE));
-  const pageEmployees = filteredEmployees.slice((empPage - 1) * EMP_PAGE_SIZE, empPage * EMP_PAGE_SIZE);
+  const groupedDepartments = useMemo(() => {
+    const map = new Map();
+    filteredEmployees.forEach(e => {
+      const dept = e.department || 'No Department';
+      if (!map.has(dept)) map.set(dept, []);
+      map.get(dept).push(e);
+    });
+    const groups = [...map.entries()].map(([department, employees]) => ({
+      department,
+      employees: employees.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    }));
+    return groups.sort((a, b) => String(a.department).localeCompare(String(b.department)));
+  }, [filteredEmployees]);
 
-  const selectedShift = useMemo(() => shifts.find(s => s._id === form.shiftId) || null, [shifts, form.shiftId]);
+  const deptPageCount = Math.max(1, Math.ceil(groupedDepartments.length / EMP_DEPT_PAGE_SIZE));
+  const currentEmpPage = Math.min(empPage, deptPageCount);
+  const pageDepartments = groupedDepartments.slice(
+    (currentEmpPage - 1) * EMP_DEPT_PAGE_SIZE,
+    currentEmpPage * EMP_DEPT_PAGE_SIZE,
+  );
 
-  const departmentOptions = useMemo(() => {
-    const fromSettings = departments.filter(Boolean);
-    const fromEmployees = employees.map(e => e?.department).filter(Boolean);
-    return [...new Set([...fromSettings, ...fromEmployees])].sort();
-  }, [departments, employees]);
+  const selectedShift = useMemo(
+    () => shifts.find(shift => shift._id === form.shiftId) || null,
+    [shifts, form.shiftId],
+  );
 
   const estimatedCount = useMemo(() => {
-    let list = employees.filter(e => e.status !== 'alumni' && e.role !== 'super_admin');
-    if (form.departments.length) list = list.filter(e => form.departments.includes(e.department));
-    if (form.roles.length) list = list.filter(e => form.roles.includes(e.role));
-    if (form.fromShiftId) {
-      const fromName = shifts.find(s => s._id === form.fromShiftId)?.name;
-      list = list.filter(e => e.shiftId === form.fromShiftId || (e.shift && e.shift === fromName));
-    }
-    const ids = new Set(list.map(e => e.userId).filter(Boolean));
-    form.userIds.forEach(uid => uid && ids.add(uid));
-    return ids.size;
-  }, [employees, shifts, form]);
+    return new Set(form.userIds.filter(Boolean)).size;
+  }, [form.userIds]);
 
   const reasonOk = form.reason.trim().length > 0;
   const shiftOk = !!form.shiftId;
@@ -187,8 +161,8 @@ export default function ShiftManagement() {
         effectiveDate: form.effectiveDate,
         targets: {
           userIds: form.userIds,
-          departments: form.departments,
           roles: form.roles,
+          exactUserIds: true,
           fromShiftId: form.fromShiftId || undefined,
         },
       });
@@ -212,8 +186,8 @@ export default function ShiftManagement() {
         effectiveDate: form.effectiveDate,
         targets: {
           userIds: form.userIds,
-          departments: form.departments,
           roles: form.roles,
+          exactUserIds: true,
           fromShiftId: form.fromShiftId || undefined,
         },
       });
@@ -302,20 +276,10 @@ export default function ShiftManagement() {
           </Field>
 
           <div className="col-12">
-            <CheckboxGroup
-              title="Departments (optional)"
-              hint="Leave all unchecked to include all departments. Options are taken from Settings → Departments (falling back to employee departments if none are configured)."
-              options={departmentOptions}
-              selected={form.departments}
-              onToggle={toggleDept}
-            />
-          </div>
-
-          <div className="col-12">
             <div style={{ border: '1px solid #e2e8f0', borderRadius: 10, padding: '10px 12px', background: '#fbfdff' }}>
               <div className="d-flex align-items-center justify-content-between flex-wrap" style={{ gap: 8, marginBottom: 6 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.4 }}>
-                  Specific Employees ({form.userIds.length} selected)
+                  Employees by Department ({form.userIds.length} selected)
                 </div>
                 <input
                   className="form-control form-control-sm"
@@ -326,28 +290,54 @@ export default function ShiftManagement() {
                 />
               </div>
               <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>
-                Optional — search and tick individuals. Picks are merged with the department/from-shift filters above.
+                Tick the employees to move. Use the checkbox next to a department to select everyone in it.
               </div>
-              {pageEmployees.length === 0 ? (
+              {groupedDepartments.length === 0 ? (
                 <div style={{ fontSize: 12, color: '#94a3b8', padding: '8px 2px' }}>No employees match the current search.</div>
               ) : (
-                <div style={{ maxHeight: 280, overflow: 'auto' }}>
-                  {pageEmployees.map(e => (
-                    <label key={e.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px', borderBottom: '1px solid #eef2f7', fontSize: 12.5, color: '#334155', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={form.userIds.includes(e.userId)} onChange={() => toggleUser(e.userId)} />
-                      <span>
-                        {e.name} <span style={{ color: '#94a3b8' }}>({e.department || '—'} • {e.shift || 'no shift'})</span>
-                      </span>
-                    </label>
-                  ))}
+                <div style={{ maxHeight: 360, overflow: 'auto' }}>
+                  {pageDepartments.map(group => {
+                    const ids = group.employees.map(e => e.userId);
+                    const all = ids.length > 0 && ids.every(id => form.userIds.includes(id));
+                    const some = ids.some(id => form.userIds.includes(id));
+                    return (
+                      <div key={group.department} style={{ marginBottom: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#f1f5f9', borderRadius: 8, padding: '6px 10px', marginBottom: 4 }}>
+                          <input
+                            type="checkbox"
+                            checked={all}
+                            ref={el => { if (el) el.indeterminate = !all && some; }}
+                            onChange={() => {
+                              setForm(p => {
+                                const next = new Set(p.userIds);
+                                if (all) ids.forEach(id => next.delete(id));
+                                else ids.forEach(id => next.add(id));
+                                return { ...p, userIds: [...next] };
+                              });
+                            }}
+                          />
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1e293b' }}>{group.department}</span>
+                          <span style={{ fontSize: 11, color: '#94a3b8' }}>({group.employees.length})</span>
+                        </div>
+                        {group.employees.map(e => (
+                          <label key={e.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 2px 5px 12px', borderBottom: '1px solid #eef2f7', fontSize: 12.5, color: '#334155', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={form.userIds.includes(e.userId)} onChange={() => toggleUser(e.userId)} />
+                            <span>
+                              {e.name} <span style={{ color: '#94a3b8' }}>({ROLE_LABELS[e.role] || e.role} • {e.shift || 'no shift'})</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
-              {pageCount > 1 && (
+              {deptPageCount > 1 && (
                 <div className="d-flex align-items-center justify-content-between mt-2" style={{ fontSize: 12 }}>
-                  <span style={{ color: '#64748b' }}>Page {empPage} of {pageCount}</span>
+                  <span style={{ color: '#64748b' }}>Page {currentEmpPage} of {deptPageCount}</span>
                   <div className="d-flex gap-1">
-                    <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12, padding: '1px 8px' }} disabled={empPage <= 1} onClick={() => setEmpPage(p => Math.max(1, p - 1))}>Prev</button>
-                    <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12, padding: '1px 8px' }} disabled={empPage >= pageCount} onClick={() => setEmpPage(p => Math.min(pageCount, p + 1))}>Next</button>
+                    <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12, padding: '1px 8px' }} disabled={currentEmpPage <= 1} onClick={() => setEmpPage(p => Math.max(1, p - 1))}>Prev</button>
+                    <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12, padding: '1px 8px' }} disabled={currentEmpPage >= deptPageCount} onClick={() => setEmpPage(p => Math.min(deptPageCount, p + 1))}>Next</button>
                   </div>
                 </div>
               )}
