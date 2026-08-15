@@ -360,7 +360,7 @@ export async function POST(req) {
         status = 'absent';
       }
 
-      const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut);
+      const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut, outRecord.date);
       record = await Attendance.findOneAndUpdate(
         { _id: outRecord._id },
         {

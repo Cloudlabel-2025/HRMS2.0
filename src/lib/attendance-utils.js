@@ -12,10 +12,21 @@ import { getTzTime } from '@/lib/timezone';
 
 export { toMinutes, diffMins } from './attendance-constants';
 
-export function finalizeDayWork(rows, finalClockOut) {
+export function finalizeDayWork(rows, finalClockOut, dateStr) {
   return (rows || []).map(row => {
     const base = row.toObject ? row.toObject() : row;
     if (base.type === 'task' && ['pending', 'work_in_progress', 'stopped'].includes(base.status)) {
+      if (base.endTime) {
+        const next = {
+          ...base,
+          status: 'completed',
+          carriedForward: false,
+          completedAt: base.completedAt || base.endTime,
+          completedDate: base.completedDate || dateStr || '',
+          tries: base.tries ?? 1,
+        };
+        return { ...next, duration: computeWorkRowDuration(next) };
+      }
       const next = { ...base, endTime: base.endTime || finalClockOut, status: 'pending', carriedForward: true };
       return { ...next, duration: computeWorkRowDuration(next) };
     }
@@ -69,7 +80,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   }
 
   if (record.workProgress) {
-    record.workProgress = finalizeDayWork(record.workProgress, clockOutTime);
+    record.workProgress = finalizeDayWork(record.workProgress, clockOutTime, record.date);
   }
 
   const elapsedMins = Math.max(0, clockOutMinutes - clockInMinutes);

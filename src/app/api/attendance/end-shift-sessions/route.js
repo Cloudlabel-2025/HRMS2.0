@@ -71,7 +71,7 @@ export async function POST(req) {
       const updatedBreaks = (record.breaks || []).map(b =>
         b.start && !b.end ? { ...b, end: clockOutTime } : b
       );
-      const finalized = finalizeDayWork(record.workProgress, clockOutTime);
+      const finalized = finalizeDayWork(record.workProgress, clockOutTime, record.date);
 
       const result = await Attendance.findOneAndUpdate(
         { _id: record._id, clockOut: null },

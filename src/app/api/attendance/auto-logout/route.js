@@ -115,7 +115,7 @@ export async function POST(req) {
         const updatedBreaks = (record.breaks || []).map(row => (
           row.start && !row.end ? { ...row, end: finalClockOut } : row
         ));
-        const finalized = finalizeDayWork(record.workProgress, finalClockOut);
+        const finalized = finalizeDayWork(record.workProgress, finalClockOut, record.date);
 
         // Atomically claim AND finalize — single operation prevents race & crash-orphaning
         const result = await Attendance.findOneAndUpdate(
