@@ -7,7 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { notify } from '@/lib/notify';
 import { isWorkingDay, getGlobalConfig } from '@/lib/payroll-cycle';
 import { z } from 'zod';
-import { canViewUser } from '@/lib/rbac';
+import { canApproveLeave, canViewUser } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 
 const ActionSchema = z.object({
@@ -46,6 +46,13 @@ function resolveStatus(leave) {
   return leave.status;
 }
 
+function getActiveWorkflow(policy, typeCode) {
+  const typeConfig = policy?.leaveTypeConfigs?.find(config => config.code === typeCode);
+  return typeConfig?.useCustomWorkflow && typeConfig.approvalWorkflow?.length
+    ? typeConfig.approvalWorkflow
+    : (policy?.approvalWorkflow || []);
+}
+
 export async function PUT(req, { params }) {
   try {
     const { id } = await params;
@@ -69,6 +76,7 @@ export async function PUT(req, { params }) {
     const applicantId = leave.userId._id || leave.userId;
     const applicantName = leave.userId.name || 'Employee';
     const applicantIsEmployer = !!leave.userId?.role && isEmployer(leave.userId.role);
+    if (applicantId.toString() === user._id.toString()) return fail('You cannot approve your own leave request', 403);
 
     // Try to use dynamic workflow first
     const policy = leave.policyId
@@ -78,13 +86,15 @@ export async function PUT(req, { params }) {
     if (policy && leave.workflowApprovals?.length > 0) {
       // ── Dynamic workflow approval ──
       const workflow = leave.workflowApprovals;
+      const workflowDef = getActiveWorkflow(policy, leave.typeCode);
+
+      if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
+      if (!canApproveLeave(user, leave.userId)) return fail('You are not allowed to approve this employee\'s leave request', 403);
 
       // Find the current step this user can act on
-      const approverStep = workflow.find(s => {
-        if (s.action !== 'pending') return false;
-        const stepDef = policy.approvalWorkflow.find(w => w.step === s.step);
-        return stepDef && stepDef.approverRoles.includes(user.role);
-      });
+      const pendingStep = workflow.find(step => step.action === 'pending');
+      const pendingStepDef = pendingStep && workflowDef.find(step => step.step === pendingStep.step);
+      const approverStep = pendingStepDef ? pendingStep : null;
 
       if (!approverStep) {
         // Check if user can override (admin approving after a hold)
@@ -108,8 +118,6 @@ export async function PUT(req, { params }) {
       } else {
         approveStep(approverStep, action, user, holdReason);
       }
-
-      if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
 
       function approveStep(stepObj, act, actor, reason) {
         stepObj.action = act;
@@ -183,8 +191,8 @@ export async function PUT(req, { params }) {
 
       // Notify next step approvers if approved
       if (action === 'approved') {
-        const currentStepIndex = policy.approvalWorkflow?.findIndex(w => w.step === approverStep?.step);
-        const nextStep = policy.approvalWorkflow?.[currentStepIndex !== undefined ? currentStepIndex + 1 : -1];
+        const currentStepIndex = workflowDef.findIndex(step => step.step === approverStep?.step);
+        const nextStep = currentStepIndex >= 0 ? workflowDef[currentStepIndex + 1] : null;
         if (nextStep) {
           const nextApprovers = await User.find({ role: { $in: nextStep.approverRoles }, status: 'active' }).select('_id');
           if (nextApprovers.length) {

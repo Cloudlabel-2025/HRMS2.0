@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import { getWorkProgressExportJob } from '@/lib/work-progress-export';
 
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -43,6 +44,11 @@ export default function AppShell({ title, children }) {
   const resetTimer = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
+      const exportJob = getWorkProgressExportJob();
+      if (exportJob && ['pending', 'exporting'].includes(exportJob.status)) {
+        resetTimer();
+        return;
+      }
       logout();
       router.replace('/login?reason=timeout');
     }, IDLE_TIMEOUT_MS);

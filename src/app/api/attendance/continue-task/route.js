@@ -21,7 +21,7 @@ export async function POST(req) {
       // fall through to validation below
     }
     const taskDetails = typeof body.taskDetails === 'string' ? body.taskDetails.trim() : '';
-    if (!taskDetails || taskDetails.length > 200) {
+    if (!taskDetails) {
       return fail('Task details are required', 400);
     }
 

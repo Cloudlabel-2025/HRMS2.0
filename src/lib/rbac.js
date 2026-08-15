@@ -73,6 +73,15 @@ export async function canViewUser(user, targetUser) {
   return targetUser?._id?.toString() === user._id.toString();
 }
 
+export function canApproveLeave(user, requester) {
+  if (!user || !requester || String(user._id) === String(requester._id)) return false;
+  if (['super_admin', 'admin_full'].includes(user.role)) return true;
+  if (!user.department || user.department !== requester.department) return false;
+  if (user.role === 'team_lead') return ['team_admin', 'employee', 'intern'].includes(requester.role);
+  if (user.role === 'team_admin') return ['intern', 'employee'].includes(requester.role);
+  return false;
+}
+
 // ── Cross-department project approval rules ───────────────────────────────────
 
 /**

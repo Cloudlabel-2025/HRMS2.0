@@ -8,7 +8,24 @@ import { notify } from '@/lib/notify';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
 import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
-import { getDepartmentUserIds } from '@/lib/rbac';
+import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
+
+function getActiveWorkflow(policy, typeCode) {
+  const typeConfig = policy?.leaveTypeConfigs?.find(config => config.code === typeCode);
+  return typeConfig?.useCustomWorkflow && typeConfig.approvalWorkflow?.length
+    ? typeConfig.approvalWorkflow
+    : (policy?.approvalWorkflow || []);
+}
+
+function canActOnLegacyLeave(leave, role) {
+  if (['super_admin', 'admin_full'].includes(role)) {
+    return leave.adminApproval === 'pending'
+      || (leave.adminApproval === 'approved' && ['held', 'rejected'].some(value => leave.teamAdminApproval === value || leave.tlApproval === value));
+  }
+  if (role === 'team_admin') return leave.adminApproval === 'approved' && leave.teamAdminApproval === 'pending';
+  if (role === 'team_lead') return leave.adminApproval === 'approved' && leave.tlApproval === 'pending';
+  return false;
+}
 
 export async function GET(req) {
   try {
@@ -32,22 +49,23 @@ export async function GET(req) {
 
     if (scope === 'all') {
       if (!isAdmin) return fail('Access denied', 403);
+    } else if (scope === 'team') {
+      if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
+      const ids = await getDepartmentUserIds(user);
+      if (ids !== null) query.userId = { $in: ids };
     } else if (scope === 'approvals') {
       if (!MANAGER_ROLES.includes(user.role)) return fail('Access denied', 403);
+      query.userId = { $ne: user._id };
       if (isAdmin) {
-        query = { $or: [
+        query.$or = [
           { 'workflowApprovals.action': { $in: ['pending', null] } },
           { status: 'pending' },
-        ]};
+          { 'workflowApprovals.action': { $in: ['held', 'rejected'] } },
+        ];
       } else {
-        // Find leaves where any workflow step matches this user's role, scoped to their department
-        query = {
-          $or: [
-            { 'workflowApprovals.action': { $in: ['pending', null] } },
-          ],
-        };
+        query.$or = [{ 'workflowApprovals.action': { $in: ['pending', null] } }, { status: 'pending' }];
         const ids = await getDepartmentUserIds(user);
-        if (ids !== null) query.userId = { $in: ids };
+        if (ids !== null) query.userId = { $in: ids, $ne: user._id };
       }
     } else if (scope === 'my' && userIdParam && isAdmin) {
       query.userId = userIdParam;
@@ -57,10 +75,31 @@ export async function GET(req) {
 
     if (status) query.status = status;
 
-    const leaves = await Leave.find(query)
-      .populate('userId', 'name avatar department')
+    let leaves = await Leave.find(query)
+      .populate('userId', 'name avatar department role')
       .populate({ path: 'workflowApprovals.approvedBy', select: 'name', strictPopulate: false })
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    if (scope === 'approvals') {
+      const policyIds = [...new Set(leaves.map(leave => leave.policyId?.toString()).filter(Boolean))];
+      const policies = policyIds.length
+        ? await LeavePolicy.find({ _id: { $in: policyIds } }).lean()
+        : [];
+      const policyById = new Map(policies.map(policy => [policy._id.toString(), policy]));
+
+      leaves = leaves.filter(leave => {
+        if (!canApproveLeave(user, leave.userId)) return false;
+        if (!leave.workflowApprovals?.length || !leave.policyId) return canActOnLegacyLeave(leave, user.role);
+
+        const policy = policyById.get(leave.policyId.toString());
+        const workflowDef = getActiveWorkflow(policy, leave.typeCode);
+        const pendingStep = leave.workflowApprovals.find(step => step.action === 'pending');
+        const heldStep = leave.workflowApprovals.find(step => ['held', 'rejected'].includes(step.action));
+        const stepDef = pendingStep && workflowDef.find(step => step.step === pendingStep.step);
+        return !!(stepDef || (heldStep && isAdmin));
+      }).map(leave => ({ ...leave, canAct: true }));
+    }
 
     return ok(leaves);
   } catch (e) {

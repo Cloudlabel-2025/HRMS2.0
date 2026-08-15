@@ -7,7 +7,7 @@ import Leave from '@/lib/models/Leave';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { Announcement, Employee } from '@/lib/models/index';
-import { getAccessibleDepartments } from '@/lib/rbac';
+import { getAccessibleDepartments, getDepartmentUserIds } from '@/lib/rbac';
 import { computeWorkRowDuration } from '@/lib/attendance-constants';
 
 export async function GET(req) {
@@ -21,14 +21,12 @@ export async function GET(req) {
   const role = user.role;
   const isSuperAdmin = role === 'super_admin';
 
-  // Scope team member IDs for team_lead / team_admin
-  let teamIds = null;
-  if (role === 'team_lead')  teamIds = (await Employee.find({ teamLeadId:  user._id }).select('userId')).map(e => e.userId);
-  if (role === 'team_admin') teamIds = (await Employee.find({ teamAdminId: user._id }).select('userId')).map(e => e.userId);
-
   const isSelfRole  = ['employee', 'intern'].includes(role);
   const isAdminRole = ['super_admin', 'admin_full'].includes(role);
   const isTeamRole  = ['team_lead', 'team_admin'].includes(role);
+  const teamIds = isTeamRole
+    ? (await getDepartmentUserIds(user)).filter(id => id.toString() !== user._id.toString())
+    : [];
 
   // Build announcement filter before the parallel queries
   let announcementFilter = {};
@@ -39,7 +37,7 @@ export async function GET(req) {
         { audience: 'Company-wide' },
         ...(accessibleDepts ? [{ departments: { $in: accessibleDepts } }] : []),
         ...(accessibleDepts ? [{ audience: { $in: accessibleDepts } }] : []),
-        ...(teamIds ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
+        ...(isTeamRole ? [{ audience: 'My Team', author: { $in: teamIds } }] : []),
       ],
     };
   }
@@ -53,14 +51,13 @@ export async function GET(req) {
     announcements,
   ] = await Promise.all([
     isAdminRole ? Employee.countDocuments({ status: 'active' })
-      : isTeamRole ? Employee.countDocuments({ [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active' })
+      : isTeamRole ? Promise.resolve(teamIds.length)
       : Promise.resolve(0),
     isAdminRole ? Attendance.countDocuments({ date: today, status: 'present' })
       : isTeamRole ? Attendance.countDocuments({ date: today, status: 'present', userId: { $in: teamIds } })
       : Promise.resolve(0),
     isAdminRole ? Leave.countDocuments({ status: 'pending' })
-      : role === 'team_lead'  ? Leave.countDocuments({ teamAdminApproval: 'approved', tlApproval: 'pending', userId: { $in: teamIds } })
-      : role === 'team_admin' ? Leave.countDocuments({ teamAdminApproval: 'pending', userId: { $in: teamIds } })
+      : isTeamRole ? Leave.countDocuments({ status: 'pending', userId: { $in: teamIds } })
       : Leave.countDocuments({ userId: user._id, status: 'pending' }),
     isSelfRole
       ? Attendance.countDocuments({ userId: user._id, status: 'present', date: { $gte: monthStart } })

@@ -10,9 +10,16 @@ import Time from '@/components/Time';
 import { formatMins, parseStoredAddress } from '@/lib/format';
 import { canAccessDepartment } from '@/lib/auth';
 import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
-import { triggerDownload } from '@/lib/csv-utils';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
+import {
+  cancelWorkProgressExportJob,
+  getWorkProgressExportJob,
+  getWorkProgressExportRemaining,
+  minimizeWorkProgressExportJob,
+  startWorkProgressExportJob,
+  subscribeWorkProgressExport,
+} from '@/lib/work-progress-export';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -93,7 +100,7 @@ export default function EmployeeProfilePage() {
   const [filterToDate, setFilterToDate] = useState('');
   const [showTimer, setShowTimer] = useState(false);
   const [downloadRemaining, setDownloadRemaining] = useState(0);
-  const timerRef = useRef(null);
+  const [exportJob, setExportJob] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -223,8 +230,20 @@ export default function EmployeeProfilePage() {
   }, [tab, id]);
 
   useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    const syncJob = job => {
+      setExportJob(job);
+      setShowTimer(!!job && job.employeeId === id && !job.minimized);
+      setDownloadRemaining(getWorkProgressExportRemaining(job));
+    };
+    syncJob(getWorkProgressExportJob());
+    const unsubscribe = subscribeWorkProgressExport(syncJob);
+    const interval = setInterval(() => {
+      const job = getWorkProgressExportJob();
+      setDownloadRemaining(getWorkProgressExportRemaining(job));
+      setExportJob(job);
+    }, 1000);
+    return () => { unsubscribe(); clearInterval(interval); };
+  }, [id]);
 
   const toggleCycle = (key) => {
     setExpandedCycle(prev => prev === key ? null : key);
@@ -308,36 +327,29 @@ export default function EmployeeProfilePage() {
     const completed = pending.filter(t => t.completedDate).map(t => ({ text: t.text, completedDate: t.completedDate, attempts: t.attempts, totalMins: t.totalMins }));
     return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
   }, [wpCycles]);
-  const toCsvRows = (cycles) => {
-    const rows = [['Cycle', 'Date', 'Status', 'Clock In', 'Clock Out', 'Hours', '#', 'Type', 'Task Details', 'Start Time', 'End Time', 'Task Status', 'Remarks', 'Feedback']];
-    for (const cycle of cycles) {
-      for (const d of cycle.dates) {
-        if (!d.workProgress?.length) { rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']); continue; }
-        for (let i = 0; i < d.workProgress.length; i++) {
-          const wp = d.workProgress[i];
-          rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), String(i + 1), wp.type || 'task', wp.taskDetails || '', formatTime(wp.startTime) || '', formatTime(wp.endTime) || '', wp.status || '', wp.remarks || '', wp.feedback || '']);
-        }
-      }
-    }
-    return rows;
-  };
   const handleWpDownload = () => {
-    const rows = toCsvRows(filteredCycles);
-    const entryCount = rows.length - 1;
-    if (entryCount <= 5) { triggerDownload(rows, `work_progress_${emp?.name || 'export'}.csv`); showToast('Downloaded successfully'); return; }
-    if (timerRef.current) clearInterval(timerRef.current);
-    setDownloadRemaining(1800);
+    if (getWorkProgressExportJob()) {
+      showToast('A work-sheet export is already running', 'error');
+      return;
+    }
+    const job = startWorkProgressExportJob({
+      employeeId: id,
+      employeeName: data?.employee?.name || 'Employee',
+      filters: { fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate },
+    });
+    setExportJob(job);
+    setDownloadRemaining(getWorkProgressExportRemaining(job));
     setShowTimer(true);
-    timerRef.current = setInterval(() => {
-      setDownloadRemaining(prev => {
-        if (prev <= 1) { clearInterval(timerRef.current); timerRef.current = null; triggerDownload(rows, `work_progress_${emp?.name || 'export'}.csv`); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
   };
-  const closeTimer = () => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    setShowTimer(false); setDownloadRemaining(0);
+  const minimizeTimer = () => {
+    minimizeWorkProgressExportJob();
+    setShowTimer(false);
+  };
+  const cancelTimer = () => {
+    cancelWorkProgressExportJob();
+    setExportJob(null);
+    setShowTimer(false);
+    setDownloadRemaining(0);
   };
 
   if (loading) return (
@@ -1217,11 +1229,13 @@ export default function EmployeeProfilePage() {
                     <div style={{ height: 8, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden', marginBottom: 20 }}>
                       <div style={{ height: '100%', borderRadius: 4, background: 'linear-gradient(90deg, #3b82f6, #2563eb)', width: `${downloadRemaining <= 0 ? 100 : ((1800 - downloadRemaining) / 1800) * 100}%`, transition: 'width 1s linear' }} />
                     </div>
-                    {downloadRemaining <= 0 ? (
-                      <div className="alert alert-success py-2" style={{ fontSize: 13, margin: 0 }}><i className="bi bi-check-circle me-2" />Download started!</div>
-                    ) : (
-                      <button className="btn btn-outline-secondary btn-sm" onClick={closeTimer} style={{ fontSize: 12 }}>Minimize</button>
-                    )}
+                    {exportJob?.status === 'failed' ? (
+                      <div className="alert alert-danger py-2" style={{ fontSize: 13, marginBottom: 12 }}>{exportJob.error || 'Export failed'}</div>
+                    ) : null}
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
+                      <button className="btn btn-outline-danger btn-sm" onClick={cancelTimer} style={{ fontSize: 12 }}>Cancel</button>
+                      <button className="btn btn-outline-secondary btn-sm" onClick={minimizeTimer} style={{ fontSize: 12 }}>Minimize</button>
+                    </div>
                   </div>
                 </div>
               </div>

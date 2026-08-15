@@ -174,12 +174,7 @@ export default function LeavePage() {
 
   const canActOn = (l) => {
     if (l.workflowApprovals?.length > 0) {
-      const pendingStep = l.workflowApprovals.find(s => s.action === 'pending');
-      if (!pendingStep) {
-        const heldStep = l.workflowApprovals.find(s => s.action === 'held' || s.action === 'rejected');
-        return !!heldStep && isAdmin;
-      }
-      return true;
+      return l.canAct === true;
     }
     if (isAdmin)     return l.adminApproval === 'pending' || (l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected'));
     if (isTeamAdmin) return l.adminApproval === 'approved' && l.teamAdminApproval === 'pending';

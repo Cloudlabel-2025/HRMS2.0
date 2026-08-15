@@ -11,6 +11,7 @@ import { formatTaskDuration } from '@/lib/attendance-constants';
 
 const STATUS_STYLE = {
   present: { bg: '#dcfce7', color: '#16a34a', label: 'Present', icon: 'bi-check-circle' },
+  not_arrived: { bg: '#f1f5f9', color: '#64748b', label: 'Not arrived', icon: 'bi-hourglass-split' },
   absent:  { bg: '#fee2e2', color: '#dc2626', label: 'Absent',  icon: 'bi-x-circle' },
   late:    { bg: '#fef3c7', color: '#d97706', label: 'Late',    icon: 'bi-clock' },
   leave:   { bg: '#dbeafe', color: '#2563eb', label: 'On Leave',icon: 'bi-calendar-check' },
@@ -83,27 +84,20 @@ export default function MonitoringPage() {
       const [attendanceToday, attendanceYest, leaves] = await Promise.all([
         api.get(`/api/attendance?date=${calToday}&scope=team`),
         api.get(`/api/attendance?date=${calYesterday}&scope=team`),
-        api.get('/api/leave?status=approved'),
+        api.get('/api/leave?scope=team&status=approved'),
       ]);
 
       const leaveArr = Array.isArray(leaves) ? leaves : [];
 
-      // Today's records take priority over yesterday's
       const attMap = {};
       for (const r of [...(Array.isArray(attendanceYest) ? attendanceYest : [])]) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
-        if (uid) attMap[uid] = r;
+        if (uid) attMap[`${uid}::${r.date}`] = r;
       }
       for (const r of [...(Array.isArray(attendanceToday) ? attendanceToday : [])]) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
-        if (uid) attMap[uid] = r;
+        if (uid) attMap[`${uid}::${r.date}`] = r;
       }
-
-      const onLeaveIds = new Set(
-        leaveArr
-          .filter(l => l.from <= calToday && l.to >= calToday)
-          .map(l => l.userId?._id?.toString() || l.userId?.toString())
-      );
 
       const empMap = {};
       for (const emp of employees) {
@@ -117,10 +111,13 @@ export default function MonitoringPage() {
           ? getAttendanceDate(now, matchedShift.startTime, matchedShift.endTime)
           : calToday;
 
-        const attRecord = attMap[uid];
-        const isOnLeave = onLeaveIds.has(uid);
+        const attRecord = attMap[`${uid}::${empToday}`];
+        const isOnLeave = leaveArr.some(leave => {
+          const leaveUserId = leave.userId?._id?.toString() || leave.userId?.toString();
+          return leaveUserId === uid && leave.from <= empToday && leave.to >= empToday;
+        });
 
-        let status = 'absent';
+        let status = 'not_arrived';
         let clockIn = '—';
         let clockOut = '—';
         let breaks = [];
@@ -148,6 +145,12 @@ export default function MonitoringPage() {
           const openBreak = breaks.find(b => b.start && !b.end);
           onBreak = !!openBreak;
           activeBreakType = openBreak?.type || '';
+        } else {
+          const [shiftHour, shiftMinute] = (matchedShift?.startTime || '09:00').split(':').map(Number);
+          let elapsedSinceStart = now.getHours() * 60 + now.getMinutes() - (shiftHour * 60 + shiftMinute);
+          if (elapsedSinceStart < -720) elapsedSinceStart += 1440;
+          if (elapsedSinceStart > 720) elapsedSinceStart -= 1440;
+          if (elapsedSinceStart >= (matchedShift.halfDayThreshold ?? 180)) status = 'absent';
         }
 
         const hasClockOut = clockOut !== '—' && clockOut !== null;
@@ -211,6 +214,7 @@ export default function MonitoringPage() {
   const counts = {
     present: team.filter(e => e.status === 'present').length,
     late:    team.filter(e => e.status === 'late').length,
+    not_arrived: team.filter(e => e.status === 'not_arrived').length,
     absent:  team.filter(e => e.status === 'absent').length,
     leave:   team.filter(e => e.status === 'leave').length,
   };
@@ -229,10 +233,11 @@ export default function MonitoringPage() {
         {[
           { label: 'Present', key: 'present', color: '#10b981', icon: 'bi-person-check' },
           { label: 'Late',    key: 'late',    color: '#f59e0b', icon: 'bi-clock' },
+          { label: 'Not Arrived', key: 'not_arrived', color: '#64748b', icon: 'bi-hourglass-split' },
           { label: 'Absent',  key: 'absent',  color: '#ef4444', icon: 'bi-person-x' },
           { label: 'On Leave',key: 'leave',   color: '#3b82f6', icon: 'bi-calendar-check' },
         ].map(s => (
-          <div key={s.key} className="col-6 col-xl-3">
+          <div key={s.key} className="col-6 col-xl">
             <div className="stat-card" style={{ cursor: 'pointer', border: filterStatus === s.key ? `2px solid ${s.color}` : '' }}
               onClick={() => setFilterStatus(filterStatus === s.key ? '' : s.key)}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -404,7 +409,7 @@ export default function MonitoringPage() {
                 <button className="btn-close" onClick={() => setWorkProgressEmp(null)} />
               </div>
               <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-                {workProgressEmp.status === 'absent' || workProgressEmp.status === 'leave' ? (
+                {['not_arrived', 'absent', 'leave'].includes(workProgressEmp.status) ? (
                   <div className="empty-state"><i className="bi bi-person-x" /><h6>No work progress — employee is {workProgressEmp.status}</h6></div>
                 ) : workProgressEmp.workProgress.length === 0 ? (
                   <div className="empty-state"><i className="bi bi-journal" /><h6>No work progress entries for today</h6></div>

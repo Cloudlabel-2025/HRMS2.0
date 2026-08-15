@@ -4,6 +4,15 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess, clearImpersonatedUser, isImpersonating } from '@/lib/auth';
 import { api } from '@/lib/api';
+import {
+  cancelWorkProgressExportJob,
+  executeWorkProgressExport,
+  getWorkProgressExportJob,
+  getWorkProgressExportRemaining,
+  subscribeWorkProgressExport,
+} from '@/lib/work-progress-export';
+
+const formatExportTime = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
 const NAV_ITEMS = [
   { module: 'dashboard',     href: '/dashboard',     icon: 'bi-grid-1x2',              label: 'Dashboard',     section: 'MAIN' },
@@ -40,6 +49,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   const router = useRouter();
   const { user, logout } = useAuth();
   const [pendingRequests, setPendingRequests] = useState(0);
+  const [exportJob, setExportJob] = useState(null);
+  const [exportRemaining, setExportRemaining] = useState(0);
+  const [employeeProfileId, setEmployeeProfileId] = useState(null);
 
   useEffect(() => {
     if (!user || !['super_admin', 'admin_full'].includes(user.role)) return;
@@ -52,6 +64,28 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    api.get('/api/employees/me').then(data => setEmployeeProfileId(data?.employeeId || null)).catch(() => {});
+  }, [user]);
+
+  useEffect(() => {
+    const syncJob = job => {
+      setExportJob(job);
+      setExportRemaining(getWorkProgressExportRemaining(job));
+    };
+    syncJob(getWorkProgressExportJob());
+    const unsubscribe = subscribeWorkProgressExport(syncJob);
+    const interval = setInterval(() => {
+      const job = getWorkProgressExportJob();
+      const remaining = getWorkProgressExportRemaining(job);
+      setExportJob(job);
+      setExportRemaining(remaining);
+      if (job?.status === 'pending' && remaining === 0) executeWorkProgressExport(job);
+    }, 1000);
+    return () => { unsubscribe(); clearInterval(interval); };
+  }, []);
 
   if (!user) return null;
 
@@ -83,8 +117,21 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           </button>
         </div>
 
+        {exportJob?.minimized && (
+          <div style={{ margin: '0 12px 10px', padding: '9px 10px', borderRadius: 10, background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.28)', color: '#dbeafe' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <i className={`bi ${exportJob.status === 'failed' ? 'bi-exclamation-triangle' : 'bi-file-earmark-excel'}`} style={{ color: exportJob.status === 'failed' ? '#fca5a5' : '#86efac' }} />
+              <button onClick={() => router.push(`/employees/${exportJob.employeeId}`)} style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: 'inherit', textAlign: 'left', padding: 0 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exportJob.employeeName}</div>
+                <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 1 }}>{exportJob.status === 'failed' ? 'Export failed' : exportJob.status === 'exporting' ? 'Creating Excel…' : formatExportTime(exportRemaining)}</div>
+              </button>
+              <button onClick={cancelWorkProgressExportJob} title="Cancel export" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', padding: 2 }}><i className="bi bi-x-lg" /></button>
+            </div>
+          </div>
+        )}
+
         {/* User profile card */}
-        <div className="sidebar-user">
+        <Link href={employeeProfileId ? `/employees/${employeeProfileId}` : '/profile'} className="sidebar-user" onClick={onMobileClose} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-user-avatar" style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)`, overflow: 'hidden' }}>
             {user.profilePhoto ? <img src={user.profilePhoto} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : user.avatar}
           </div>
@@ -92,7 +139,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
             <div className="sidebar-user-name">{user.name}</div>
             <div className="sidebar-user-role">{ROLE_LABELS[user.role]}</div>
           </div>
-        </div>
+        </Link>
 
         <div className="sidebar-nav">
           {sections.map(section => (

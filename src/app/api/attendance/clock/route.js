@@ -129,6 +129,7 @@ export async function POST(req) {
 
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
+      let permissionAdjustedClockIn = null;
       if (shiftDoc?.startTime) {
         const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
         shiftHour = sh; shiftMin = sm;
@@ -184,6 +185,9 @@ export async function POST(req) {
                 return fail(`You have an approved permission request today from ${fmtTime(startTime)} to ${fmtTime(endTime)}. You cannot clock in until the permission is over.`, 400);
               }
             }
+            if (permStartMins <= shiftStartMins && permEndMins >= shiftStartMins && nowMins <= permEndMins + cfg.lateThreshold) {
+              permissionAdjustedClockIn = `${String(shiftHour).padStart(2, '0')}:${String(shiftMin).padStart(2, '0')}`;
+            }
           }
         }
       }
@@ -213,7 +217,8 @@ export async function POST(req) {
         shiftMin = 0;
       }
 
-      const [h, m] = timeStr.split(':').map(Number);
+      const attendanceClockIn = permissionAdjustedClockIn || timeStr;
+      const [h, m] = attendanceClockIn.split(':').map(Number);
       let minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
       if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
@@ -248,11 +253,13 @@ export async function POST(req) {
         { userId: user._id, date: today },
         {
           $set: {
-            clockIn: timeStr,
+            clockIn: attendanceClockIn,
             status,
             lateFlag,
             earlyLogin: isEarlyLogin,
-            note: body.reason ? `Early login reason: ${body.reason}` : '',
+            note: permissionAdjustedClockIn
+              ? `Clock-in adjusted from ${timeStr} to ${attendanceClockIn} for approved permission`
+              : body.reason ? `Early login reason: ${body.reason}` : '',
             ...(geo ? { geoLocation: geo } : {}),
           },
           $setOnInsert: {

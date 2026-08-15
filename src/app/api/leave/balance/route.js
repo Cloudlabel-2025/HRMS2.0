@@ -121,26 +121,47 @@ export async function getOrCreateBalance(userId, policy) {
     const existingCodes = new Set(balance.balances.map(b => b.typeCode));
     let changed = false;
     for (const config of policy.leaveTypeConfigs || []) {
-      if (!config.code || !config.enabled || existingCodes.has(config.code)) continue;
+      if (!config.code || !config.enabled) continue;
       if (!isEligibleForType(config, employeeContext)) continue;
 
-      let allocated = 0;
-      if (config.creditSchedule === 'upfront' || !config.creditSchedule) {
-        allocated = config.annualAllocation || 0;
-      }
-      // For monthly/quarterly/half_yearly, start at 0 and let accrual handle it
+      if (!existingCodes.has(config.code)) {
+        let allocated = 0;
+        if (config.creditSchedule === 'upfront' || !config.creditSchedule) {
+          allocated = config.annualAllocation || 0;
+        }
+        // For monthly/quarterly/half_yearly, start at 0 and let accrual handle it
 
-      balance.balances.push({
-        typeCode: config.code,
-        allocated,
-        used: 0,
-        pending: 0,
-        carriedForward: 0,
-        expiryDate: config.carryForwardExpiryMonths
-          ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
-          : null,
-        periodUsage: [],
-      });
+        balance.balances.push({
+          typeCode: config.code,
+          allocated,
+          used: 0,
+          pending: 0,
+          carriedForward: 0,
+          expiryDate: config.carryForwardExpiryMonths
+            ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
+            : null,
+          periodUsage: [],
+        });
+        changed = true;
+      } else if ((config.annualAllocation || 0) > 0) {
+        // Reconcile: backfill allocations that were never credited (e.g. balances
+        // created under a policy whose configs lacked a code). Only touches zero
+        // credits so accrued/manually-adjusted amounts are preserved.
+        const entry = balance.balances.find(b => b.typeCode === config.code);
+        if (entry && (entry.allocated === 0 || entry.allocated == null)) {
+          let allocated = config.annualAllocation || 0;
+          if (config.creditSchedule && config.creditSchedule !== 'upfront') {
+            const divisor = config.creditSchedule === 'monthly' ? 12 : config.creditSchedule === 'quarterly' ? 4 : 2;
+            allocated = Number((config.annualAllocation / divisor).toFixed(2));
+          }
+          entry.allocated = allocated;
+          changed = true;
+        }
+      }
+    }
+    // Re-point to the resolved policy so accrual runs credit against the right one
+    if (String(balance.policyId) !== String(policy._id)) {
+      balance.policyId = policy._id;
       changed = true;
     }
     if (changed) await balance.save();
