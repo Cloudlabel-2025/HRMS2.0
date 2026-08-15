@@ -16,7 +16,7 @@ export function finalizeDayWork(rows, finalClockOut) {
   return (rows || []).map(row => {
     const base = row.toObject ? row.toObject() : row;
     if (base.type === 'task' && ['pending', 'work_in_progress', 'stopped'].includes(base.status)) {
-      const next = { ...base, endTime: base.endTime || finalClockOut, status: 'completed', carriedForward: true };
+      const next = { ...base, endTime: base.endTime || finalClockOut, status: 'pending', carriedForward: true };
       return { ...next, duration: computeWorkRowDuration(next) };
     }
     if (base.startTime && !base.endTime) {

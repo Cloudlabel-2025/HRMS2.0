@@ -272,7 +272,7 @@ export default function DayActivityPage() {
                     }}>
                       <div style={{
                         width: 8, height: 8, borderRadius: '50%', marginTop: 5, flexShrink: 0,
-                        background: wp.status === 'completed' ? '#16a34a' :
+                        background: (wp.status === 'completed' && !wp.carriedForward) ? '#16a34a' :
                                     wp.status === 'work_in_progress' ? '#3b82f6' :
                                     wp.status === 'task_blocked' ? '#dc2626' :
                                     '#94a3b8',
@@ -290,15 +290,15 @@ export default function DayActivityPage() {
                           <span>• {formatTaskDuration(wp)}</span>
                         </div>
                         <span className="badge" style={{
-                          background: wp.status === 'completed' ? '#dcfce7' :
+                          background: (wp.status === 'completed' && !wp.carriedForward) ? '#dcfce7' :
                                       wp.status === 'work_in_progress' ? '#dbeafe' :
                                       wp.status === 'task_blocked' ? '#fee2e2' : '#f1f5f9',
-                          color: wp.status === 'completed' ? '#16a34a' :
+                          color: (wp.status === 'completed' && !wp.carriedForward) ? '#16a34a' :
                                  wp.status === 'work_in_progress' ? '#3b82f6' :
                                  wp.status === 'task_blocked' ? '#dc2626' : '#64748b',
                           fontSize: 9, fontWeight: 600, padding: '2px 8px', borderRadius: 20, marginTop: 4,
                         }}>
-                          {wp.status.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                          {(wp.carriedForward ? 'pending' : wp.status).replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                         </span>
                         {wp.remarks && <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{wp.remarks}</div>}
                         {wp.feedback && <div style={{ fontSize: 11, color: '#64748b', marginTop: 2, fontStyle: 'italic' }}>Feedback: {wp.feedback}</div>}

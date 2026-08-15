@@ -441,12 +441,12 @@ export default function MonitoringPage() {
                           <td>{formatTaskDuration(wp)}</td>
                           <td>
                             <span className={`badge ${
-                              wp.status === 'completed' ? 'bg-success' :
+                              (wp.status === 'completed' && !wp.carriedForward) ? 'bg-success' :
                               wp.status === 'work_in_progress' ? 'bg-primary' :
                               wp.status === 'task_blocked' ? 'bg-danger' :
                               wp.status === 'stopped' ? 'bg-secondary' : 'bg-warning'
                             }`} style={{ fontSize: 10 }}>
-                              {wp.status?.replace(/_/g, ' ') || '—'}
+                              {(wp.carriedForward ? 'pending' : wp.status)?.replace(/_/g, ' ') || '—'}
                             </span>
                           </td>
                           <td style={{ maxWidth: 150, wordBreak: 'break-word' }}>{wp.remarks || '—'}</td>

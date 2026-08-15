@@ -951,7 +951,7 @@ export default function AttendancePage() {
         row.startTime || '',
         row.endTime || '',
         computeWorkRowDuration(row) ?? '',
-        row.status || '',
+        (row.carriedForward ? 'pending' : row.status) || '',
         `"${(row.remarks || '').replace(/"/g, '""')}"`,
         `"${([completionMetaText(row), row.feedback].filter(Boolean).join(' ')).replace(/"/g, '""')}"`
       ];
@@ -1016,7 +1016,7 @@ export default function AttendancePage() {
   const pendingCarried = carriedTasks.filter(t => t && !todayDetails.has(t));
   const todayIncompleteTasks = [...new Set(
     (todayRecord?.workProgress || [])
-      .filter(r => r.type === 'task' && r.status !== 'completed' && !(r.startTime && !r.endTime) && r.taskDetails && String(r.taskDetails).trim())
+      .filter(r => r.type === 'task' && r.status !== 'completed' && !r.carriedForward && !(r.startTime && !r.endTime) && r.taskDetails && String(r.taskDetails).trim())
       .map(r => String(r.taskDetails).trim())
   )];
   const todayStr = new Date().toLocaleDateString('en-CA');
@@ -1367,7 +1367,7 @@ export default function AttendancePage() {
                       <td>
                         <select
                           className="form-select form-select-sm"
-                          value={row.status || (active ? 'work_in_progress' : 'pending')}
+                          value={row.carriedForward ? 'pending' : (row.status || (active ? 'work_in_progress' : 'pending'))}
                           disabled={isBreakRow || isVirtual}
                           onChange={e => commitWorkRow(row.dbIdx, { status: e.target.value })}
                           style={{ fontSize: 12 }}>
@@ -2384,7 +2384,7 @@ export default function AttendancePage() {
                               row.startTime || '',
                               row.endTime || '',
                               computeWorkRowDuration(row) ?? '',
-                              row.status || '',
+                              (row.carriedForward ? 'pending' : row.status) || '',
                               `"${(row.remarks || '').replace(/"/g, '""')}"`,
                               `"${([completionMetaText(row), row.feedback].filter(Boolean).join(' ')).replace(/"/g, '""')}"`
                             ];
@@ -2481,7 +2481,7 @@ export default function AttendancePage() {
                                 <td style={{ fontSize: 13, fontWeight: 600 }}>{isVirtual ? '—' : formatTaskDuration(row)}</td>
                                 <td>
                                   <span className="badge" style={{ background: '#e2e8f0', color: '#475569', fontSize: 12 }}>
-                                    {row.status || 'pending'}
+                                    {(row.carriedForward ? 'pending' : row.status) || 'pending'}
                                   </span>
                                 </td>
                                 <td style={{ fontSize: 12, color: '#475569' }}>{row.remarks || '—'}</td>
