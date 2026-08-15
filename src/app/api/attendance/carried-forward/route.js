@@ -19,18 +19,23 @@ export async function GET(req) {
       .sort({ date: -1 })
       .lean();
 
-    const titles = [];
-    const seen = new Set();
+    const carriedSeen = new Set();
+    const latestState = new Map();
     (records || []).forEach(rec => {
-      (rec.workProgress || []).forEach(row => {
-        if (row.carriedForward && row.type === 'task' && row.taskDetails) {
-          const t = String(row.taskDetails).trim();
-          if (t && !seen.has(t)) {
-            seen.add(t);
-            titles.push(t);
-          }
+      [...(rec.workProgress || [])].reverse().forEach(row => {
+        if (row.type !== 'task' || !row.taskDetails) return;
+        const title = String(row.taskDetails).trim();
+        if (!title) return;
+        if (row.carriedForward) carriedSeen.add(title);
+        if (!latestState.has(title)) {
+          latestState.set(title, { status: row.status, carriedForward: !!row.carriedForward });
         }
       });
+    });
+
+    const titles = [...carriedSeen].filter(title => {
+      const latest = latestState.get(title);
+      return !(latest?.status === 'completed' && !latest.carriedForward);
     });
 
     return ok(titles);

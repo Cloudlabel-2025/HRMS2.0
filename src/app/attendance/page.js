@@ -60,6 +60,9 @@ export default function AttendancePage() {
   const [employees, setEmployees]       = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [clockLoading, setClockLoading] = useState(false);
+  const [clockAction, setClockAction] = useState(null);
+  const [confirmClockOut, setConfirmClockOut] = useState(false);
+  const clockBusyRef = useRef(false);
   const [loading, setLoading]           = useState(true);
   const [toastQueue, setToastQueue] = useState([]);
   const [regRequests, setRegRequests]   = useState([]);
@@ -105,6 +108,7 @@ export default function AttendancePage() {
   const taskPickerRef = useRef(null);
   const workProgressRef = useRef([]);
   const workProgressSaveTimer = useRef(null);
+  const triesRef = useRef(new Map());
   const pinRef = useRef(null);
   const todayRecordRef = useRef(null);
 
@@ -522,6 +526,19 @@ export default function AttendancePage() {
       api.get('/api/attendance/carried-forward').then(list => {
         if (Array.isArray(list)) setCarriedTasks(list);
       }).catch(() => {}),
+      api.get('/api/attendance?scope=my').then(records => {
+        const tries = new Map();
+        (Array.isArray(records) ? records : []).forEach(rec => {
+          (rec.workProgress || []).forEach(row => {
+            if (row.type !== 'task' || !row.taskDetails) return;
+            const title = String(row.taskDetails).trim();
+            if (!title) return;
+            if (!tries.has(title)) tries.set(title, new Set());
+            tries.get(title).add(rec.date);
+          });
+        });
+        triesRef.current = tries;
+      }).catch(() => {}),
     ]).finally(() => setLoading(false));
   }, [user]);
 
@@ -562,7 +579,10 @@ export default function AttendancePage() {
   }, []);
 
   const handleClock = async (action) => {
+    if (clockBusyRef.current) return;
+    clockBusyRef.current = true;
     setClockLoading(true);
+    setClockAction(action);
     try {
       let payload = { action, clientTime: new Date().toISOString() };
       const result = await api.post('/api/attendance/clock', payload);
@@ -593,7 +613,16 @@ export default function AttendancePage() {
         showToast(e.message, 'error');
       }
     }
-    finally { setClockLoading(false); }
+    finally {
+      setClockLoading(false);
+      setClockAction(null);
+      clockBusyRef.current = false;
+    }
+  };
+
+  const handleClockButton = (action) => {
+    if (action === 'out') { setConfirmClockOut(true); return; }
+    handleClock('in');
   };
 
   const submitEarlyClock = async () => {
@@ -607,7 +636,10 @@ export default function AttendancePage() {
       return;
     }
     setShowEarlyClockModal(false);
+    if (clockBusyRef.current) return;
+    clockBusyRef.current = true;
     setClockLoading(true);
+    setClockAction('in');
     try {
       const result = await api.post('/api/attendance/clock', { action: 'in', reason, clientTime: new Date().toISOString() });
       setTodayRecord(result.record);
@@ -615,7 +647,11 @@ export default function AttendancePage() {
     } catch (retryErr) {
       showToast(retryErr.message, 'error');
     }
-    finally { setClockLoading(false); }
+    finally {
+      setClockLoading(false);
+      setClockAction(null);
+      clockBusyRef.current = false;
+    }
   };
 
   // ── Break / Lunch helpers ──────────────────────────────────────────────────
@@ -699,8 +735,51 @@ export default function AttendancePage() {
     } catch (e) { showToast(e.message, 'error'); }
   };
 
+  const computeTries = (title) => {
+    const existing = triesRef.current.get(String(title || '').trim()) || new Set();
+    const dates = new Set(existing);
+    dates.add(today);
+    return dates.size;
+  };
+
+  const applyCompletion = (rows, targetIdx) => {
+    const completionTime = nowTimeStr();
+    const completableStatuses = new Set(['pending', 'work_in_progress', 'stopped']);
+    return rows.map((row, idx) => {
+      const isTarget = idx === targetIdx && row.type === 'task';
+      const shouldCascade = idx < targetIdx && row.type === 'task' && completableStatuses.has(row.status);
+      if (!isTarget && !shouldCascade) return row;
+      const needsMetadata = row.status !== 'completed' || !row.completedAt || !row.completedDate || row.tries == null;
+      return {
+        ...row,
+        status: 'completed',
+        carriedForward: false,
+        endTime: row.endTime || completionTime,
+        ...(needsMetadata ? {
+          completedAt: completionTime,
+          completedDate: today,
+          tries: computeTries(row.taskDetails),
+        } : {}),
+      };
+    });
+  };
+
+  const completionMetaText = (row) => {
+    if (!row?.completedDate) return '';
+    const tries = Number(row.tries) || 0;
+    return `Completed ${formatDate(row.completedDate)} at ${row.completedAt || '--:--'} · ${tries} ${tries === 1 ? 'try' : 'tries'}`;
+  };
+
+  const renderCompletionMeta = (row) => {
+    const text = completionMetaText(row);
+    return text ? <div style={{ fontSize: 10.5, color: '#94a3b8', marginBottom: 4 }}>{text}</div> : null;
+  };
+
   const commitWorkRow = async (idx, patch) => {
-    const rows = (todayRecord?.workProgress || []).map((row, i) => i === idx ? { ...row, ...patch } : row);
+    const currentRows = todayRecord?.workProgress || [];
+    const rows = patch.status === 'completed'
+      ? applyCompletion(currentRows, idx)
+      : currentRows.map((row, i) => i === idx ? { ...row, ...patch } : row);
     syncWorkRef(rows);
     try { await persistTodayRecord({ workProgress: rows }); }
     catch (e) { showToast(e.message, 'error'); }
@@ -730,7 +809,10 @@ export default function AttendancePage() {
     if (clockedOut) { showToast('You have already clocked out today.', 'error'); return; }
     if (anyActiveBreak()) { showToast('End your current break first.', 'error'); return; }
     const now = nowTimeStr();
-    let rows = closeActiveWork([...(todayRecord?.workProgress || [])], now, 'completed');
+    const currentRows = [...(todayRecord?.workProgress || [])];
+    const activeIdx = currentRows.findIndex(row => row.startTime && !row.endTime);
+    let rows = closeActiveWork(currentRows, now, 'completed');
+    if (activeIdx !== -1 && currentRows[activeIdx]?.type === 'task') rows = applyCompletion(rows, activeIdx);
     rows.push(buildTaskRow(now));
     syncWorkRef(rows);
     try {
@@ -871,7 +953,7 @@ export default function AttendancePage() {
         computeWorkRowDuration(row) ?? '',
         row.status || '',
         `"${(row.remarks || '').replace(/"/g, '""')}"`,
-        `"${(row.feedback || '').replace(/"/g, '""')}"`
+        `"${([completionMetaText(row), row.feedback].filter(Boolean).join(' ')).replace(/"/g, '""')}"`
       ];
       csvRows.push(values.join(','));
     });
@@ -1307,15 +1389,18 @@ export default function AttendancePage() {
                       </td>
                       <td>
                         {isVirtual ? null : (
-                          <textarea
-                            className="form-control hide-scrollbar"
-                            rows={2}
-                            placeholder="Feedback"
-                            value={row.feedback || ''}
-                            onChange={e => updateWorkRow(row.dbIdx, { feedback: e.target.value })}
-                            onBlur={() => saveWorkProgress()}
-                            style={{ fontSize: 12 }}
-                          />
+                          <>
+                            {renderCompletionMeta(row)}
+                            <textarea
+                              className="form-control hide-scrollbar"
+                              rows={2}
+                              placeholder="Feedback"
+                              value={row.feedback || ''}
+                              onChange={e => updateWorkRow(row.dbIdx, { feedback: e.target.value })}
+                              onBlur={() => saveWorkProgress()}
+                              style={{ fontSize: 12 }}
+                            />
+                          </>
                         )}
                       </td>
                       <td>
@@ -1363,6 +1448,25 @@ export default function AttendancePage() {
         </div>
       )}
 
+      {clockLoading && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 99999,
+          background: 'rgba(15, 23, 42, 0.55)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16,
+        }} onClick={e => e.stopPropagation()}>
+          <div className="spinner-border" role="status" style={{ width: 48, height: 48, borderWidth: 4, color: '#fff' }} />
+          <div style={{ color: '#fff', fontSize: 16, fontWeight: 600 }}>
+            {clockAction === 'out' ? 'Clocking out...' : 'Clocking in...'}
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 80 }}>
+          <div className="spinner-border text-primary" />
+        </div>
+      ) : (
+        <>
       <div className="page-header">
         <div>
           <h4>Time & Attendance{shiftConfig ? <span className="badge bg-secondary ms-2" style={{ fontSize: 11, fontWeight: 400, verticalAlign: 'middle' }}>{shiftConfig.name} (<Time value={shiftConfig.startTime} fallback="?" />-<Time value={shiftConfig.endTime} fallback="?" />)</span> : ''}</h4>
@@ -1372,13 +1476,13 @@ export default function AttendancePage() {
           {!isSuperAdmin && (
             <>
               {!clockedIn && !clockedOut && (
-                <button className="btn btn-success" onClick={() => handleClock('in')} disabled={clockLoading || !shiftsLoaded}>
-                  {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
+                <button className="btn btn-success" onClick={() => handleClockButton('in')} disabled={clockLoading || !shiftsLoaded}>
+                  {clockLoading ? <><span className="spinner-border spinner-border-sm me-2" />Clocking in...</> : !shiftsLoaded ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-play-circle me-2" />}Clock In
                 </button>
               )}
               {clockedIn && !clockedOut && (
-                <button className="btn btn-danger" onClick={() => handleClock('out')} disabled={clockLoading || !shiftsLoaded}>
-                  {clockLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
+                <button className="btn btn-danger" onClick={() => handleClockButton('out')} disabled={clockLoading || !shiftsLoaded}>
+                  {clockLoading ? <><span className="spinner-border spinner-border-sm me-2" />Clocking out...</> : !shiftsLoaded ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-stop-circle me-2" />}Clock Out
                 </button>
               )}
               {clockedIn && clockedOut && (
@@ -1594,13 +1698,13 @@ export default function AttendancePage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
                     {!clockedIn && (
-                      <button className="btn btn-success btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('in')} disabled={clockLoading || !shiftsLoaded}>
-                        {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-play-circle me-2" />Clock In</>}
+                      <button className="btn btn-success btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClockButton('in')} disabled={clockLoading || !shiftsLoaded}>
+                        {clockLoading ? <><span className="spinner-border spinner-border-sm me-2" />Clocking in...</> : <><i className="bi bi-play-circle me-2" />Clock In</>}
                       </button>
                     )}
                     {clockedIn && !clockedOut && (
-                      <button className="btn btn-danger btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClock('out')} disabled={clockLoading || !shiftsLoaded}>
-                        {clockLoading ? <span className="spinner-border spinner-border-sm" /> : <><i className="bi bi-stop-circle me-2" />Clock Out</>}
+                      <button className="btn btn-danger btn-lg" style={{ flex: 1, borderRadius: 12, fontWeight: 700, fontSize: 16 }} onClick={() => handleClockButton('out')} disabled={clockLoading || !shiftsLoaded}>
+                        {clockLoading ? <><span className="spinner-border spinner-border-sm me-2" />Clocking out...</> : <><i className="bi bi-stop-circle me-2" />Clock Out</>}
                       </button>
                     )}
                     {clockedIn && clockedOut && (
@@ -2282,7 +2386,7 @@ export default function AttendancePage() {
                               computeWorkRowDuration(row) ?? '',
                               row.status || '',
                               `"${(row.remarks || '').replace(/"/g, '""')}"`,
-                              `"${(row.feedback || '').replace(/"/g, '""')}"`
+                              `"${([completionMetaText(row), row.feedback].filter(Boolean).join(' ')).replace(/"/g, '""')}"`
                             ];
                             csvRows.push(values.join(','));
                           });
@@ -2381,7 +2485,10 @@ export default function AttendancePage() {
                                   </span>
                                 </td>
                                 <td style={{ fontSize: 12, color: '#475569' }}>{row.remarks || '—'}</td>
-                                <td style={{ fontSize: 12, color: '#475569' }}>{row.feedback || '—'}</td>
+                                <td style={{ fontSize: 12, color: '#475569' }}>
+                                  {renderCompletionMeta(row)}
+                                  {row.feedback || (!row.completedDate ? '—' : null)}
+                                </td>
                               </tr>
                             );
                           });
@@ -2408,6 +2515,20 @@ export default function AttendancePage() {
         </div>
       )}
 
+      {/* Clock Out Confirmation Modal */}
+      {confirmClockOut && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 99998, background: 'rgba(15,23,42,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={() => setConfirmClockOut(false)}>
+          <div style={{ background: '#fff', borderRadius: 16, maxWidth: 420, width: '100%', padding: 24, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }} onClick={e => e.stopPropagation()}>
+            <h6 style={{ margin: 0, fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Confirm Clock Out</h6>
+            <p style={{ fontSize: 13, color: '#64748b', marginBottom: 16 }}>You are currently clocked in. Are you sure you want to clock out?</p>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setConfirmClockOut(false)}>Cancel</button>
+              <button className="btn btn-danger" onClick={() => { setConfirmClockOut(false); handleClock('out'); }}>Clock Out</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Early Clock Reason Modal */}
       {showEarlyClockModal && (
         <div className="modal-overlay" onClick={() => setShowEarlyClockModal(false)}>
@@ -2422,6 +2543,9 @@ export default function AttendancePage() {
             </div>
           </div>
         </div>
+      )}
+
+        </>
       )}
 
     </AppShell>

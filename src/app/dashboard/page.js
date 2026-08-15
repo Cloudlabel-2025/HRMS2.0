@@ -278,6 +278,7 @@ export default function DashboardPage() {
             <>
               {stats.pendingTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => {
                 const isOwn = task.assigneeId === String(user?._id);
+                const eff = task.carriedForward ? 'pending' : task.status;
                 return (
                   <div key={task._id || i}
                     onClick={isOwn ? () => { setTaskMsg(''); setContinueTask(task); } : undefined}
@@ -293,7 +294,7 @@ export default function DashboardPage() {
                         </div>
                         {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
                       </div>
-                      <span className="badge" style={{ background: (WORK_STATUS_COLORS[task.status] || '#64748b') + '20', color: WORK_STATUS_COLORS[task.status] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[task.status] || task.status}</span>
+                      <span className="badge" style={{ background: (WORK_STATUS_COLORS[eff] || '#64748b') + '20', color: WORK_STATUS_COLORS[eff] || '#64748b', fontSize: 10.5, fontWeight: 700 }}>{WORK_STATUS_LABELS[eff] || eff}</span>
                     </div>
                   </div>
                 );

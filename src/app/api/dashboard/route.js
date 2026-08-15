@@ -215,6 +215,7 @@ export async function GET(req) {
         _id: l._id,
         text: l.text,
         status: l.status,
+        carriedForward: l.carriedForward,
         assignee: l.assignee,
         assigneeId: l.assigneeId,
         duration: l.duration,
