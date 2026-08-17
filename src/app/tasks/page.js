@@ -616,7 +616,7 @@ export default function TasksPage() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
                         <div>
                           <div style={{ fontWeight: 700, fontSize: 15 }}>{proj.name}</div>
-                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{proj.startDate || '—'} → {proj.endDate || '—'}</div>
+                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{formatDate(proj.startDate)} → {formatDate(proj.endDate)}</div>
                           {proj.departments?.length > 0 && (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
                               {proj.departments.map(d => <span key={d} style={{ background: '#f1f5f9', color: '#475569', fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4 }}>{d}</span>)}
@@ -704,7 +704,7 @@ export default function TasksPage() {
                           </td>
                           <td style={{ fontSize: 12 }}>{proj.createdBy?.name || '—'}{proj.createdBy?.department ? ` (${proj.createdBy.department})` : ''}</td>
                           <td style={{ fontSize: 12 }}>{(proj.departments || []).join(', ') || '—'}</td>
-                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{proj.startDate || '—'} → {proj.endDate || '—'}</td>
+                          <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{formatDate(proj.startDate)} → {formatDate(proj.endDate)}</td>
                           <td>
                             <span className="badge" style={APPROVAL_STATUS_COLORS[proj.approvalStatus] || APPROVAL_STATUS_COLORS.approved}>{proj.approvalStatus}</span>
                             {proj.approvalStatus === 'rejected' && proj.rejectionComment && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 3 }}>{proj.rejectionComment}</div>}
@@ -1049,7 +1049,7 @@ export default function TasksPage() {
               </div>
               <div className="project-info-section">
                 <div className="project-info-label">Duration</div>
-                <div className="project-info-value">{infoProject.startDate || '—'} → {infoProject.endDate || '—'}</div>
+                <div className="project-info-value">{formatDate(infoProject.startDate)} → {formatDate(infoProject.endDate)}</div>
               </div>
               <div className="project-info-section">
                 <div className="project-info-label">Tasks</div>
