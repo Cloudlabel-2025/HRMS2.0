@@ -282,6 +282,11 @@ export default function AttendancePage() {
 
   const isAdmin = canReview;
   const isSuperAdmin = useMemo(() => user?.role === 'super_admin', [user?.role]);
+
+  useEffect(() => {
+    if (isSuperAdmin) setRegScope('approvals');
+  }, [isSuperAdmin]);
+
   const [today, setToday] = useState(() => {
     const d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -519,7 +524,7 @@ export default function AttendancePage() {
     }).catch(() => setShiftsLoaded(true));
     Promise.all([
       isAdmin ? loadEmployees() : Promise.resolve(),
-      loadRegRequests(regScope),
+      loadRegRequests(isSuperAdmin ? 'approvals' : regScope),
       api.get('/api/attendance/available-tasks').then(tasks => {
         setAvailableTasks(Array.isArray(tasks) ? tasks : []);
       }).catch(() => {}),
@@ -1936,19 +1941,21 @@ export default function AttendancePage() {
         <>
           {canReview ? (
             <div style={{ display: 'flex', gap: 12, marginBottom: 16 }}>
-              <div onClick={() => { setRegScope('my'); loadRegRequests('my'); }} style={{
-                flex: 1, padding: '12px 16px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s',
-                background: regScope === 'my' ? '#f0f4ff' : '#f8fafc',
-                border: regScope === 'my' ? '1.5px solid #3b82f6' : '1.5px solid #e2e8f0',
-                boxShadow: regScope === 'my' ? '0 1px 6px rgba(59,130,246,0.1)' : 'none',
-              }}>
-                <div style={{ fontSize: 12, color: regScope === 'my' ? '#3b82f6' : '#64748b', fontWeight: 600, marginBottom: 2 }}>
-                  <i className="bi bi-person me-1" />My Requests
+              {!isSuperAdmin && (
+                <div onClick={() => { setRegScope('my'); loadRegRequests('my'); }} style={{
+                  flex: 1, padding: '12px 16px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s',
+                  background: regScope === 'my' ? '#f0f4ff' : '#f8fafc',
+                  border: regScope === 'my' ? '1.5px solid #3b82f6' : '1.5px solid #e2e8f0',
+                  boxShadow: regScope === 'my' ? '0 1px 6px rgba(59,130,246,0.1)' : 'none',
+                }}>
+                  <div style={{ fontSize: 12, color: regScope === 'my' ? '#3b82f6' : '#64748b', fontWeight: 600, marginBottom: 2 }}>
+                    <i className="bi bi-person me-1" />My Requests
+                  </div>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: '#1e293b' }}>
+                    {regRequests.filter(r => r.userId?._id?.toString() === user?._id?.toString()).length}
+                  </div>
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: '#1e293b' }}>
-                  {regRequests.filter(r => r.userId?._id?.toString() === user?._id?.toString()).length}
-                </div>
-              </div>
+              )}
               <div onClick={() => { setRegScope('approvals'); loadRegRequests('approvals'); }} style={{
                 flex: 1, padding: '12px 16px', borderRadius: 10, cursor: 'pointer', transition: 'all 0.15s',
                 background: regScope === 'approvals' ? '#fffbeb' : '#f8fafc',
