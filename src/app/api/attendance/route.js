@@ -126,6 +126,8 @@ export async function GET(req) {
           workProgress: rec.workProgress,
           baseHoursWorked: rec.baseHoursWorked,
           hoursWorked: rec.hoursWorked,
+          payableHours: rec.payableHours,
+          shortHours: rec.shortHours,
           status: rec.status,
         });
         try {
@@ -172,8 +174,8 @@ export async function GET(req) {
       if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
 
-      if (rec.clockOut && rec.hoursWorked < cfg.absentThreshold) {
-        rec.status = 'absent';
+      if (rec.approvedHalfDayLeave) {
+        rec.status = 'present';
         rec.lateFlag = false;
       } else if (shiftFound) {
         const result = determineStatus(minutesSinceShiftStart, cfg);
@@ -291,7 +293,7 @@ export async function PUT(req) {
         await record.save();
 
         await notify(record.userId, 'Attendance Approved',
-          `Your clock-in on ${record.date} (leave day) has been approved by ${user.name}.`, 'attendance', record._id);
+          `Your clock-in on ${record.date} (${record.nonWorkingDayType !== 'none' ? 'non-working day' : 'leave day'}) has been approved by ${user.name}.`, 'attendance', record._id);
 
         return ok(record);
       } else {
@@ -300,7 +302,7 @@ export async function PUT(req) {
           approvedBy: user._id,
           approvedAt: new Date(),
         };
-        record.status = 'leave';
+        record.status = record.nonWorkingDayType !== 'none' ? 'holiday' : 'leave';
         record.clockIn = null;
         record.clockOut = null;
         record.hoursWorked = 0;
@@ -309,7 +311,7 @@ export async function PUT(req) {
         await record.save();
 
         await notify(record.userId, 'Attendance Rejected',
-          `Your clock-in on ${record.date} (leave day) has been rejected by ${user.name}. Status reverted to leave.`, 'attendance', record._id);
+          `Your clock-in on ${record.date} has been rejected by ${user.name}. Status reverted to ${record.status}.`, 'attendance', record._id);
 
         return ok(record);
       }

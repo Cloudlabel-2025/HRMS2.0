@@ -1,9 +1,10 @@
 import dbConnect from '@/lib/db';
-import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
+import { UserLeaveBalance, LeavePolicy, Notification } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
 import { notifyExpiredProbations } from '@/lib/core/probation';
 import { EMPLOYER_ROLES } from '@/lib/permissions';
+import { notify } from '@/lib/notify';
 
 export async function POST(req) {
   const cronSecret = process.env.CRON_SECRET;
@@ -16,6 +17,39 @@ export async function POST(req) {
   if (!action) return fail('action is required', 400);
 
   await dbConnect();
+
+  if (action === 'year-end-earned-leave-summary') {
+    const now = new Date();
+    const year = Number(body.year) || now.getFullYear();
+    const cycleStart = new Date(year, 0, 1);
+    const cycleEnd = new Date(year, 11, 31, 23, 59, 59, 999);
+    const title = `Year-end earned leave summary — ${year}`;
+    const admins = await User.find({ role: { $in: EMPLOYER_ROLES }, status: 'active' }).select('_id').lean();
+    const balances = await UserLeaveBalance.find({ cycleStart: { $gte: cycleStart, $lte: cycleEnd } })
+      .populate('userId', 'name status role')
+      .populate('policyId', 'leaveTypeConfigs')
+      .lean();
+    let processed = 0;
+
+    for (const balance of balances) {
+      if (!balance.userId || EMPLOYER_ROLES.includes(balance.userId.role)) continue;
+      const earnedCodes = new Set((balance.policyId?.leaveTypeConfigs || [])
+        .filter(config => config.enabled && /earned/i.test(`${config.code} ${config.name || ''}`))
+        .map(config => config.code));
+      const entries = balance.balances.filter(entry => earnedCodes.has(entry.typeCode));
+      if (!entries.length) continue;
+      const summary = entries.map(entry => {
+        const available = Math.max(0, (entry.allocated || 0) + (entry.carriedForward || 0) - (entry.used || 0) - (entry.pending || 0));
+        return `${entry.typeCode}: ${available} day(s) available`;
+      }).join(', ');
+      const alreadySent = await Notification.exists({ userId: balance.userId._id, title });
+      if (alreadySent) continue;
+      await notify(balance.userId._id, title, summary, 'leave');
+      if (admins.length) await notify(admins.map(admin => admin._id), title, `${balance.userId.name}: ${summary}`, 'leave');
+      processed++;
+    }
+    return ok({ message: `Year-end earned leave summaries sent for ${processed} employees`, processed, year });
+  }
 
   if (action === 'notify-expired-probation') {
     const processed = await notifyExpiredProbations();
@@ -81,6 +115,8 @@ export async function POST(req) {
     const nextCycleStart = new Date(now.getFullYear() + 1, 0, 1);
     const nextCycleEnd = new Date(now.getFullYear() + 1, 11, 31);
 
+    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
+    const employerIds = employers.map(u => u._id);
     const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart, userId: { $nin: employerIds } });
 
     let processed = 0;

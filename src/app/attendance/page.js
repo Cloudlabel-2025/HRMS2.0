@@ -1527,6 +1527,7 @@ export default function AttendancePage() {
                   { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
                   { label: 'Late', value: teamToday.filter(r => r.status === 'late').length, icon: 'bi-clock', color: '#f59e0b' },
                   { label: 'Half Day', value: teamToday.filter(r => r.status === 'half_day').length, icon: 'bi-sun', color: '#ea580c' },
+                  { label: 'Short Hours', value: teamToday.filter(r => r.shortHours).length, icon: 'bi-hourglass-split', color: '#7c3aed' },
                 ].map((s, i) => (
                   <div key={i} className="col-6 col-xl">
                     <div className="stat-card">
@@ -1582,6 +1583,8 @@ export default function AttendancePage() {
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
+                                {row.shortHours && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
                                 {row.leaveOverride?.status === 'pending' && (
                                   <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
@@ -2590,6 +2593,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
   const absent = records.filter(r => r.status === 'absent').length;
   const leave = records.filter(r => r.status === 'leave').length;
   const late = records.filter(r => r.status === 'late').length;
+  const shortHours = records.filter(r => r.shortHours).length;
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>;
@@ -2620,6 +2624,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           { label: 'Days Absent', value: absent, color: '#ef4444' },
           { label: 'Days of Leave', value: leave, color: '#3b82f6' },
           { label: 'Late Clock-ins', value: late, color: '#f59e0b' },
+          { label: 'Short-hour Days', value: shortHours, color: '#7c3aed' },
         ].map((s, i) => (
           <div key={i} className="col-6 col-md-3">
             <div className="stat-card" style={{ textAlign: 'center' }}>
@@ -2660,6 +2665,8 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {row.leaveOverride?.status === 'pending' && (
                         <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
                       )}
+                      {row.shortHours && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
+                      {row.approvedHalfDayLeave && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">
                           <button className="btn btn-sm btn-success me-1" style={{ fontSize: 11 }}

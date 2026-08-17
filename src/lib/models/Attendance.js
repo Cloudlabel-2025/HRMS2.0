@@ -6,6 +6,8 @@ const AttendanceSchema = new mongoose.Schema({
   clockIn:    { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   clockOut:   { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   hoursWorked:{ type: Number, default: 0 },              // in minutes
+  payableHours:{ type: Number, default: 0 },              // capped daily credit, in minutes
+  shortHours: { type: Boolean, default: false },          // informational only; never creates LOP
   baseHoursWorked: { type: Number, default: 0 },
   breakDeduction: { type: Number, default: 0 },
   breaks: [{
@@ -48,6 +50,9 @@ const AttendanceSchema = new mongoose.Schema({
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     approvedAt: { type: Date, default: null },
   },
+  approvedHalfDayLeave: { type: Boolean, default: false },
+  relatedLeaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null },
+  nonWorkingDayType: { type: String, enum: ['none', 'holiday', 'weekly_off'], default: 'none' },
 }, { timestamps: true });
 
 AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });

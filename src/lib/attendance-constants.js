@@ -49,15 +49,13 @@ export function getShiftConfig(shiftDoc, globalConfig) {
 
 export function calculateHoursWorked(elapsedMins, breakDeduction, cfg) {
   const baseHours = Math.max(0, elapsedMins);
-  const hoursWorked = Math.min(cfg.expectedHours, Math.max(0, baseHours - breakDeduction));
-  return { baseHours, hoursWorked };
+  const hoursWorked = Math.max(0, baseHours - breakDeduction);
+  const payableHours = Math.min(cfg.expectedHours, hoursWorked);
+  return { baseHours, hoursWorked, payableHours, shortHours: hoursWorked < cfg.expectedHours };
 }
 
 export function determineStatus(minutesSinceShiftStart, cfg) {
-  const halfDayThreshold = cfg.halfDayThreshold ?? 180;
-  const absentThreshold = cfg.absentThreshold ?? 240;
-  if (minutesSinceShiftStart > absentThreshold) return { status: 'absent', lateFlag: true };
-  if (minutesSinceShiftStart > halfDayThreshold) return { status: 'half_day', lateFlag: true };
+  // Arrival time is informational. It must never create absence, half-day, or LOP.
   if (minutesSinceShiftStart > cfg.lateThreshold) return { status: 'late', lateFlag: true };
   return { status: 'present', lateFlag: false };
 }

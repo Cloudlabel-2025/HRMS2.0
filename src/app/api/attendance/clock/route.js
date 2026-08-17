@@ -1,11 +1,11 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Leave, Absence, SelfServiceRequest } from '@/lib/models/index';
+import { Leave, Holiday, SelfServiceRequest } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
-import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
+import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime, toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
@@ -126,6 +126,9 @@ export async function POST(req) {
         isOnLeave = true;
         auditLog('Clock In (Leave Day)', 'Attendance', user._id, `On approved ${onLeave.type} (${onLeave.from} to ${onLeave.to})`, 'medium', ip, null, user._id);
       }
+      const holidays = await Holiday.find({ date: today }).lean();
+      const isNonWorkingDay = !isWorkingDay(today, config, holidays);
+      const nonWorkingDayType = holidays.length ? 'holiday' : (isNonWorkingDay ? 'weekly_off' : 'none');
 
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
@@ -231,20 +234,11 @@ export async function POST(req) {
         lateFlag = result.lateFlag;
       }
 
-      // Create absence record for half-day or full-day leave due to late clock-in
-      if (status === 'half_day' || status === 'leave') {
-        await Absence.findOneAndUpdate(
-          { userId: user._id, date: today },
-          {
-            $set: {
-              userId: user._id,
-              date: today,
-              reason: status === 'half_day' ? 'Half day - late clock-in' : 'Full day - very late clock-in',
-              flagged: status === 'leave',
-            },
-          },
-          { upsert: true }
-        );
+      // Approved half-day leave plus a clock-in is a full payable attendance day:
+      // Present + half-day leave, with no late/absence consequence.
+      if (onLeave?.halfDay) {
+        status = 'present';
+        lateFlag = false;
       }
 
       const isEarlyLogin = shiftFound && shiftHour * 60 + shiftMin > (h * 60 + m);
@@ -260,6 +254,9 @@ export async function POST(req) {
             note: permissionAdjustedClockIn
               ? `Clock-in adjusted from ${timeStr} to ${attendanceClockIn} for approved permission`
               : body.reason ? `Early login reason: ${body.reason}` : '',
+            approvedHalfDayLeave: !!onLeave?.halfDay,
+            relatedLeaveId: onLeave?._id || null,
+            nonWorkingDayType,
             ...(geo ? { geoLocation: geo } : {}),
           },
           $setOnInsert: {
@@ -281,7 +278,7 @@ export async function POST(req) {
         { upsert: true, new: true }
       );
 
-      if (isOnLeave && record) {
+      if (((isOnLeave && !onLeave?.halfDay) || isNonWorkingDay) && record) {
         record.leaveOverride = { status: 'pending' };
         await record.save();
 
@@ -293,8 +290,10 @@ export async function POST(req) {
         if (recipients.length) {
           await notify(
             [...new Set(recipients.map(String))],
-            'Leave Day Clock-In',
-            `${user.name || 'Employee'} clocked in on approved ${onLeave.type} day (${onLeave.from} to ${onLeave.to}). Please review and approve or reject.`,
+            isNonWorkingDay ? 'Non-Working Day Clock-In' : 'Leave Day Clock-In',
+            isNonWorkingDay
+              ? `${user.name || 'Employee'} clocked in on ${holidays[0]?.name || 'a weekly off'} (${today}). Please review whether this counts as a working day.`
+              : `${user.name || 'Employee'} clocked in on approved ${onLeave.type} day (${onLeave.from} to ${onLeave.to}). Please review and approve or reject.`,
             'attendance',
             record._id
           );
@@ -350,7 +349,7 @@ export async function POST(req) {
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
       const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
-      const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, cfg);
+      const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(finalMinutes, deduction, cfg);
       deductionBreakdown = {
         totalDeduction: deduction,
         breakLog: updatedBreaks.map(b => ({
@@ -363,9 +362,7 @@ export async function POST(req) {
         })),
       };
       let status = outRecord.status;
-      if (hoursWorked < cfg.absentThreshold) {
-        status = 'absent';
-      }
+      if (outRecord.approvedHalfDayLeave) status = 'present';
 
       const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut, outRecord.date);
       record = await Attendance.findOneAndUpdate(
@@ -373,6 +370,8 @@ export async function POST(req) {
         {
           clockOut: finalClockOut,
           hoursWorked,
+          payableHours,
+          shortHours,
           baseHoursWorked: baseHours,
           autoLoggedOut: isAutoLogout,
           regularizationOutOpen: false,

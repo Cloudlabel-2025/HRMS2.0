@@ -60,13 +60,8 @@ export async function POST(req) {
 
       const finalMinutes = Math.max(0, finalMins - clockInMins);
       const deduction = record.breakDeduction || 0;
-      const { baseHours, hoursWorked } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
-      let status = record.status;
-      if (hoursWorked < shiftCfg.absentThreshold) {
-        status = 'absent';
-      } else {
-        status = 'present';
-      }
+      const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
+      const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
 
       const updatedBreaks = (record.breaks || []).map(b =>
         b.start && !b.end ? { ...b, end: clockOutTime } : b
@@ -81,6 +76,8 @@ export async function POST(req) {
             autoLoggedOut: true,
             status,
             hoursWorked,
+            payableHours,
+            shortHours,
             baseHoursWorked: record.baseHoursWorked ?? baseHours,
             breakDeduction: deduction,
             breaks: updatedBreaks,

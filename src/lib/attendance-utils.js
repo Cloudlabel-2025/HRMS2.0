@@ -85,15 +85,17 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
 
   const elapsedMins = Math.max(0, clockOutMinutes - clockInMinutes);
   const deduction = calculateBreakDeduction(record.breaks, shiftCfg.breaks);
-  const { baseHours, hoursWorked } = calculateHoursWorked(elapsedMins, deduction, shiftCfg);
+  const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(elapsedMins, deduction, shiftCfg);
   record.baseHoursWorked = baseHours;
   record.breakDeduction = deduction;
   record.hoursWorked = hoursWorked;
-
-  if (hoursWorked < shiftCfg.absentThreshold) {
-    record.status = 'absent';
-  } else {
+  record.payableHours = payableHours;
+  record.shortHours = shortHours;
+  if (record.approvedHalfDayLeave) {
     record.status = 'present';
+    record.lateFlag = false;
+  } else if (!['leave', 'holiday'].includes(record.status)) {
+    record.status = record.lateFlag ? 'late' : 'present';
   }
 
   return true;

@@ -2,7 +2,7 @@ import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, isWorkingDay } from '@/lib/payroll-cycle';
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -34,6 +34,12 @@ export async function POST(req) {
 
     const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
     const workingDays = workingCalendar.workingDays;
+    const holidayDocs = workingCalendar.holidays.map(date => ({ date }));
+    const workingDateSet = new Set();
+    for (let cursor = new Date(`${fromDate}T00:00:00Z`), end = new Date(`${toDate}T00:00:00Z`); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+      const date = cursor.toISOString().slice(0, 10);
+      if (isWorkingDay(date, config, holidayDocs)) workingDateSet.add(date);
+    }
     const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
 
     const calendarStats = getCycleCalendarStats(fromDate, toDate);
@@ -50,18 +56,18 @@ export async function POST(req) {
 
       let presentDays;
       let lopDays;
-      let unpaidLeaves;
 
       if (isEmployer(emp.role)) {
         presentDays = workingDays;
         lopDays = 0;
-        unpaidLeaves = 0;
       } else {
         const records = await Attendance.find({
           userId: emp._id,
           date: { $gte: fromDate, $lte: toDate },
         });
-        presentDays = records.filter(r => ['present','late'].includes(r.status)).length;
+        // Any clocked working day is present. Short hours and late arrival are
+        // deliberately informational and never become LOP.
+        presentDays = records.filter(r => workingDateSet.has(r.date) && r.clockIn && ['present','late','half_day'].includes(r.status)).length;
 
         const { default: Leave } = await import('@/lib/models/Leave');
         const approvedLeaves = await Leave.find({
@@ -71,12 +77,21 @@ export async function POST(req) {
           to: { $gte: fromDate },
         });
 
-        const paidLeaveDays = approvedLeaves
-          .filter(l => l.typeCode !== 'LOP' && l.type !== 'Loss of Pay')
-          .reduce((sum, l) => sum + (l.paidDays || l.days), 0);
+        const paidLeaveDays = approvedLeaves.reduce((sum, leave) => {
+          if (leave.typeCode === 'LOP' || leave.type === 'Loss of Pay') return sum;
+          const totalRequested = Number(leave.days) || 0;
+          const totalPaid = leave.paidDays == null ? totalRequested : Number(leave.paidDays);
+          const paidRatio = totalRequested > 0 ? Math.min(1, Math.max(0, totalPaid / totalRequested)) : 0;
+          let overlap = 0;
+          const start = leave.from < fromDate ? fromDate : leave.from;
+          const end = leave.to > toDate ? toDate : leave.to;
+          for (let cursor = new Date(`${start}T00:00:00Z`), last = new Date(`${end}T00:00:00Z`); cursor <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+            if (workingDateSet.has(cursor.toISOString().slice(0, 10))) overlap += leave.halfDay ? 0.5 : 1;
+          }
+          return sum + (overlap * paidRatio);
+        }, 0);
 
-        const autoLopDays = approvedLeaves.reduce((sum, l) => sum + (l.unpaidDays || 0), 0);
-        lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays)) + autoLopDays;
+        lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
       }
 
       const result = calculatePayroll({
@@ -84,7 +99,7 @@ export async function POST(req) {
         totalDaysInMonth: calendarStats.totalDays,
         sundaysInMonth: calendarStats.sundays,
         alternateSaturdaysInMonth: calendarStats.alternateSaturdays,
-        unpaidLeavesTaken: unpaidLeaves,
+        unpaidLeavesTaken: lopDays,
         workingDays,
       });
 

@@ -378,13 +378,11 @@ export async function PUT(req) {
         attendance.baseHoursWorked = base;
 
         attendance.breakDeduction = calculateBreakDeduction(attendanceBreaks, regCfg.breaks);
-        const { hoursWorked } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
+        const { hoursWorked, payableHours, shortHours } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
         attendance.hoursWorked = hoursWorked;
-        if (hoursWorked < regCfg.absentThreshold) {
-          attendance.status = 'absent';
-        } else {
-          attendance.status = 'present';
-        }
+        attendance.payableHours = payableHours;
+        attendance.shortHours = shortHours;
+        attendance.status = 'present';
 
         // Recalculate lateFlag based on shift start
         if (empUser?.shift) {
@@ -397,6 +395,7 @@ export async function PUT(req) {
               const clockInMins = cH * 60 + cM;
               const minutesLate = clockInMins - shiftStartMins;
               attendance.lateFlag = minutesLate > (regCfg?.lateThreshold || 15);
+              if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
             }
           }
         }
