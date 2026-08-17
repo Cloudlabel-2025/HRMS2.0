@@ -2006,26 +2006,18 @@ export default function AttendancePage() {
                           <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
                           <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn)  || '—'}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
-                          <td style={{ fontSize: 13 }}>
-                            {(() => {
-                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === type);
-                              if (typeBreaks.length === 0) return '—';
-                              return typeBreaks.map((b, i) => {
-                                if (b.notYet) return <span key={i} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span>;
-                                return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
-                              }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
-                            })()}
-                          </td>
-                          <td style={{ fontSize: 13 }}>
-                            {(() => {
-                              const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === type);
-                              if (typeBreaks.length === 0) return '—';
-                              return typeBreaks.map((b, i) => {
-                                if (b.notYet) return <span key={i} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span>;
-                                return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
-                              }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
-                            })()}
-                          </td>
+                          {regBreakTypes.map(type => (
+                            <td key={type} style={{ fontSize: 13 }}>
+                              {(() => {
+                                const typeBreaks = (r.requestedBreaks || []).filter(b => b.type === type);
+                                if (typeBreaks.length === 0) return '—';
+                                return typeBreaks.map((b, i) => {
+                                  if (b.notYet) return <span key={i} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span>;
+                                  return `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`;
+                                }).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []);
+                              })()}
+                            </td>
+                          ))}
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
                           <td>
                             <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
