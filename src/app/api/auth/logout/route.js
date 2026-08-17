@@ -1,4 +1,4 @@
-import { requireAuth, auditLog } from '@/lib/middleware';
+import { requirePortalAuth, auditLog } from '@/lib/middleware';
 import { connectDB } from '@/lib/db';
 import { TokenBlacklist } from '@/lib/models/index';
 import { getTokenFromRequest, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
@@ -12,25 +12,24 @@ import { NextResponse } from 'next/server';
  */
 export async function POST(req) {
   try {
-    const { user, error } = await requireAuth(req);
-    if (error) return error;
+    const { user } = await requirePortalAuth(req);
 
     const token = getTokenFromRequest(req);
     const ip = req.headers.get('x-forwarded-for') || 'unknown';
 
-    await connectDB();
-
-    // Add token to blacklist
-    await TokenBlacklist.create({
-      token,
-      userId: user._id,
-      revokedAt: new Date(),
-      reason: 'logout',
-      ip,
-    });
-
-    // Audit log
-    await auditLog('Logout', 'Auth', user._id, `User ${user.name} logged out`, 'low', ip, null, user._id);
+    // Always clear cookies, even when the access token has just expired. When a
+    // valid session exists, also revoke and audit it.
+    if (user && token) {
+      await connectDB();
+      await TokenBlacklist.create({
+        token,
+        userId: user._id,
+        revokedAt: new Date(),
+        reason: 'logout',
+        ip,
+      });
+      await auditLog('Logout', 'Auth', user._id, `User ${user.name} logged out`, 'low', ip, null, user._id);
+    }
 
     const response = NextResponse.json({ success: true, data: { message: 'Logged out successfully' } });
     response.cookies.set('hrms_access', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });

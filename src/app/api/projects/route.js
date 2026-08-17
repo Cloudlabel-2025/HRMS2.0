@@ -55,6 +55,14 @@ export async function POST(req) {
       team = (await User.find(memberQuery).select('_id').lean()).map(member => member._id);
     }
     if (!team.length) return fail('At least one permitted project team member is required', 400);
+    const assignmentIds = [...new Set([...team.map(memberId => memberId.toString()), body.responsibleTo.toString()])];
+    const activeAssignmentCount = await User.countDocuments({
+      _id: { $in: assignmentIds },
+      status: 'active',
+    });
+    if (activeAssignmentCount !== assignmentIds.length) {
+      return fail('Projects can only be assigned to active employees', 400);
+    }
     if (crossDept) {
       const responsible = await User.findById(body.responsibleTo).select('department role').lean();
       if (!responsible) return fail('Responsible person not found', 404);

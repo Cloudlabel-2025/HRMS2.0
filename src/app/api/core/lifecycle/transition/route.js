@@ -10,6 +10,7 @@ import { canAccessDepartment } from '@/lib/rbac';
 import { buildChangeSet } from '@/lib/core/privacy';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { LifecycleActionSchema, validateRequest } from '@/lib/validation';
+import { finalizeSeparation, startSeparation } from '@/lib/core/separation';
 
 import { notify } from '@/lib/notify';
 
@@ -18,8 +19,8 @@ function getIdentityUserId(identity) {
 }
 
 function mapStatusToUserStatus(status, separationType = '') {
-  if (status === 'retired' || separationType === 'retirement') return 'alumni';
-  if (status === 'resigned' || status === 'terminated' || status === 'suspended' || status === 'alumni') return 'inactive';
+  if (['resigned', 'terminated', 'retired', 'alumni'].includes(status) || separationType === 'retirement') return 'alumni';
+  if (status === 'suspended') return 'inactive';
   return 'active';
 }
 
@@ -145,7 +146,7 @@ export async function POST(req) {
     let reason = data.reason || data.confirmationNote || '';
     const metadata = { action, effectiveDate, requestId, ip, userAgent };
 
-    const separatedStatuses = ['resigned', 'terminated', 'retired', 'alumni'];
+    const separatedStatuses = ['notice_period', 'resigned', 'terminated', 'retired', 'alumni'];
     if (action === 'separation' && separatedStatuses.includes(profile.employmentStatus)) {
       return fail('This employee is already separated. Use rehire to create a new employment period.', 409);
     }
@@ -154,6 +155,37 @@ export async function POST(req) {
     }
     if (action === 'suspend' && profile.employmentStatus === 'suspended') {
       return fail('This employee is already suspended', 409);
+    }
+
+    if (action === 'separation') {
+      const result = await startSeparation({
+        profile,
+        identity,
+        actor: user,
+        separationType: data.separationType,
+        reason: data.reason,
+        noticePeriodDays: data.noticePeriodDays,
+        lastWorkingDate: data.lastWorkingDate,
+        effectiveDate,
+        metadata: { requestId, ip, userAgent },
+      });
+      await auditLog('Core Lifecycle Transition', 'EmploymentProfile', user._id,
+        `Start ${data.separationType} exit for ${profile.employeeNumber} (${identity.legalName})`, 'high', ip);
+      return ok({ profile: result.profile, identity: result.identity });
+    }
+
+    if (action === 'finalize_exit') {
+      const result = await finalizeSeparation({
+        profile,
+        identity,
+        actor: user,
+        effectiveDate,
+        reason: data.reason,
+        metadata: { requestId, ip, userAgent },
+      });
+      await auditLog('Core Lifecycle Transition', 'EmploymentProfile', user._id,
+        `Finalize exit for ${profile.employeeNumber} (${identity.legalName})`, 'high', ip);
+      return ok({ profile: result.profile, identity: result.identity });
     }
 
     if (action === 'confirm_probation') {
@@ -240,7 +272,11 @@ export async function POST(req) {
       profile.businessUnit = data.businessUnit || '';
       profile.workLocation = data.workLocation || '';
       profile.shift = data.shift || profile.shift;
+      if (profile.separation?.approvedAt) {
+        profile.separationHistory.push(profile.separation.toObject ? profile.separation.toObject() : profile.separation);
+      }
       profile.separation = { separationType: 'other', reason: '', noticePeriodDays: 0, lastWorkingDate: null, settlementStatus: 'pending', exitInterviewComplete: false, approvedByUserId: null, approvedAt: null, clearedAt: null };
+      profile.isLocked = false;
       actionLabel = 'Rehire employee';
       reason = data.reason;
     }
@@ -251,33 +287,6 @@ export async function POST(req) {
       reason = data.reason;
     }
 
-    if (action === 'separation') {
-      const statusMap = {
-        resignation: 'resigned',
-        termination: 'terminated',
-        retirement: 'retired',
-        contract_end: 'resigned',
-        medical_exit: 'terminated',
-        death: 'terminated',
-        other: 'terminated',
-      };
-      profile.employmentStatus = statusMap[data.separationType] || 'terminated';
-      profile.separation = {
-        separationType: data.separationType,
-        reason: data.reason,
-        noticePeriodDays: data.noticePeriodDays,
-        lastWorkingDate: data.lastWorkingDate,
-        settlementStatus: data.settlementStatus,
-        exitInterviewComplete: data.exitInterviewComplete,
-        approvedByUserId: data.approvedByUserId || user._id,
-        approvedAt: effectiveDate,
-        clearedAt: data.settlementStatus === 'settled' ? effectiveDate : null,
-      };
-      actionLabel = 'Separate employee';
-      reason = data.reason;
-      eventType = 'separation';
-    }
-
     await profile.save();
 
     // Sync department member counts on transfer or separation
@@ -286,9 +295,6 @@ export async function POST(req) {
         Department.findOneAndUpdate({ name: before.department, members: { $gt: 0 } }, { $inc: { members: -1 } }),
         Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } }),
       ]);
-    }
-    if (action === 'separation') {
-      await Department.findOneAndUpdate({ name: profile.department, members: { $gt: 0 } }, { $inc: { members: -1 } });
     }
     if (action === 'rehire') {
       await Department.findOneAndUpdate({ name: profile.department }, { $inc: { members: 1 } });
@@ -315,6 +321,8 @@ export async function POST(req) {
       'reportingLine',
       'compensationSnapshot',
       'separation',
+      'separationHistory',
+      'isLocked',
     ]);
 
     await syncAll(profile, identity, user, changes, eventType, actionLabel, before.employmentStatus, profile.employmentStatus, reason, metadata);
@@ -357,6 +365,6 @@ export async function POST(req) {
     });
   } catch (e) {
     if (e.code === 11000) return fail('Duplicate lifecycle update detected', 409);
-    return fail(e.message, 500);
+    return fail(e.message, e.statusCode || 500);
   }
 }

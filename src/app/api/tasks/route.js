@@ -112,8 +112,9 @@ export async function POST(req) {
       }
     }
 
-    const assignee = await User.findById(body.assignedTo).select('role name department').lean();
+    const assignee = await User.findById(body.assignedTo).select('role name department status').lean();
     if (!assignee) return fail('Assigned user not found', 404);
+    if (assignee.status !== 'active') return fail('Tasks can only be assigned to active employees', 400);
     let canAssign = await canAssignTask(user, assignee);
     if (!canAssign && ['team_lead', 'team_admin'].includes(user.role) && taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder) {
       const projectDepts = Array.isArray(taskProject.departments) ? taskProject.departments : [];

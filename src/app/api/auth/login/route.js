@@ -1,5 +1,6 @@
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
+import EmpProfile from '@/lib/models/EmploymentProfile';
 import Attendance from '@/lib/models/Attendance';
 import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
 import { AuditLog, Shift, Leave, Department } from '@/lib/models/index';
@@ -96,7 +97,49 @@ export async function POST(req) {
     }
 
     if (user.status !== 'active') {
-      return handleFailure('Account is inactive', 403, 'medium', user._id);
+      const profile = user.profileId
+        ? await EmpProfile.findById(user.profileId).select('employmentStatus')
+        : user.identityId ? await EmpProfile.findOne({ identityId: user.identityId }).select('employmentStatus') : null;
+      const alumniEligible = profile && ['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus);
+      if (!alumniEligible) return handleFailure('Account is inactive', 403, 'medium', user._id);
+
+      if (user.status !== 'alumni') {
+        user.status = 'alumni';
+        await user.save();
+      }
+      limit.count = 0;
+      rateLimit.set(ip, limit);
+      await user.resetLoginAttempts();
+
+      const token = signToken({ id: user._id, role: user.role, portalAccess: 'alumni' });
+      const refreshToken = signRefreshToken({ id: user._id, role: user.role, portalAccess: 'alumni' });
+      await AuditLog.create({
+        action: 'Alumni Login Success',
+        module: 'Auth',
+        userId: user._id,
+        targetUserId: user._id,
+        details: `Alumni: ${user.name} (${user.email})`,
+        severity: 'low',
+        ip,
+      });
+
+      const response = NextResponse.json({ success: true, data: {
+        isFirstLogin: false,
+        needsLateLogoutReason: false,
+        lateLogoutDate: null,
+        user: {
+          id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          status: 'alumni',
+          portalAccess: 'alumni',
+          avatar: user.avatar,
+        },
+      }});
+      response.cookies.set('hrms_access', token, { ...SESSION_COOKIE_OPTIONS, maxAge: 15 * 60 });
+      response.cookies.set('hrms_refresh', refreshToken, { ...SESSION_COOKIE_OPTIONS, maxAge: 7 * 24 * 60 * 60 });
+      return response;
     }
 
     // ── Leave-day gate — block login if employee is on approved leave today ─
@@ -229,6 +272,8 @@ export async function POST(req) {
         teamLeadId:  user.teamLeadId,
         teamAdminId: user.teamAdminId,
         isFirstLogin:user.isFirstLogin,
+        status:      user.status,
+        portalAccess:'hrms',
         visibleDepartments,
       },
     }});

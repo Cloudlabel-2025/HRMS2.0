@@ -459,7 +459,7 @@ export default function SettingsPage() {
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: 16 }}>Archive separated (resigned / terminated / retired) employees whose profiles are locked and older than N years. Archived profiles are excluded from active queries.</div>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div>
-                        <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Years Since Last Update</label>
+                        <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Years Since Exit Clearance</label>
                         <input type="number" className="form-control" min={1} max={20} style={{ width: 100 }} value={archiveYears} onChange={e => { setArchiveYears(Number(e.target.value)); setArchivePreview(null); }} />
                       </div>
                       <button className="btn btn-outline-secondary btn-sm" onClick={previewArchive} style={{ height: 38 }}>

@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 
 const TYPE_LABELS = {
   profile_update:            'Profile Update',
@@ -86,10 +87,8 @@ function PayloadView({ requestType, payload, formatTime }) {
         {[
           ['Notice Period Days', payload.noticePeriodDays],
           ['Last Working Date', payload.lastWorkingDate],
-          ['Settlement Status', payload.settlementStatus],
-          ['Exit Interview', payload.exitInterviewComplete ? 'Yes' : 'No'],
         ].map(([label, val]) => (
-          <div key={label} className="col-md-3">
+          <div key={label} className="col-md-6">
             <div style={{ fontSize: 11, color: '#94a3b8' }}>{label}</div>
             <div style={{ fontSize: 13, fontWeight: 600 }}>{val ?? '—'}</div>
           </div>
@@ -134,6 +133,8 @@ export default function CoreHrRequestsPage() {
   const [filterStatus, setFilterStatus] = useState('pending');
   const [selected, setSelected] = useState(null);
   const [reviewNote, setReviewNote] = useState('');
+  const [reviewNoticeDays, setReviewNoticeDays] = useState(0);
+  const [reviewLastWorkingDate, setReviewLastWorkingDate] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
@@ -152,6 +153,8 @@ export default function CoreHrRequestsPage() {
       setRequests(Array.isArray(res.requests) ? res.requests : []);
       setSelected(null);
       setReviewNote('');
+      setReviewNoticeDays(0);
+      setReviewLastWorkingDate('');
       setPage(1);
     } catch (e) {
       showToast(e.message, 'error');
@@ -170,6 +173,10 @@ export default function CoreHrRequestsPage() {
         id: selected._id,
         action,
         reviewNote: reviewNote.trim() || (action === 'approved' ? 'Approved by HR' : 'Rejected by HR'),
+        ...(selected.requestType === 'resignation' && action === 'approved' ? {
+          noticePeriodDays: Number(reviewNoticeDays || 0),
+          lastWorkingDate: reviewLastWorkingDate,
+        } : {}),
       });
       showToast(`Request ${action}`);
       load();
@@ -227,7 +234,7 @@ export default function CoreHrRequestsPage() {
                 <div className="list-group list-group-flush">
                   {requests.slice((page - 1) * pageSize, page * pageSize).map(req => (
                   <button key={req._id} type="button"
-                    onClick={() => { setSelected(req); setReviewNote(''); }}
+                    onClick={() => { setSelected(req); setReviewNote(''); setReviewNoticeDays(req.payload?.noticePeriodDays || 0); setReviewLastWorkingDate(String(req.payload?.lastWorkingDate || '').slice(0, 10)); }}
                     className="list-group-item list-group-item-action"
                     style={{ background: selected?._id === req._id ? '#f0f9ff' : '', borderLeft: selected?._id === req._id ? '3px solid #3b82f6' : '3px solid transparent' }}>
                     <div className="d-flex justify-content-between align-items-start">
@@ -314,6 +321,19 @@ export default function CoreHrRequestsPage() {
 
               {selected.status === 'pending' && (
                 <>
+                  {selected.requestType === 'resignation' && (
+                    <div className="row g-3 mb-3">
+                      <div className="col-md-6">
+                        <label className="form-label" style={{fontSize:13,fontWeight:600}}>Confirmed Notice Days</label>
+                        <input type="number" min="0" max="365" className="form-control" value={reviewNoticeDays} onChange={e => setReviewNoticeDays(e.target.value)} />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label" style={{fontSize:13,fontWeight:600}}>Confirmed Last Working Date</label>
+                        <DateInput className="form-control" value={reviewLastWorkingDate} min={new Date().toISOString().slice(0, 10)} onChange={e => setReviewLastWorkingDate(e.target.value)} />
+                      </div>
+                      <div className="col-12"><div className="alert alert-info py-2 mb-0" style={{fontSize:12}}>Approval starts notice period and keeps login active until HR finalizes the exit.</div></div>
+                    </div>
+                  )}
                   <div className="mb-3">
                     <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, display: 'block' }}>Review Note <span style={{ color: '#94a3b8', fontWeight: 400 }}>(optional)</span></label>
                     <textarea
@@ -325,7 +345,7 @@ export default function CoreHrRequestsPage() {
                     />
                   </div>
                   <div className="d-flex gap-2">
-                    <button className="btn btn-success" onClick={() => review('approved')} disabled={saving}>
+                    <button className="btn btn-success" onClick={() => review('approved')} disabled={saving || (selected.requestType === 'resignation' && !reviewLastWorkingDate)}>
                       <i className="bi bi-check-circle me-2" />{saving ? 'Processing...' : 'Approve'}
                     </button>
                     <button className="btn btn-outline-danger" onClick={() => review('rejected')} disabled={saving}>

@@ -75,6 +75,10 @@ export async function PUT(req, { params }) {
       return fail('Task title must be between 1 and 30 characters', 400);
     }
 
+    const nextAssignee = await User.findById(body.assignedTo).select('status').lean();
+    if (!nextAssignee) return fail('Assigned user not found', 404);
+    if (nextAssignee.status !== 'active') return fail('Tasks can only be assigned to active employees', 400);
+
     // Validate due date is within project's date range
     const taskProject = await Project.findById(body.projectId).select('startDate endDate team').lean();
     if (!taskProject) return fail('Project not found', 404);

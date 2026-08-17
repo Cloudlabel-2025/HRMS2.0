@@ -1,6 +1,7 @@
 import { verifyToken, getTokenFromRequest, fail } from './jwt';
 import { connectDB } from './db';
 import User from './models/User';
+import EmpProfile from './models/EmploymentProfile';
 import { hasAccess, MODULE_ACCESS } from './rbac';
 import { TokenBlacklist, AuditLog } from './models/index';
 
@@ -34,6 +35,40 @@ export async function requireAuth(req) {
   }
 
   return { user };
+}
+
+/**
+ * Authenticate either a normal employee session or a strictly limited alumni
+ * session. Alumni callers must still be checked by an alumni-only route; normal
+ * application APIs continue to use requireAuth and therefore remain active-only.
+ */
+export async function requirePortalAuth(req) {
+  const token = getTokenFromRequest(req);
+  if (!token) return { error: fail('No token provided', 401) };
+
+  const decoded = verifyToken(token);
+  if (!decoded) return { error: fail('Invalid or expired token', 401) };
+
+  await connectDB();
+  const blacklisted = await TokenBlacklist.findOne({ token });
+  if (blacklisted) return { error: fail('Token has been revoked', 401) };
+
+  const user = await User.findById(decoded.id).select('-password');
+  if (!user) return { error: fail('User not found', 401) };
+  if (user.status === 'active') return { user, portalAccess: 'hrms' };
+
+  if (!['inactive', 'alumni'].includes(user.status)) {
+    return { error: fail('User not found or inactive', 401) };
+  }
+
+  const profile = user.profileId
+    ? await EmpProfile.findById(user.profileId)
+    : user.identityId ? await EmpProfile.findOne({ identityId: user.identityId }) : null;
+  if (!profile || !['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus)) {
+    return { error: fail('Alumni access is not available for this account', 403) };
+  }
+
+  return { user, profile, portalAccess: 'alumni' };
 }
 
 /** Require one of the listed roles */

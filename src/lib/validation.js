@@ -196,9 +196,15 @@ export const CreateEmploymentProfileSchema = z.object({
   notes: z.string().max(2000).optional().or(z.literal('')),
 }).strict();
 
-export const UpdateEmploymentProfileSchema = CreateEmploymentProfileSchema.partial();
+// Lifecycle state is mutated only through the dedicated lifecycle routes. This
+// prevents a generic profile edit from bypassing exit/rehire safeguards.
+export const UpdateEmploymentProfileSchema = CreateEmploymentProfileSchema.partial().omit({
+  employmentStatus: true,
+  separation: true,
+  rehireCount: true,
+});
 
-const LifecycleProfileStateSchema = z.enum(['onboarding', 'probation', 'active', 'suspended', 'resigned', 'terminated', 'retired', 'alumni', 'rehired']);
+const LifecycleProfileStateSchema = z.enum(['onboarding', 'probation', 'active', 'suspended', 'notice_period', 'resigned', 'terminated', 'retired', 'alumni', 'rehired']);
 
 export const LifecycleConfirmProbationSchema = z.object({
   profileId: ObjectIdSchema,
@@ -271,6 +277,12 @@ export const LifecycleSeparationSchema = z.object({
   approvedByUserId: ObjectIdSchema.optional().or(z.literal('')).transform(v => v === '' ? undefined : v),
 }).passthrough();
 
+export const LifecycleFinalizeExitSchema = z.object({
+  profileId: ObjectIdSchema,
+  effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
+  reason: z.string().max(1000).optional().or(z.literal('')),
+}).passthrough();
+
 export const LifecycleActionSchema = z.union([
   z.object({ action: z.literal('confirm_probation'), data: LifecycleConfirmProbationSchema }),
   z.object({ action: z.literal('start_probation'), data: LifecycleStartProbationSchema }),
@@ -279,6 +291,7 @@ export const LifecycleActionSchema = z.union([
   z.object({ action: z.literal('rehire'), data: LifecycleRehireSchema }),
   z.object({ action: z.literal('suspend'), data: LifecycleSuspendSchema }),
   z.object({ action: z.literal('separation'), data: LifecycleSeparationSchema }),
+  z.object({ action: z.literal('finalize_exit'), data: LifecycleFinalizeExitSchema }),
 ]);
 
 export const CreateLifecycleHistorySchema = z.object({
@@ -311,6 +324,8 @@ export const ReviewSelfServiceRequestSchema = z.object({
   id: ObjectIdSchema,
   action: z.enum(['approved', 'rejected', 'cancelled']),
   reviewNote: z.string().max(1000).optional().or(z.literal('')),
+  noticePeriodDays: z.coerce.number().int().min(0).max(365).optional(),
+  lastWorkingDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────

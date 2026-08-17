@@ -1,10 +1,22 @@
 import dbConnect from '@/lib/db';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import UsrIdentity from '@/lib/models/Identity';
+import User from '@/lib/models/User';
+import { Employee } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { recordLifecycleHistory } from '@/lib/core/history';
 
 const SEPARATED_STATUSES = ['resigned', 'terminated', 'retired'];
+
+function retentionDateQuery(cutoff) {
+  return {
+    $or: [
+      { 'separation.clearedAt': { $lt: cutoff } },
+      { 'separation.clearedAt': null, 'separation.lastWorkingDate': { $lt: cutoff } },
+    ],
+  };
+}
 
 // GET /api/core/archive?olderThanYears=N — preview candidates
 // POST /api/core/archive { olderThanYears: N } — execute archival
@@ -23,7 +35,7 @@ export async function GET(req) {
     const candidates = await EmpProfile.find({
       employmentStatus: { $in: SEPARATED_STATUSES },
       isLocked: true,
-      updatedAt: { $lt: cutoff },
+      ...retentionDateQuery(cutoff),
     }).populate('identityId', 'legalName primaryEmail recordStatus').lean();
 
     return ok({ count: candidates.length, years, cutoff, candidates: candidates.map(p => ({
@@ -55,15 +67,36 @@ export async function POST(req) {
     const profiles = await EmpProfile.find({
       employmentStatus: { $in: SEPARATED_STATUSES },
       isLocked: true,
-      updatedAt: { $lt: cutoff },
+      ...retentionDateQuery(cutoff),
     });
 
     let archived = 0;
     for (const profile of profiles) {
+      const fromState = profile.employmentStatus;
       profile.employmentStatus = 'alumni';
       await profile.save();
       if (profile.identityId) {
-        await UsrIdentity.findByIdAndUpdate(profile.identityId, { recordStatus: 'archived' });
+        const identity = await UsrIdentity.findByIdAndUpdate(profile.identityId, { recordStatus: 'archived' }, { new: true });
+        if (identity?.authUserId) {
+          await Promise.all([
+            User.findByIdAndUpdate(identity.authUserId, { status: 'alumni' }),
+            Employee.findOneAndUpdate({ userId: identity.authUserId }, { status: 'alumni' }),
+          ]);
+        }
+        await recordLifecycleHistory({
+          entityType: 'employment',
+          entityId: profile._id,
+          identityId: profile.identityId,
+          profileId: profile._id,
+          eventType: 'status_change',
+          action: 'Archive separated profile',
+          fromState,
+          toState: 'alumni',
+          reason: `Retention period of ${years} year(s) completed`,
+          actorUserId: user._id,
+          actorRole: user.role,
+          metadata: { source: 'retention-archive', cutoff },
+        });
       }
       archived++;
     }

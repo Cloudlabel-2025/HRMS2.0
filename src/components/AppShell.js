@@ -56,6 +56,7 @@ export default function AppShell({ title, children }) {
 
   useLayoutEffect(() => {
     if (!loading && !user) router.replace('/login');
+    if (!loading && user?.portalAccess === 'alumni') router.replace('/alumni');
   }, [user, loading, router]);
 
   useEffect(() => {
@@ -155,7 +156,7 @@ export default function AppShell({ title, children }) {
     return () => document.removeEventListener('click', handleMutationClick, true);
   }, [isReadOnly]);
 
-  if (loading || !user) return (
+  if (loading || !user || user.portalAccess === 'alumni') return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f1f5f9' }}>
       <div className="spinner-border text-primary" />
     </div>

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 
 export default function LoginPage() {
-  const { login, logout, user, loading: authLoading } = useAuth();
+  const { login, user, loading: authLoading } = useAuth();
   const justLoggedIn = useRef(false);
   const [form, setForm] = useState({ email: '', password: '' });
   const [error, setError] = useState('');
@@ -20,13 +20,9 @@ export default function LoginPage() {
 
   useLayoutEffect(() => {
     if (!authLoading && user && !justLoggedIn.current) {
-      fetch('/api/auth/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-      }).catch(() => {});
-      logout();
+      window.location.replace(user.portalAccess === 'alumni' ? '/alumni' : '/dashboard');
     }
-  }, [user, authLoading, logout]);
+  }, [user, authLoading]);
 
   const submitLateLogoutReason = async (e) => {
     e.preventDefault();
@@ -70,7 +66,9 @@ export default function LoginPage() {
     setLoading(false);
     if (result.success) {
       justLoggedIn.current = true;
-      if (result.needsLateLogoutReason && result.lateLogoutDate) {
+      if (result.user?.portalAccess === 'alumni') {
+        window.location.replace('/alumni');
+      } else if (result.needsLateLogoutReason && result.lateLogoutDate) {
         setLateLogoutDate(result.lateLogoutDate);
         setShowLateLogoutModal(true);
       } else if (result.isFirstLogin) {

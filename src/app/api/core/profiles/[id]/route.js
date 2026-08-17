@@ -13,7 +13,7 @@ import { notifyExpiredProbations } from '@/lib/core/probation';
 
 function syncAuthUserFromProfile(identity, profile) {
   if (!identity?.authUserId) return null;
-  const mappedStatus = profile.employmentStatus === 'retired' ? 'alumni' : profile.employmentStatus === 'resigned' || profile.employmentStatus === 'terminated' ? 'inactive' : 'active';
+  const mappedStatus = ['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus) ? 'alumni' : profile.employmentStatus === 'suspended' ? 'inactive' : 'active';
   return User.findByIdAndUpdate(identity.authUserId, {
     identityId: identity._id,
     profileId: profile._id,

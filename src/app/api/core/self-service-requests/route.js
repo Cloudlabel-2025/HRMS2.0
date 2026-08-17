@@ -7,6 +7,7 @@ import { SelfServiceRequest, EmpProfile, UsrIdentity, Employee } from '@/lib/mod
 import User from '@/lib/models/User';
 import { recordLifecycleHistory } from '@/lib/core/history';
 import { ReviewSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
+import { startSeparation } from '@/lib/core/separation';
 
 function syncLegacy(identity, profile, userStatus) {
   return Promise.all([
@@ -101,40 +102,17 @@ async function applyApprovedRequest(request, reviewer) {
   }
 
   if (request.requestType === 'resignation') {
-    profile.employmentStatus = 'resigned';
-    profile.separation = {
+    await startSeparation({
+      profile,
+      identity,
+      actor: reviewer,
       separationType: 'resignation',
       reason: request.reason,
       noticePeriodDays: request.payload.noticePeriodDays || 0,
-      lastWorkingDate: request.payload.lastWorkingDate || null,
-      settlementStatus: request.payload.settlementStatus || 'pending',
-      exitInterviewComplete: !!request.payload.exitInterviewComplete,
-      approvedByUserId: reviewer._id,
-      approvedAt: new Date(),
-      clearedAt: request.payload.settlementStatus === 'settled' ? new Date() : null,
-    };
-    await profile.save();
-    identity.recordStatus = 'archived';
-    await identity.save();
-    const userStatus = 'inactive';
-    await syncLegacy(identity, profile, userStatus);
-    if (identity.authUserId) {
-      await User.findByIdAndUpdate(identity.authUserId, { status: userStatus, identityId: identity._id, profileId: profile._id });
-    }
-    await recordLifecycleHistory({
-      entityType: 'separation',
-      entityId: profile._id,
-      identityId: identity._id,
-      profileId: profile._id,
-      eventType: 'separation',
-      action: 'Approved self-service resignation',
-      fromState: 'active',
-      toState: 'resigned',
-      changes: [],
-      reason: request.reason,
-      actorUserId: reviewer._id,
-      actorRole: reviewer.role,
-      metadata: { requestId: request._id.toString(), source: 'self-service-resignation' },
+      lastWorkingDate: request.payload.lastWorkingDate,
+      effectiveDate: new Date(),
+      source: 'self-service-resignation',
+      metadata: { requestId: request._id.toString() },
     });
   }
 
@@ -178,7 +156,7 @@ export async function GET(req) {
       .limit(100);
     return ok({ requests });
   } catch (e) {
-    return fail(e.message, 500);
+    return fail(e.message, e.statusCode || 500);
   }
 }
 
@@ -197,15 +175,24 @@ export async function PUT(req) {
     if (!request) return fail('Request not found', 404);
     if (request.status !== 'pending') return fail('Request already processed', 400);
 
+    if (request.requestType === 'resignation' && validation.data.action === 'approved') {
+      request.payload = {
+        ...request.payload,
+        noticePeriodDays: validation.data.noticePeriodDays ?? request.payload.noticePeriodDays ?? 0,
+        lastWorkingDate: validation.data.lastWorkingDate ?? request.payload.lastWorkingDate,
+      };
+      request.markModified('payload');
+    }
+
+    if (validation.data.action === 'approved') {
+      await applyApprovedRequest(request, user);
+    }
+
     request.status = validation.data.action;
     request.reviewerUserId = user._id;
     request.reviewedAt = new Date();
     request.reviewNote = validation.data.reviewNote || '';
     await request.save();
-
-    if (validation.data.action === 'approved') {
-      await applyApprovedRequest(request, user);
-    }
 
     // Notify the employee
     const identity = await (await import('@/lib/models/Identity')).default.findById(request.identityId).select('authUserId legalName');
@@ -226,6 +213,6 @@ export async function PUT(req) {
     await auditLog('Self-Service Request Reviewed', 'SelfService', user._id, `${validation.data.action} ${request.requestType} request`, validation.data.action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, identity?.authUserId || null);
     return ok({ request });
   } catch (e) {
-    return fail(e.message, 500);
+    return fail(e.message, e.statusCode || 500);
   }
 }

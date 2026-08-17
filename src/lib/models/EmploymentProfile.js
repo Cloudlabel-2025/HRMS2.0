@@ -68,6 +68,7 @@ const EmpProfileSchema = new mongoose.Schema({
   compensationSnapshot: { type: CompensationSnapshotSchema, default: () => ({}) },
 
   separation:           { type: SeparationSchema, default: () => ({}) },
+  separationHistory:    { type: [SeparationSchema], default: [] },
 
   sourceSystem:         { type: String, enum: ['manual', 'recruitment', 'migration', 'rehire', 'import'], default: 'manual' },
   notes:                { type: String, default: '' },
@@ -89,5 +90,10 @@ EmpProfileSchema.pre('validate', function () {
 
 EmpProfileSchema.index({ department: 1, employmentStatus: 1 });
 EmpProfileSchema.index({ identityId: 1, employmentStatus: 1 });
+
+if (mongoose.models.EmpProfile) {
+  const statuses = mongoose.models.EmpProfile.schema?.path('employmentStatus')?.enumValues || [];
+  if (!statuses.includes('notice_period')) delete mongoose.models.EmpProfile;
+}
 
 export default mongoose.models.EmpProfile || mongoose.model('EmpProfile', EmpProfileSchema, 'emp_profiles');

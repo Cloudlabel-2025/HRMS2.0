@@ -36,8 +36,6 @@ function normalizePayload(requestType, payload) {
       separationType: 'resignation',
       noticePeriodDays: Number(payload.noticePeriodDays || 0),
       lastWorkingDate: payload.lastWorkingDate || null,
-      settlementStatus: payload.settlementStatus || 'pending',
-      exitInterviewComplete: !!payload.exitInterviewComplete,
     };
   }
 
@@ -119,9 +117,23 @@ export async function POST(req) {
       return fail('Employment profile not found', 404);
     }
 
-    if (body.requestType === 'resignation' && ['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus)) {
+    if (body.requestType === 'resignation' && ['notice_period', 'resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus)) {
       auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Resignation request failed: profile already separated', 'low', ip, null, user._id);
       return fail('This profile is already separated', 400);
+    }
+
+    if (body.requestType === 'resignation') {
+      const noticePeriodDays = Number(body.payload?.noticePeriodDays || 0);
+      const lastWorkingDate = body.payload?.lastWorkingDate;
+      if (!Number.isInteger(noticePeriodDays) || noticePeriodDays < 0 || noticePeriodDays > 365) {
+        return fail('Notice period must be between 0 and 365 days', 400);
+      }
+      if (!lastWorkingDate || Number.isNaN(new Date(lastWorkingDate).getTime())) {
+        return fail('A valid last working date is required', 400);
+      }
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (new Date(lastWorkingDate) < today) return fail('Last working date cannot be in the past', 400);
     }
 
     if (body.requestType === 'permission') {

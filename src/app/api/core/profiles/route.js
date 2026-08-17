@@ -19,7 +19,7 @@ function syncAuthUserFromProfile(identity, profile) {
     department: profile.department,
     designation: profile.designation,
     shift: profile.shift,
-    status: profile.employmentStatus === 'retired' ? 'alumni' : profile.employmentStatus === 'resigned' || profile.employmentStatus === 'terminated' ? 'inactive' : 'active',
+    status: ['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus) ? 'alumni' : profile.employmentStatus === 'suspended' ? 'inactive' : 'active',
     role: profile.rbacRole,
   });
 }

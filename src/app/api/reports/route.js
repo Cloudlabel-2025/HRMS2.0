@@ -354,6 +354,7 @@ export async function GET(req) {
           { label: 'On Probation',      value: pendingProbation,        color: '#f59e0b' },
           { label: 'Onboarding',        value: pendingOnboarding,       color: '#8b5cf6' },
           { label: 'Suspended',         value: statusCounts['suspended'] || 0, color: '#ef4444' },
+          { label: 'Notice Period',     value: statusCounts['notice_period'] || 0, color: '#d97706' },
           { label: 'Separated',         value: (statusCounts['resigned'] || 0) + (statusCounts['terminated'] || 0), color: '#64748b' },
           { label: 'Retired',           value: statusCounts['retired'] || 0, color: '#a78bfa' },
           { label: 'Alumni',            value: statusCounts['alumni'] || 0,   color: '#14b8a6' },

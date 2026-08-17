@@ -1,9 +1,9 @@
-import { requireAuth } from '@/lib/middleware';
+import { requirePortalAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { Department } from '@/lib/models/index';
 
 export async function GET(req) {
-  const { user, error } = await requireAuth(req);
+  const { user, error, portalAccess } = await requirePortalAuth(req);
   if (error) return error;
 
   let visibleDepartments = [];
@@ -12,5 +12,5 @@ export async function GET(req) {
     visibleDepartments = deptDoc?.visibleDepartments || [];
   }
 
-  return ok({ ...user.toObject(), visibleDepartments });
+  return ok({ ...user.toObject(), visibleDepartments, portalAccess });
 }

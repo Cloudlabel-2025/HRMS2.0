@@ -86,7 +86,7 @@ export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || user.portalAccess === 'alumni') {
       setSettings(DEFAULT_SETTINGS);
       return;
     }

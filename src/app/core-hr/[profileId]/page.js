@@ -16,6 +16,7 @@ const ACTIONS = [
   { key: 'rehire',            label: 'Rehire',     icon: 'bi-person-plus',      color: '#06b6d4', help: 'Restore a separated employee with new assignment details.' },
   { key: 'suspend',           label: 'Suspend',    icon: 'bi-pause-circle',     color: '#f59e0b', help: 'Place an employee on suspension.' },
   { key: 'separation',        label: 'Separate',   icon: 'bi-box-arrow-right',  color: '#ef4444', help: 'Record exit details and track offboarding clearance.' },
+  { key: 'finalize_exit',     label: 'Finalize Exit', icon: 'bi-person-x',      color: '#dc2626', help: 'Complete employment on or after the confirmed last working date.' },
 ];
 
 const STATUS_CONFIG = {
@@ -23,6 +24,7 @@ const STATUS_CONFIG = {
   probation:  { color: '#f59e0b', bg: '#fffbeb', label: 'Probation' },
   active:     { color: '#10b981', bg: '#f0fdf4', label: 'Active' },
   suspended:  { color: '#ef4444', bg: '#fef2f2', label: 'Suspended' },
+  notice_period:{ color: '#d97706', bg: '#fffbeb', label: 'Notice Period' },
   resigned:   { color: '#6b7280', bg: '#f9fafb', label: 'Resigned' },
   terminated: { color: '#dc2626', bg: '#fef2f2', label: 'Terminated' },
   retired:    { color: '#6b7280', bg: '#f9fafb', label: 'Retired' },
@@ -128,6 +130,8 @@ export default function CoreHrProfilePage() {
       const p = profileRes.profile || profileRes;
       setProfile(p);
       if (p.employmentStatus === 'active') setAction('start_probation');
+      if (p.employmentStatus === 'notice_period') setAction('finalize_exit');
+      if (['resigned','terminated','retired','alumni'].includes(p.employmentStatus)) setAction('separation');
       setDepartments(Array.isArray(deptRes) ? deptRes.map(d => d.name) : []);
       setDesignations(Array.isArray(desigRes) ? desigRes : []);
       setShifts(Array.isArray(shiftRes) ? shiftRes.map(s => s.name) : []);
@@ -172,6 +176,7 @@ export default function CoreHrProfilePage() {
   const probationEnded   = probationEndDate ? new Date() >= probationEndDate : false;
   const probationTabLocked = isInProbation && !probationEnded;
   const isSeparated      = profile && ['resigned','terminated','retired','alumni'].includes(profile.employmentStatus);
+  const isInNoticePeriod = profile?.employmentStatus === 'notice_period';
   const actionMeta       = ACTIONS.find(a => a.key === action) || ACTIONS[0];
 
   const switchAction = key => {
@@ -181,7 +186,7 @@ export default function CoreHrProfilePage() {
 
   const submit = async () => {
     if (!form.effectiveDate) return showToast('Effective date is required', 'error');
-    if (action !== 'confirm_probation' && !form.reason.trim()) return showToast('Reason is required', 'error');
+    if (!['confirm_probation', 'finalize_exit'].includes(action) && !form.reason.trim()) return showToast('Reason is required', 'error');
     if (['confirm_probation', 'start_probation'].includes(action) && !form.confirmationNote?.trim()) return showToast('Confirmation note is required', 'error');
     if (action === 'transfer' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
     if (action === 'promotion' && (!form.designation || !form.role)) return showToast('New designation and promoted role are required', 'error');
@@ -242,7 +247,7 @@ export default function CoreHrProfilePage() {
     setClearanceSaving(true);
     try {
       const res = await api.patch('/api/core/profiles/clearance', { profileId, field, value });
-      showToast(value ? 'Marked complete' : 'Unchecked');
+      showToast(field === 'settlementStatus' ? 'Settlement status updated' : value ? 'Marked complete' : 'Unchecked');
       if (res.isLocked) showToast('Profile locked — all clearance items complete', 'success');
       await load();
     } catch (e) { showToast(e.message, 'error'); }
@@ -370,6 +375,10 @@ export default function CoreHrProfilePage() {
               {ACTIONS.filter(item => {
                 if (item.key === 'confirm_probation') return ['onboarding', 'probation'].includes(profile.employmentStatus);
                 if (item.key === 'start_probation') return ['onboarding', 'active', 'rehired'].includes(profile.employmentStatus);
+                if (item.key === 'finalize_exit') return isInNoticePeriod;
+                if (item.key === 'rehire') return isSeparated;
+                if (item.key === 'separation') return !isInNoticePeriod;
+                if (isSeparated || isInNoticePeriod) return false;
                 return true;
               }).map(item => {
                 const isLocked = item.key === 'confirm_probation' && probationTabLocked;
@@ -409,12 +418,17 @@ export default function CoreHrProfilePage() {
               </div>
 
               <div className="row g-3">
-                <Field label="Effective Date *">
-                  <DateInput className="form-control" style={{ fontSize: 13 }} value={form.effectiveDate} onChange={e => setForm(p => ({ ...p, effectiveDate: e.target.value }))} />
-                </Field>
-                <Field label={action === 'confirm_probation' ? 'Reason (optional)' : 'Reason *'}>
-                  <input className="form-control" style={{ fontSize: 13 }} placeholder="Policy or business reason" value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
-                </Field>
+                {!(isSeparated && action === 'separation') && <>
+                  <Field label="Effective Date *">
+                    <DateInput className="form-control" style={{ fontSize: 13 }}
+                      min={action === 'finalize_exit' && profile?.separation?.lastWorkingDate ? String(profile.separation.lastWorkingDate).slice(0, 10) : undefined}
+                      max={action === 'finalize_exit' ? new Date().toISOString().slice(0, 10) : undefined}
+                      value={form.effectiveDate} onChange={e => setForm(p => ({ ...p, effectiveDate: e.target.value }))} />
+                  </Field>
+                  <Field label={['confirm_probation', 'finalize_exit'].includes(action) ? 'Reason (optional)' : 'Reason *'}>
+                    <input className="form-control" style={{ fontSize: 13 }} placeholder="Policy or business reason" value={form.reason} onChange={e => setForm(p => ({ ...p, reason: e.target.value }))} />
+                  </Field>
+                </>}
 
                 {['confirm_probation', 'start_probation'].includes(action) && (
                   <>
@@ -537,19 +551,30 @@ export default function CoreHrProfilePage() {
                   </Field>
                 )}
 
+                {action === 'finalize_exit' && (
+                  <div className="col-12">
+                    <div className="alert alert-warning mb-0" style={{fontSize:13}}>
+                      <div className="fw-bold mb-1">Confirmed last working date: {formatDate(profile?.separation?.lastWorkingDate)}</div>
+                      Finalizing the exit disables login, removes the employee from active headcount, and starts HR clearance.
+                    </div>
+                  </div>
+                )}
+
                 {action === 'separation' && (
                   <>
-                    <Field label="Separation Type *">
-                      <select className="form-select" style={{ fontSize: 13 }} value={form.separationType} onChange={e => setForm(p => ({ ...p, separationType: e.target.value }))}>
-                        {['resignation','termination','retirement','contract_end','medical_exit','death','other'].map(t => <option key={t} value={t}>{fmt(t)}</option>)}
-                      </select>
-                    </Field>
-                    <Field label="Last Working Date *">
-                      <DateInput className="form-control" style={{ fontSize: 13 }} value={form.lastWorkingDate} onChange={e => setForm(p => ({ ...p, lastWorkingDate: e.target.value }))} />
-                    </Field>
-                    <Field label="Notice Period (days)" col="col-12">
-                      <input className="form-control" type="number" min="0" max="365" style={{ fontSize: 13, maxWidth: 160 }} value={form.noticePeriodDays} onChange={e => setForm(p => ({ ...p, noticePeriodDays: Number(e.target.value) }))} />
-                    </Field>
+                    {!isSeparated && <>
+                      <Field label="Separation Type *">
+                        <select className="form-select" style={{ fontSize: 13 }} value={form.separationType} onChange={e => setForm(p => ({ ...p, separationType: e.target.value }))}>
+                          {['resignation','termination','retirement','contract_end','medical_exit','death','other'].map(t => <option key={t} value={t}>{fmt(t)}</option>)}
+                        </select>
+                      </Field>
+                      <Field label="Last Working Date *">
+                        <DateInput className="form-control" style={{ fontSize: 13 }} min={form.effectiveDate || undefined} value={form.lastWorkingDate} onChange={e => setForm(p => ({ ...p, lastWorkingDate: e.target.value }))} />
+                      </Field>
+                      <Field label="Notice Period (days)" col="col-12">
+                        <input className="form-control" type="number" min="0" max="365" style={{ fontSize: 13, maxWidth: 160 }} value={form.noticePeriodDays} onChange={e => setForm(p => ({ ...p, noticePeriodDays: Number(e.target.value) }))} />
+                      </Field>
+                    </>}
                     <div className="col-12">
                       <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: 16 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -570,6 +595,20 @@ export default function CoreHrProfilePage() {
                         </div>
                         {isSeparated ? (
                           <>
+                            <div className="row g-2 mb-3">
+                              <div className="col-md-6">
+                                <label style={{fontSize:12,fontWeight:600,color:'#475569',marginBottom:4,display:'block'}}>Settlement Status</label>
+                                <select className="form-select" value={profile?.separation?.settlementStatus || 'pending'} disabled={profile.isLocked || clearanceSaving}
+                                  onChange={e => updateClearance('settlementStatus', e.target.value)}>
+                                  <option value="pending">Pending</option>
+                                  <option value="in_progress">In Progress</option>
+                                  <option value="settled">Settled</option>
+                                </select>
+                              </div>
+                              <div className="col-md-6" style={{fontSize:12,color:'#64748b',display:'flex',alignItems:'end',paddingBottom:9}}>
+                                Last working date: <strong className="ms-1">{formatDate(profile?.separation?.lastWorkingDate)}</strong>
+                              </div>
+                            </div>
                             <div className="row g-2">
                               {CLEARANCE_ITEMS.map(({ field, label, icon, desc }) => {
                                 const checked = !!profile?.separation?.clearanceChecklist?.[field];
@@ -610,11 +649,11 @@ export default function CoreHrProfilePage() {
               </div>
 
               <div style={{ display: 'flex', gap: 10, marginTop: 20, paddingTop: 16, borderTop: '1px solid #f8fafc' }}>
-                <button className="btn btn-primary" onClick={submit}
+                {!isSeparated && <button className="btn btn-primary" onClick={submit}
                   disabled={saving || profile.isLocked || (action === 'confirm_probation' && probationTabLocked)}
                   style={{ fontSize: 13 }}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Applying...</> : <><i className={`bi ${actionMeta.icon} me-2`} />Apply {actionMeta.label}</>}
-                </button>
+                </button>}
                 <button className="btn btn-outline-secondary" style={{ fontSize: 13 }} onClick={() => setForm({ ...EMPTY_FORM, profileId })}>Reset</button>
               </div>
             </div>

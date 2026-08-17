@@ -20,8 +20,6 @@ const EMPTY_FORM = {
   emergencyContacts: [{ name: '', relation: '', phone: '', email: '', isPrimary: true }],
   noticePeriodDays: 30,
   lastWorkingDate: '',
-  settlementStatus: 'pending',
-  exitInterviewComplete: false,
   permissionDate: '',
   permissionStartTime: '',
   permissionEndTime: '',
@@ -94,7 +92,7 @@ export default function SelfServicePage() {
       });
     }
     if (form.requestType === 'resignation') {
-      if (form.noticePeriodDays && !/^\d{1,3}$/.test(form.noticePeriodDays)) errs.noticePeriodDays = 'Notice period must be 0-999';
+      if (form.noticePeriodDays && (!/^\d{1,3}$/.test(form.noticePeriodDays) || Number(form.noticePeriodDays) > 365)) errs.noticePeriodDays = 'Notice period must be 0-365';
       if (!form.lastWorkingDate) errs.lastWorkingDate = 'Last working date is required';
       else {
         const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -173,8 +171,6 @@ export default function SelfServicePage() {
     if (form.requestType === 'resignation') {
       payload.payload.noticePeriodDays = Number(form.noticePeriodDays || 0);
       payload.payload.lastWorkingDate = form.lastWorkingDate;
-      payload.payload.settlementStatus = form.settlementStatus;
-      payload.payload.exitInterviewComplete = !!form.exitInterviewComplete;
     }
     if (form.requestType === 'permission') {
       payload.payload.date = form.permissionDate;
@@ -379,10 +375,9 @@ export default function SelfServicePage() {
 
               {form.requestType === 'resignation' && (
                 <>
-                  <div className="col-md-4"><label className="form-label">Notice Period Days</label><input className={`form-control${formErrors.noticePeriodDays ? ' is-invalid' : ''}`} type="text" inputMode="numeric" value={form.noticePeriodDays} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 3); setForm(prev => ({ ...prev, noticePeriodDays: v })); clearError('noticePeriodDays'); }} />{formErrors.noticePeriodDays && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.noticePeriodDays}</div>}</div>
-                  <div className="col-md-4"><label className="form-label">Last Working Date <span style={{color:'#ef4444'}}>*</span></label><DateInput className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} value={form.lastWorkingDate} min={new Date().toISOString().split('T')[0]} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
-                  <div className="col-md-4"><label className="form-label">Settlement Status</label><select className="form-select" value={form.settlementStatus} onChange={e => setForm(prev => ({ ...prev, settlementStatus: e.target.value }))}><option value="pending">Pending</option><option value="in_progress">In Progress</option><option value="settled">Settled</option></select></div>
-                  <div className="col-12"><div className="form-check"><input className="form-check-input" type="checkbox" checked={form.exitInterviewComplete} onChange={e => setForm(prev => ({ ...prev, exitInterviewComplete: e.target.checked }))} id="exitInterviewComplete" /><label className="form-check-label" htmlFor="exitInterviewComplete">Exit interview complete</label></div></div>
+                  <div className="col-md-6"><label className="form-label">Requested Notice Period Days</label><input className={`form-control${formErrors.noticePeriodDays ? ' is-invalid' : ''}`} type="text" inputMode="numeric" value={form.noticePeriodDays} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 3); setForm(prev => ({ ...prev, noticePeriodDays: v })); clearError('noticePeriodDays'); }} />{formErrors.noticePeriodDays && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.noticePeriodDays}</div>}</div>
+                  <div className="col-md-6"><label className="form-label">Requested Last Working Date <span style={{color:'#ef4444'}}>*</span></label><DateInput className={`form-control${formErrors.lastWorkingDate ? ' is-invalid' : ''}`} value={form.lastWorkingDate} min={new Date().toISOString().split('T')[0]} onChange={e => { setForm(prev => ({ ...prev, lastWorkingDate: e.target.value })); clearError('lastWorkingDate'); }} />{formErrors.lastWorkingDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.lastWorkingDate}</div>}</div>
+                  <div className="col-12"><div className="alert alert-info py-2 mb-0" style={{fontSize:12}}>HR will confirm the notice period and last working date. Settlement and exit clearance are managed by HR after your exit.</div></div>
                 </>
               )}
             </div>

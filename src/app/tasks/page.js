@@ -129,7 +129,10 @@ export default function TasksPage() {
         api.get('/api/employees'),
       ]);
       setDepartments(Array.isArray(deptData) ? deptData.map(d => d.name) : []);
-      setEmployees(Array.isArray(emps) ? emps : []);
+      setEmployees(Array.isArray(emps) ? emps.filter(employee => {
+        const exited = ['resigned', 'terminated', 'retired', 'alumni'].includes(employee.employmentStatus);
+        return employee.status === 'active' && !exited;
+      }) : []);
     } catch (e) {
       console.warn('Failed to load departments/employees:', e);
     }

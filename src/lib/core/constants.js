@@ -10,7 +10,7 @@ export const ADDRESS_TYPES = ['permanent', 'current', 'present', 'mailing', 'hom
 export const IDENTIFIER_TYPES = ['pan', 'aadhaar'];
 
 export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern', 'consultant', 'apprentice'];
-export const EMPLOYMENT_STATUSES = ['onboarding', 'probation', 'active', 'suspended', 'resigned', 'terminated', 'retired', 'alumni', 'rehired'];
+export const EMPLOYMENT_STATUSES = ['onboarding', 'probation', 'active', 'suspended', 'notice_period', 'resigned', 'terminated', 'retired', 'alumni', 'rehired'];
 export const SEPARATION_TYPES = ['resignation', 'termination', 'retirement', 'contract_end', 'medical_exit', 'death', 'other'];
 export const SETTLEMENT_STATUSES = ['pending', 'in_progress', 'settled'];
 export const SELF_SERVICE_REQUEST_TYPES = ['profile_update', 'address_update', 'emergency_contact_update', 'resignation', 'permission'];
