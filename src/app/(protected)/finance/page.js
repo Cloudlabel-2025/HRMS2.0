@@ -6,9 +6,6 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
-import ExcelJS from 'exceljs';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 const EXPENSE_CATEGORIES = ['Travel', 'Software', 'Training', 'Office', 'Hardware', 'Other'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -122,10 +119,15 @@ export default function FinancePage() {
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${filename}.csv`; link.click(); URL.revokeObjectURL(link.href); return;
     }
     if (format === 'excel') {
+      const { default: ExcelJS } = await import('exceljs');
       const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet(report.title.slice(0, 31));
       sheet.addRow(report.headers); report.rows.forEach(row => sheet.addRow(row)); sheet.getRow(1).font = { bold: true }; sheet.columns.forEach(column => { column.width = 20; });
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); link.download = `${filename}.xlsx`; link.click(); URL.revokeObjectURL(link.href); return;
     }
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
     const doc = new jsPDF({ orientation: report.headers.length > 4 ? 'landscape' : 'portrait' }); doc.setFontSize(14); doc.text(report.title, 14, 16); autoTable(doc, { head: [report.headers], body: report.rows.map(row => row.map(String)), startY: 22 }); doc.save(`${filename}.pdf`);
   };
 

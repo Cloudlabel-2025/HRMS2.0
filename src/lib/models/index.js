@@ -207,17 +207,6 @@ const EmployeeSchema = new mongoose.Schema({
   leaveBalance: { type: Number, default: 24 },
 }, { timestamps: true });
 
-// ── Audit Log ─────────────────────────────────────────────────────────────────
-const AuditLogSchema = new mongoose.Schema({
-  action:        { type: String, required: true },
-  module:        { type: String, required: true },
-  userId:        { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  targetUserId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-  details:       { type: String },
-  severity:      { type: String, enum: ['low','medium','high'], default: 'low' },
-  ip:            { type: String, default: '' },
-}, { timestamps: true });
-
 // ── SME (Subject Matter Expert) ────────────────────────────────────────────────
 const SMESchema = new mongoose.Schema({
   name:           { type: String, required: true },
@@ -391,34 +380,6 @@ const NotificationSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // ── Settings ──────────────────────────────────────────────────────────────────
-const DepartmentSchema = new mongoose.Schema({
-  name:              { type: String, required: true, unique: true },
-  head:              { type: String, default: '' },
-  members:           { type: Number, default: 0 },
-  visibleDepartments: { type: [String], default: [] },
-}, { timestamps: true });
-
-const ShiftSchema = new mongoose.Schema({
-  name:      { type: String, required: true },
-  startTime: { type: String, required: true },
-  endTime:   { type: String, required: true },
-  days:      [{ type: String }],
-  expectedHours:    { type: Number, default: 480 },
-  absentThreshold:  { type: Number, default: 240 },
-  lateThreshold:    { type: Number, default: 15 },
-  earlyLoginWindow: { type: Number, default: 120 },
-  breaks: [{
-    name:        { type: String, default: 'Break' },
-    type:        { type: String, required: true },
-    maxDuration: { type: Number, required: true },
-    maxCount:    { type: Number, default: 1 },
-  }],
-  autoLogoutAfterShiftEnd: { type: Number, default: 360 },
-  halfDayThreshold: { type: Number, default: 180 },
-}, { timestamps: true });
-
-ShiftSchema.index({ name: 1 });
-
 // ── Scheduled / Bulk Shift Assignment ────────────────────────────────────────
 const ShiftChangeSchema = new mongoose.Schema({
   targetShiftId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', required: true },
@@ -444,11 +405,6 @@ const HolidaySchema = new mongoose.Schema({
   type: { type: String, enum: ['National','Optional','Company'], default: 'National' },
 }, { timestamps: true });
 
-const SystemConfigSchema = new mongoose.Schema({
-  key:   { type: String, required: true, unique: true },
-  value: { type: mongoose.Schema.Types.Mixed },
-}, { timestamps: true });
-
 const SmeExpertiseSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true, trim: true },
 }, { timestamps: true });
@@ -456,18 +412,6 @@ const SmeExpertiseSchema = new mongoose.Schema({
 // Re-export models from separate files
 export { Task, Project } from './Task';
 export { Payroll, SalaryStructure } from './Payroll';
-
-// ── Token Management ────────────────────────────────────────────────────────
-const TokenBlacklistSchema = new mongoose.Schema({
-  token: { type: String, required: true, index: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  revokedAt: { type: Date, default: Date.now },
-  reason: { type: String, enum: ['logout', 'password_change', 'admin_revoke', 'breach'], default: 'logout' },
-  ip: String,
-}, { 
-  timestamps: true,
-  indexes: [{ createdAt: 1, expireAfterSeconds: 604800 }] // TTL 7 days
-});
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 if (mongoose.models.Goal) delete mongoose.models.Goal;
@@ -492,21 +436,21 @@ export const Expense     = mongoose.models.Expense     || mongoose.model('Expens
 export const ExpenseCategory = mongoose.models.ExpenseCategory || mongoose.model('ExpenseCategory', ExpenseCategorySchema);
 if (mongoose.models.Budget) delete mongoose.models.Budget;
 export const Budget      = mongoose.model('Budget', BudgetSchema);
-export const AuditLog    = mongoose.models.AuditLog    || mongoose.model('AuditLog', AuditLogSchema);
+export { default as AuditLog } from './AuditLog';
 export const Employee    = mongoose.models.Employee    || mongoose.model('Employee', EmployeeSchema);
 if (process.env.NODE_ENV === 'development' && mongoose.models.SME) { delete mongoose.models.SME; }
 export const SME         = mongoose.models.SME         || mongoose.model('SME', SMESchema);
 export const JobPosting   = mongoose.models.Job         || mongoose.model('Job', JobSchema);
 export const Applicant   = mongoose.models.Applicant   || mongoose.model('Applicant', ApplicantSchema);
-export const Department  = mongoose.models.Department  || mongoose.model('Department', DepartmentSchema);
-export const Shift       = mongoose.models.Shift       || mongoose.model('Shift', ShiftSchema);
+export { default as Department } from './Department';
+export { default as Shift } from './Shift';
 if (process.env.NODE_ENV === 'development' && mongoose.models.ShiftChange) delete mongoose.models.ShiftChange;
 export const ShiftChange = mongoose.models.ShiftChange || mongoose.model('ShiftChange', ShiftChangeSchema);
 export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holiday', HolidaySchema);
-export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('SystemConfig', SystemConfigSchema);
+export { default as SystemConfig } from './SystemConfig';
 if (mongoose.models.AttendanceRegularization) delete mongoose.models.AttendanceRegularization;
 export const AttendanceRegularization = mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
-export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('TokenBlacklist', TokenBlacklistSchema);
+export { default as TokenBlacklist } from './TokenBlacklist';
 export const Role          = mongoose.models.Role          || mongoose.model('Role', RoleSchema);
 export const Designation   = mongoose.models.Designation   || mongoose.model('Designation', DesignationSchema);
 export const AssetCategory = mongoose.models.AssetCategory || mongoose.model('AssetCategory', AssetCategorySchema);

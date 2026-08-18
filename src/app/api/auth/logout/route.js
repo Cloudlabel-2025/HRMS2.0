@@ -1,6 +1,6 @@
 import { requirePortalAuth, auditLog } from '@/lib/middleware';
 import { connectDB } from '@/lib/db';
-import { TokenBlacklist } from '@/lib/models/index';
+import TokenBlacklist from '@/lib/models/TokenBlacklist';
 import { getTokenFromRequest, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 import { NextResponse } from 'next/server';
 

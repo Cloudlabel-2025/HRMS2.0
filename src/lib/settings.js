@@ -82,12 +82,17 @@ function renderTime(value, timeFormat = '24h') {
 }
 
 export function SettingsProvider({ children }) {
-  const { user } = useAuth();
+  const { user, bootstrapSettings } = useAuth();
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
 
   useEffect(() => {
     if (!user || user.portalAccess === 'alumni') {
       setSettings(DEFAULT_SETTINGS);
+      return;
+    }
+
+    if (bootstrapSettings !== undefined) {
+      setSettings({ ...DEFAULT_SETTINGS, ...(bootstrapSettings || {}) });
       return;
     }
 
@@ -97,7 +102,7 @@ export function SettingsProvider({ children }) {
         if (globalConfig?.value) setSettings(prev => ({ ...prev, ...globalConfig.value }));
       })
       .catch(() => {});
-  }, [user]);
+  }, [user, bootstrapSettings]);
 
   const value = useMemo(() => ({
     settings,

@@ -5,9 +5,6 @@ import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
-import ExcelJS from 'exceljs';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { useSettings } from '@/lib/settings';
 import { rankOf } from '@/lib/permissions';
 
@@ -316,9 +313,14 @@ export default function TasksPage() {
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${filename}.csv`; link.click(); URL.revokeObjectURL(link.href); return;
     }
     if (format === 'excel') {
+      const { default: ExcelJS } = await import('exceljs');
       const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('Project Progress'); sheet.addRow(headers); rows.forEach(row => sheet.addRow(row)); sheet.getRow(1).font = { bold: true }; sheet.columns.forEach(column => { column.width = 20; });
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })); link.download = `${filename}.xlsx`; link.click(); URL.revokeObjectURL(link.href); return;
     }
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable'),
+    ]);
     const doc = new jsPDF({ orientation: 'landscape' }); doc.setFontSize(14); doc.text(`${project.name} - Project Progress`, 14, 16); autoTable(doc, { head: [headers], body: rows, startY: 22 }); doc.save(`${filename}.pdf`);
   };
 

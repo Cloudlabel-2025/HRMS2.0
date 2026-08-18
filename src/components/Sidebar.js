@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS, hasAccess, clearImpersonatedUser, isImpersonating } from '@/lib/auth';
-import { api } from '@/lib/api';
 import {
   cancelWorkProgressExportJob,
   executeWorkProgressExport,
@@ -11,6 +10,7 @@ import {
   getWorkProgressExportRemaining,
   subscribeWorkProgressExport,
 } from '@/lib/work-progress-export';
+import { useShellData } from '@/lib/shell-data';
 
 const formatExportTime = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -48,27 +48,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
-  const [pendingRequests, setPendingRequests] = useState(0);
+  const { pendingRequests, employeeProfileId } = useShellData();
   const [exportJob, setExportJob] = useState(null);
   const [exportRemaining, setExportRemaining] = useState(0);
-  const [employeeProfileId, setEmployeeProfileId] = useState(null);
-
-  useEffect(() => {
-    if (!user || !['super_admin', 'admin_full'].includes(user.role)) return;
-    const load = () => {
-      api.get('/api/core/self-service-requests?status=pending')
-        .then(d => setPendingRequests(Array.isArray(d.requests) ? d.requests.length : 0))
-        .catch(() => {});
-    };
-    load();
-    const t = setInterval(load, 30000);
-    return () => clearInterval(t);
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    api.get('/api/employees/me').then(data => setEmployeeProfileId(data?.employeeId || null)).catch(() => {});
-  }, [user]);
 
   useEffect(() => {
     const syncJob = job => {

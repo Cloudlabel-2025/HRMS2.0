@@ -2,7 +2,8 @@ import { verifyToken, getTokenFromRequest, fail } from './jwt';
 import { connectDB } from './db';
 import User from './models/User';
 import EmpProfile from './models/EmploymentProfile';
-import { TokenBlacklist, AuditLog } from './models/index';
+import TokenBlacklist from './models/TokenBlacklist';
+import AuditLog from './models/AuditLog';
 
 export async function requireAuth(req) {
   const token = getTokenFromRequest(req);

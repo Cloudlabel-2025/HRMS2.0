@@ -1,6 +1,6 @@
 import { requirePortalAuth } from '@/lib/middleware';
 import { ok } from '@/lib/jwt';
-import { Department } from '@/lib/models/index';
+import Department from '@/lib/models/Department';
 
 export async function GET(req) {
   const { user, error, portalAccess } = await requirePortalAuth(req);

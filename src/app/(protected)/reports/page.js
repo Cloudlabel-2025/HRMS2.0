@@ -1,11 +1,15 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth, canAccessDepartment } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
-import { Chart, registerables } from 'chart.js';
+import dynamic from 'next/dynamic';
 import { useSettings } from '@/lib/settings';
-Chart.register(...registerables);
+
+const ReportChart = dynamic(() => import('@/components/ReportChart'), {
+  ssr: false,
+  loading: () => <div className="d-flex h-100 align-items-center justify-content-center"><div className="spinner-border spinner-border-sm text-primary" /></div>,
+});
 
 const REPORT_TYPES = [
   { key: 'attendance', label: 'Attendance Report', icon: 'bi-clock', color: '#3b82f6' },
@@ -20,44 +24,6 @@ const REPORT_TYPES = [
 const SHOW_DEPT = { attendance: true, leave: true, payroll: true, tasks: true, performance: true };
 const SHOW_MONTH = { attendance: true, leave: true, payroll: true, performance: true, finance: true };
 const DATE_COLS = new Set(['Start', 'End', 'Hire Date', 'Issued', 'Due', 'Due Date']);
-
-function BarChart({ labels, datasets }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    const ctx = ref.current.getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'bar',
-      data: { labels, datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 10 } } },
-        scales: { x: { grid: { display: false } }, y: { grid: { color: '#f1f5f9' } } },
-      },
-    });
-    return () => chart.destroy();
-  }, [labels, datasets]);
-  return <canvas ref={ref} />;
-}
-
-function LineChart({ labels, datasets }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!ref.current) return;
-    const ctx = ref.current.getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: { labels, datasets },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { font: { size: 11 } } } },
-        scales: { x: { grid: { display: false } }, y: { grid: { color: '#f1f5f9' } } },
-      },
-    });
-    return () => chart.destroy();
-  }, [labels, datasets]);
-  return <canvas ref={ref} />;
-}
 
 export default function ReportsPage() {
   const { user } = useAuth();
@@ -172,7 +138,7 @@ export default function ReportsPage() {
             <div className="card p-3 mb-4">
               <div className="section-title mb-3">{data.chart.title}</div>
               <div style={{ height: 280 }}>
-                <BarChart labels={data.chart.labels} datasets={data.chart.datasets} />
+                <ReportChart type="bar" labels={data.chart.labels} datasets={data.chart.datasets} />
               </div>
             </div>
           )}
@@ -180,7 +146,7 @@ export default function ReportsPage() {
             <div className="card p-3 mb-4">
               <div className="section-title mb-3">{data.chart.title}</div>
               <div style={{ height: 280 }}>
-                <LineChart labels={data.chart.labels} datasets={data.chart.datasets} />
+                <ReportChart type="line" labels={data.chart.labels} datasets={data.chart.datasets} />
               </div>
             </div>
           )}
@@ -190,7 +156,7 @@ export default function ReportsPage() {
             <div className="card p-3 mb-4">
               <div className="section-title mb-3">{data.deptChart.title}</div>
               <div style={{ height: 240 }}>
-                <BarChart labels={data.deptChart.labels} datasets={data.deptChart.datasets} />
+                <ReportChart type="bar" labels={data.deptChart.labels} datasets={data.deptChart.datasets} />
               </div>
             </div>
           )}

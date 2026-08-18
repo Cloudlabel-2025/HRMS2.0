@@ -13,9 +13,6 @@ import { STATUS_STYLE, MANAGER_ROLES } from '@/lib/constants';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
-import ExcelJS from 'exceljs';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -163,6 +160,7 @@ export default function AttendancePage() {
       }
 
       if (format === 'excel') {
+        const { default: ExcelJS } = await import('exceljs');
         const wb = new ExcelJS.Workbook();
         wb.creator = 'HRMS';
         wb.created = new Date();
@@ -243,6 +241,10 @@ export default function AttendancePage() {
         a.click();
         URL.revokeObjectURL(url);
       } else {
+        const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+          import('jspdf'),
+          import('jspdf-autotable'),
+        ]);
         const doc = new jsPDF('l', 'mm', 'a4');
         let isFirst = true;
         for (const { emp, records } of allData) {

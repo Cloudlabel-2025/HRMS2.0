@@ -5,6 +5,7 @@ import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import { NOTIF_ICONS, NOTIF_COLORS, getNotifRoute } from '@/lib/notifications-constants';
+import { useShellData } from '@/lib/shell-data';
 
 export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const { user } = useAuth();
@@ -12,46 +13,9 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
   const router = useRouter();
   const [showNotif, setShowNotif] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [notifications, setNotifications] = useState([]);
-  const [newsAnnouncements, setNewsAnnouncements] = useState([]);
-  const pollRef = useRef(null);
+  const { notifications, setNotifications, newsAnnouncements, pendingRequests } = useShellData();
   const notifRef = useRef(null);
   const profileRef = useRef(null);
-  const [pendingRequests, setPendingRequests] = useState(0);
-
-  const loadNotifs = () => {
-    api.get('/api/notifications')
-      .then(d => setNotifications(Array.isArray(d) ? d : []))
-      .catch(() => {});
-  };
-
-  const loadPendingRequests = () => {
-    if (!user || !['super_admin', 'admin_full'].includes(user.role)) return;
-    api.get('/api/core/self-service-requests?status=pending')
-      .then(d => setPendingRequests(Array.isArray(d.requests) ? d.requests.length : 0))
-      .catch(() => {});
-  };
-
-  const loadNewsAnnouncements = () => {
-    api.get('/api/announcements')
-      .then(data => {
-        const cutoff = Date.now() - (24 * 60 * 60 * 1000);
-        const announcements = Array.isArray(data?.announcements) ? data.announcements : [];
-        setNewsAnnouncements(announcements
-          .filter(announcement => new Date(announcement.createdAt).getTime() >= cutoff)
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-      })
-      .catch(() => setNewsAnnouncements([]));
-  };
-
-  useEffect(() => {
-    if (!user) return;
-    loadNotifs();
-    loadPendingRequests();
-    loadNewsAnnouncements();
-    pollRef.current = setInterval(() => { loadNotifs(); loadPendingRequests(); loadNewsAnnouncements(); }, 30000);
-    return () => clearInterval(pollRef.current);
-  }, [user]);
 
   useEffect(() => {
     const handleClickOutside = (e) => {

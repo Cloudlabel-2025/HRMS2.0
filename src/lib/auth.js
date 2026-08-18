@@ -30,22 +30,43 @@ export const ROLE_COLORS = {
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [bootstrapSettings, setBootstrapSettings] = useState(undefined);
 
   useEffect(() => {
-    const stored = localStorage.getItem('hrms_user');
-    if (stored) setUser(JSON.parse(stored));
-    fetch('/api/auth/me', { credentials: 'same-origin' })
-      .then(async res => {
-        if (!res.ok) throw new Error('No active session');
-        const json = await res.json();
-        localStorage.setItem('hrms_user', JSON.stringify(json.data));
-        setUser(json.data);
-      })
-      .catch(() => {
+    let cancelled = false;
+    const mayHaveSession = Boolean(localStorage.getItem('hrms_user'));
+
+    const requestBootstrap = () => fetch('/api/auth/bootstrap', { credentials: 'same-origin' });
+
+    const loadSession = async () => {
+      try {
+        let response = await requestBootstrap();
+        if (response.status === 401 && mayHaveSession) {
+          const refresh = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+          });
+          if (refresh.ok) response = await requestBootstrap();
+        }
+        if (!response.ok) throw new Error('No active session');
+        const json = await response.json();
+        if (cancelled) return;
+        localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
+        setUser(json.data.user);
+        setBootstrapSettings(json.data.settings ?? null);
+      } catch {
+        if (cancelled) return;
         localStorage.removeItem('hrms_user');
         setUser(null);
-      })
-      .finally(() => setLoading(false));
+        setBootstrapSettings(undefined);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadSession();
+    return () => { cancelled = true; };
   }, []);
 
   const login = async (email, password) => {
@@ -58,6 +79,7 @@ export function AuthProvider({ children }) {
     if (!res.ok) return { success: false, error: json.error || 'Login failed' };
     localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
     setUser(json.data.user);
+    setBootstrapSettings(undefined);
     return {
       success: true,
       user: json.data.user,
@@ -75,10 +97,11 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('hrms_impersonated_user');
     window.__impersonatedUser = null;
     setUser(null);
+    setBootstrapSettings(undefined);
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, logout, loading, bootstrapSettings }}>
       {children}
     </AuthContext.Provider>
   );
