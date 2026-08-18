@@ -7,38 +7,11 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
 import { formatMins } from '@/lib/format';
-import { Chart, registerables } from 'chart.js';
-Chart.register(...registerables);
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const WORK_STATUS_COLORS = { pending: '#64748b', work_in_progress: '#3b82f6', stopped: '#f59e0b' };
 const WORK_STATUS_LABELS = { pending: 'Pending', work_in_progress: 'Work in Progress', stopped: 'Stopped' };
-
-function BarChart({ data }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!data || !ref.current) return;
-    const ctx = ref.current.getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'bar',
-      data: {
-        labels: data.labels,
-        datasets: [
-          { label: 'Present', data: data.present, backgroundColor: '#3b82f6', borderRadius: 6 },
-          { label: 'Absent',  data: data.absent,  backgroundColor: '#f1f5f9', borderRadius: 6 },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top', labels: { font: { size: 12 }, boxWidth: 12 } } },
-        scales: { x: { grid: { display: false } }, y: { grid: { color: '#f1f5f9' } } },
-      },
-    });
-    return () => chart.destroy();
-  }, [data]);
-  return <canvas ref={ref} />;
-}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -180,7 +153,6 @@ export default function DashboardPage() {
   const isTeamLead  = role === 'team_lead';
   const isTeamAdmin = role === 'team_admin';
   const isRecruiter = role === 'recruiter';
-  const isSelf      = ['employee', 'intern'].includes(role);
 
   const statCards = stats ? (
     isAdmin ? [

@@ -3,13 +3,13 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
-import { useSettings, formatTime, parseTime } from '@/lib/settings';
+import { useSettings, formatTime } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
-import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS, MANAGER_ROLES } from '@/lib/constants';
+import { STATUS_STYLE, MANAGER_ROLES } from '@/lib/constants';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
@@ -52,7 +52,7 @@ function diffMins(start, end) {
 
 export default function AttendancePage() {
   const { user } = useAuth();
-  const { formatDate, settings, formatTime, parseTime } = useSettings();
+  const { formatDate, settings, formatTime } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
   const [staleOpenSession, setStaleOpenSession] = useState(null);

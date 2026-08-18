@@ -18,17 +18,6 @@ const STATUS_STYLE = {
   logged_out: { bg: '#f1f5f9', color: '#64748b', label: 'Logged Out', icon: 'bi-box-arrow-right' },
 };
 
-function formatDuration(start, end) {
-  if (!start || !end) return '--';
-  const [sh, sm] = start.split(':').map(Number);
-  const [eh, em] = end.split(':').map(Number);
-  const diff = (eh * 60 + em) - (sh * 60 + sm);
-  if (diff <= 0) return '--';
-  const h = Math.floor(diff / 60);
-  const m = diff % 60;
-  return `${h}h ${m}m`;
-}
-
 function totalBreakDuration(breaks, type) {
   const filtered = breaks.filter(b => b.type === type && b.start && b.end);
   let total = 0;

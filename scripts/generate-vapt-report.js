@@ -14,7 +14,6 @@ const YELLOW = '999900';
 const GRAY = '666666';
 const WHITE = 'FFFFFF';
 const DARK = '333333';
-const LIGHT_BG = 'F5F5F5';
 
 function severityBadge(severity) {
   const fillMap = {

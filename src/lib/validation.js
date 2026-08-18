@@ -11,7 +11,6 @@ import {
   MARITAL_STATUS_VALUES,
   SEPARATION_TYPES,
   SETTLEMENT_STATUSES,
-  SELF_SERVICE_REQUEST_STATUSES,
   SELF_SERVICE_REQUEST_TYPES,
 } from '@/lib/core/constants';
 
@@ -28,7 +27,6 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 function toDateStr(d) {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 }
-
 // ────────────────────────────────────────────────────────────────────────────
 // AUTH SCHEMAS
 // ────────────────────────────────────────────────────────────────────────────
@@ -36,19 +34,6 @@ function toDateStr(d) {
 export const LoginSchema = z.object({
   email: EmailSchema,
   password: z.string().min(1, 'Password required'),
-}).strict();
-
-export const ChangePasswordSchema = z.object({
-  currentPassword: z.string().optional(), // Not required on first login
-  newPassword: PasswordSchema,
-}).strict();
-
-export const ForgotPasswordSchema = z.object({
-  email: EmailSchema,
-}).strict();
-
-export const RefreshTokenSchema = z.object({
-  refreshToken: z.string().min(1, 'Refresh token required'),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -204,8 +189,6 @@ export const UpdateEmploymentProfileSchema = CreateEmploymentProfileSchema.parti
   rehireCount: true,
 });
 
-const LifecycleProfileStateSchema = z.enum(['onboarding', 'probation', 'active', 'suspended', 'notice_period', 'resigned', 'terminated', 'retired', 'alumni', 'rehired']);
-
 export const LifecycleConfirmProbationSchema = z.object({
   profileId: ObjectIdSchema,
   effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
@@ -351,14 +334,6 @@ export const CreateLeaveSchema = z.object({
   { message: 'Please select first half or second half when applying for half-day leave', path: ['halfDayType'] }
 );
 
-export const ApproveLeaveSchema = z.object({
-  action: z.enum(['approved', 'rejected', 'held']),
-  holdReason: z.string().min(1).max(500).optional(),
-}).strict().refine(
-  data => data.action !== 'held' || !!data.holdReason,
-  { message: 'holdReason is required when action is held', path: ['holdReason'] }
-);
-
 // ────────────────────────────────────────────────────────────────────────────
 // ATTENDANCE SCHEMAS
 // ────────────────────────────────────────────────────────────────────────────
@@ -404,19 +379,6 @@ export const ApproveRegularizationSchema = z.object({
 // SETTINGS SCHEMAS
 // ────────────────────────────────────────────────────────────────────────────
 
-export const CreateDepartmentSchema = z.object({
-  name: z.string().min(2).max(100),
-  head: z.string().max(100).optional().or(z.literal('')),
-  members: z.number().int().min(0).optional(),
-}).strict();
-
-export const CreateShiftSchema = z.object({
-  name: z.string().min(2).max(100),
-  startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Start time must be HH:MM'),
-  endTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'End time must be HH:MM'),
-  days: z.array(z.enum(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])).optional(),
-}).strict();
-
 export const ShiftAssignSchema = z.object({
   shiftId: z.string().min(1, 'Target shift is required'),
   reason: z.string().trim().min(1, 'Reason is required'),
@@ -428,17 +390,6 @@ export const ShiftAssignSchema = z.object({
     exactUserIds: z.boolean().optional().default(false),
     fromShiftId: z.string().or(z.literal('')).optional().transform(v => (v === '' || v == null ? undefined : v)),
   }).optional().default({}),
-}).strict();
-
-export const CreateHolidaySchema = z.object({
-  name: z.string().min(2).max(100),
-  date: DateSchema,
-  type: z.enum(['National', 'Optional', 'Company']).default('Company'),
-}).strict();
-
-export const CreateConfigSchema = z.object({
-  key: z.string().min(1).max(100),
-  value: z.string().max(1000),
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -491,17 +442,5 @@ export function validateRequest(schema, data) {
     return { valid: false, error: errors };
   } catch (e) {
     return { valid: false, error: 'Validation error: ' + e.message };
-  }
-}
-
-/**
- * Middleware helper to validate request in route handlers
- */
-export async function validateRequestBody(req, schema) {
-  try {
-    const body = await req.json();
-    return validateRequest(schema, body);
-  } catch (e) {
-    return { valid: false, error: 'Invalid JSON: ' + e.message };
   }
 }

@@ -1,4 +1,3 @@
-import { LeavePolicy } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { resolvePolicyForUser } from '@/app/api/leave/balance/route';

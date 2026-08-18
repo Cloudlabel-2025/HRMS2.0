@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Leave, LeavePolicy, UserLeaveBalance, EmpProfile, Holiday } from '@/lib/models/index';
+import { Leave, LeavePolicy, EmpProfile, Holiday } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';

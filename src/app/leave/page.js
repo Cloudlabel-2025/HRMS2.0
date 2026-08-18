@@ -30,7 +30,7 @@ function ApprovalBadge({ value, holdReason }) {
 
 export default function LeavePage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [leaves, setLeaves]         = useState([]);
   const [employees, setEmployees]   = useState([]);
   const [balanceData, setBalanceData] = useState(null);
@@ -52,7 +52,6 @@ export default function LeavePage() {
   }, [filterStatus, tab, selectedEmpId]);
   const [fieldErrs, setFieldErrs]   = useState({});
   const fieldErrTimers = typeof window !== 'undefined' ? (window.__leaveErrTimers = window.__leaveErrTimers || {}) : {};
-  const setFErrs = (obj) => { setFieldErrs(obj); Object.keys(obj).forEach(k => { if(fieldErrTimers[k]) clearTimeout(fieldErrTimers[k]); fieldErrTimers[k] = setTimeout(() => setFieldErrs(p => { const n={...p}; delete n[k]; return n; }), 10000); }); };
   const clearFErr = (k) => { if(fieldErrTimers[k]) { clearTimeout(fieldErrTimers[k]); delete fieldErrTimers[k]; } setFieldErrs(p => { const n={...p}; delete n[k]; return n; }); };
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };

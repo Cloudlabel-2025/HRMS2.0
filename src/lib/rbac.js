@@ -110,17 +110,6 @@ export async function getApproverIds() {
 
 // ── Public helpers ────────────────────────────────────────────────────────────
 
-/** True if the role can write/mutate in this module */
-export function canWrite(role, module) {
-  const level = getAccess(role, module);
-  return ['full', 'limited', 'dept', 'team', 'self', 'assigned'].includes(level);
-}
-
-/** True if the role has full (unrestricted) access */
-export function isFull(role, module) {
-  return getAccess(role, module) === 'full';
-}
-
 /** IDs a user may manage for team-scoped work. Administrators receive null (unrestricted). */
 export async function getManagedUserIds(user) {
   if (['super_admin', 'admin_full'].includes(user.role)) return null;

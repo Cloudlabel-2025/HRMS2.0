@@ -1,5 +1,5 @@
 import { requirePortalAuth } from '@/lib/middleware';
-import { ok, fail } from '@/lib/jwt';
+import { ok } from '@/lib/jwt';
 import { Department } from '@/lib/models/index';
 
 export async function GET(req) {

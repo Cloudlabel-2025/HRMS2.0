@@ -5,7 +5,7 @@ import { Payroll } from '@/lib/models/Payroll';
 import { Task } from '@/lib/models/Task';
 import User from '@/lib/models/User';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { SelfServiceRequest, Goal, Review, Invoice, Expense } from '@/lib/models/index';
+import { SelfServiceRequest, Review, Invoice, Expense } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess, getAccessibleDepartments, getManagedUserIds } from '@/lib/rbac';

@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
+import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import { useSettings } from '@/lib/settings';
@@ -38,7 +38,7 @@ export default function SMEProfilePage() {
   const { id } = useParams();
   const router = useRouter();
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [sme, setSme] = useState(null);
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);

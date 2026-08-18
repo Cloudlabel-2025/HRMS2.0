@@ -1,5 +1,4 @@
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { recordLifecycleHistory } from '@/lib/core/history';
 import User from '@/lib/models/User';
 import { Notification } from '@/lib/models/index';
 
@@ -29,46 +28,6 @@ export async function notifyExpiredProbations(now = new Date()) {
         refId: profile._id,
       })));
     }
-    processed++;
-  }
-  return processed;
-}
-
-/**
- * Promotes expired probation records to Active. This is safe to run repeatedly
- * from the scheduled job and as a read-path fallback.
- */
-export async function finalizeExpiredProbations(now = new Date()) {
-  const profiles = await EmpProfile.find({
-    employmentStatus: 'probation',
-    probationEndDate: { $ne: null, $lte: now },
-  }).select('_id identityId probationEndDate employmentStatus').lean();
-
-  let processed = 0;
-  for (const profile of profiles) {
-    const result = await EmpProfile.updateOne(
-      { _id: profile._id, employmentStatus: 'probation', probationEndDate: { $lte: now } },
-      { $set: { employmentStatus: 'active', confirmationDate: profile.probationEndDate } }
-    );
-    if (result.modifiedCount !== 1) continue;
-
-    await recordLifecycleHistory({
-      entityType: 'employment',
-      entityId: profile._id,
-      identityId: profile.identityId,
-      profileId: profile._id,
-      eventType: 'status_change',
-      action: 'Automatically confirm expired probation',
-      fromState: 'probation',
-      toState: 'active',
-      changes: [
-        { field: 'employmentStatus', from: 'probation', to: 'active' },
-        { field: 'confirmationDate', from: null, to: profile.probationEndDate },
-      ],
-      reason: 'Probation end date reached',
-      isSystemGenerated: true,
-      metadata: { source: 'core.probation.auto_finalize', processedAt: now.toISOString() },
-    });
     processed++;
   }
   return processed;

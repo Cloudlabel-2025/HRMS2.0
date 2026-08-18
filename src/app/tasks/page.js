@@ -48,7 +48,7 @@ function formatStatusDuration(date) {
 
 export default function TasksPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [tasks, setTasks]           = useState([]);
   const [projects, setProjects]     = useState([]);
   const [employees, setEmployees]   = useState([]);
@@ -87,7 +87,6 @@ export default function TasksPage() {
   const [projectCandidates, setProjectCandidates] = useState([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [taskCandidates, setTaskCandidates] = useState([]);
-  const [loadingTaskCandidates, setLoadingTaskCandidates] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -208,11 +207,9 @@ export default function TasksPage() {
       return;
     }
     let cancelled = false;
-    setLoadingTaskCandidates(true);
     api.get(`/api/projects/candidates?departments=${encodeURIComponent(depts.join(','))}`)
       .then(res => { if (!cancelled) setTaskCandidates(Array.isArray(res) ? res : []); })
       .catch(() => { if (!cancelled) setTaskCandidates([]); })
-      .finally(() => { if (!cancelled) setLoadingTaskCandidates(false); });
     return () => { cancelled = true; };
   }, [selectedProjectObj]);
 

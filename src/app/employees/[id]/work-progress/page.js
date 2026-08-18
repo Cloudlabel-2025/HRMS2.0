@@ -1,14 +1,13 @@
 'use client';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Time from '@/components/Time';
 import { formatMins } from '@/lib/format';
-import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
+import { STATUS_STYLE, WP_STATUS_STYLE } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 
@@ -94,7 +93,6 @@ function DownloadTimerModal({ show, remaining, onClose }) {
 export default function WorkProgressPage() {
   const { id } = useParams();
   const router = useRouter();
-  const { user } = useAuth();
   const { formatDate, formatTime } = useSettings();
 
   const [cycles, setCycles] = useState([]);

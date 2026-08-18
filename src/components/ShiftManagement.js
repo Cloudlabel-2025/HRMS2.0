@@ -17,8 +17,6 @@ const STATUS_CONFIG = {
   cancelled: { color: '#6b7280', bg: '#f1f5f9', label: 'Cancelled' },
 };
 
-const fmt = s => String(s || '').replace(/_/g, ' ');
-
 function todayLocal() {
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');

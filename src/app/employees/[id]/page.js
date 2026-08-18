@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth, ROLE_LABELS, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
@@ -9,7 +9,7 @@ import DateInput from '@/components/DateInput';
 import Time from '@/components/Time';
 import { formatMins, parseStoredAddress } from '@/lib/format';
 import { canAccessDepartment } from '@/lib/auth';
-import { STATUS_STYLE, WP_STATUS_STYLE, MONTHS } from '@/lib/constants';
+import { STATUS_STYLE, WP_STATUS_STYLE } from '@/lib/constants';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import {

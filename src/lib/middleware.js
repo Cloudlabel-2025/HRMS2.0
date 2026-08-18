@@ -2,7 +2,6 @@ import { verifyToken, getTokenFromRequest, fail } from './jwt';
 import { connectDB } from './db';
 import User from './models/User';
 import EmpProfile from './models/EmploymentProfile';
-import { hasAccess, MODULE_ACCESS } from './rbac';
 import { TokenBlacklist, AuditLog } from './models/index';
 
 export async function requireAuth(req) {
@@ -10,7 +9,7 @@ export async function requireAuth(req) {
   if (!token) return { error: fail('No token provided', 401) };
 
   const decoded = verifyToken(token);
-  if (!decoded) return { error: fail('Invalid or expired token', 401) };
+  if (!decoded || decoded.tokenType === 'refresh') return { error: fail('Invalid or expired token', 401) };
 
   await connectDB();
   
@@ -47,7 +46,7 @@ export async function requirePortalAuth(req) {
   if (!token) return { error: fail('No token provided', 401) };
 
   const decoded = verifyToken(token);
-  if (!decoded) return { error: fail('Invalid or expired token', 401) };
+  if (!decoded || decoded.tokenType === 'refresh') return { error: fail('Invalid or expired token', 401) };
 
   await connectDB();
   const blacklisted = await TokenBlacklist.findOne({ token });
@@ -69,30 +68,6 @@ export async function requirePortalAuth(req) {
   }
 
   return { user, profile, portalAccess: 'alumni' };
-}
-
-/** Require one of the listed roles */
-export function requireRole(...roles) {
-  return (user) => {
-    if (!roles.includes(user.role)) return fail('Access denied', 403);
-    return null;
-  };
-}
-
-/** Require access to a specific module (uses RBAC engine) */
-export function requireModule(module) {
-  return (user) => {
-    if (!hasAccess(user.role, module)) return fail('Access denied', 403);
-    return null;
-  };
-}
-
-/** Convenience: requireAuth + requireModule in one call */
-export async function requireAuthAndModule(req, module) {
-  const { user, error } = await requireAuth(req);
-  if (error) return { error };
-  if (!hasAccess(user.role, module)) return { error: fail('Access denied', 403) };
-  return { user };
 }
 
 /**

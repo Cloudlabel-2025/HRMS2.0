@@ -1,7 +1,7 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Shift, Notification } from '@/lib/models/index';
+import { Shift } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';

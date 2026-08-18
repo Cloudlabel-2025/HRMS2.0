@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import Attendance from '@/lib/models/Attendance';
-import { signToken, signRefreshToken, ok, fail } from '@/lib/jwt';
+import { signToken, signRefreshToken, fail } from '@/lib/jwt';
 import { AuditLog, Shift, Leave, Department } from '@/lib/models/index';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
 import { LoginSchema, validateRequest } from '@/lib/validation';

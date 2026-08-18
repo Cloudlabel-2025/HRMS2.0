@@ -61,29 +61,6 @@ function StatusBadge({ status }) {
   );
 }
 
-function InfoChip({ icon, label, value, color = '#3b82f6' }) {
-  if (!value) return null;
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: '#475569' }}>
-      <i className={`bi ${icon}`} style={{ color, fontSize: 14 }} />
-      <span style={{ fontWeight: 500 }}>{label && <span style={{ color: '#94a3b8', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginRight: 4 }}>{label}:</span>}{value}</span>
-    </div>
-  );
-}
-
-function DetailCard({ icon, label, value }) {
-  if (!value) return null;
-  return (
-    <div style={{ background: '#f8fafc', borderRadius: 10, padding: '10px 14px', border: '1px solid #f1f5f9' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-        <i className={`bi ${icon}`} style={{ color: '#3b82f6', fontSize: 13 }} />
-        <span style={{ fontSize: 10, fontWeight: 700, color: '#94a3b8', textTransform: 'uppercase', letterSpacing: 0.4 }}>{label}</span>
-      </div>
-      <div style={{ fontSize: 13.5, fontWeight: 700, color: '#1e293b', textTransform: 'capitalize' }}>{value}</div>
-    </div>
-  );
-}
-
 function Field({ label, children, col = 'col-md-6' }) {
   return (
     <div className={col}>
@@ -649,8 +626,8 @@ export default function CoreHrProfilePage() {
               </div>
 
               <div style={{ display: 'flex', gap: 10, marginTop: 20, paddingTop: 16, borderTop: '1px solid #f8fafc' }}>
-                {!isSeparated && <button className="btn btn-primary" onClick={submit}
-                  disabled={saving || profile.isLocked || (action === 'confirm_probation' && probationTabLocked)}
+                {(!isSeparated || action === 'rehire') && <button className="btn btn-primary" onClick={submit}
+                  disabled={saving || (profile.isLocked && action !== 'rehire') || (action === 'confirm_probation' && probationTabLocked)}
                   style={{ fontSize: 13 }}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Applying...</> : <><i className={`bi ${actionMeta.icon} me-2`} />Apply {actionMeta.label}</>}
                 </button>}

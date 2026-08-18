@@ -5,20 +5,13 @@ import EmpProfile from '@/lib/models/EmploymentProfile';
 import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
 import { Payroll, SalaryStructure, Project, Task, LeavePolicy, UserLeaveBalance } from '@/lib/models';
-import { Goal, Review, Document, Announcement, Asset, AuditLog, Absence, Notification, Department, Shift, Holiday, Settings, EmpLifecycleHistory, SelfServiceRequest, Employee, AttendanceRegularization } from '@/lib/models';
+import { Goal, Review, Document, Announcement, Asset, AuditLog, Absence, Notification, Department, Shift, Holiday, EmpLifecycleHistory, SelfServiceRequest, Employee, AttendanceRegularization } from '@/lib/models';
 import { ok, fail } from '@/lib/jwt';
-import bcrypt from 'bcryptjs';
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { computeWorkRowDuration } from '@/lib/attendance-constants';
 
 function getSubmittedSetupToken(req, body = {}) {
   return req.headers.get('x-setup-token') || body.setupToken || '';
-}
-
-function formatDate(date) {
-  const d = new Date(date);
-  return d.toISOString().slice(0, 7) + '-' + String(d.getDate()).padStart(2, '0');
-  // actually we use YYYY-MM-DD
 }
 
 function toYYYYMMDD(date) {

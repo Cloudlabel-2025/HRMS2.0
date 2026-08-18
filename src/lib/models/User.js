@@ -12,10 +12,6 @@ export const ROLES = [
   'sme',
 ];
 
-// Roles that can approve / manage others
-export const ADMIN_ROLES  = ['super_admin', 'admin_full'];
-export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_admin'];
-
 const UserSchema = new mongoose.Schema({
   name:         { type: String, required: true, trim: true },
   email:        { type: String, required: true, unique: true, lowercase: true, trim: true },

@@ -2,7 +2,6 @@ import { connectDB } from '@/lib/db';
 import { Document } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { deleteFile } from '@/lib/cloudinary';
 import { UpdateDocumentSchema, validateRequest } from '@/lib/validation';
 
 export async function PUT(req, { params }) {

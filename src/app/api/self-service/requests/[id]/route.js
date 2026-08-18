@@ -2,7 +2,6 @@ import dbConnect from '@/lib/db';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { SelfServiceRequest } from '@/lib/models/index';
-import { ReviewSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
 
 export async function DELETE(req, { params }) {
   try {

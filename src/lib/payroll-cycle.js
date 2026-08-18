@@ -28,10 +28,6 @@ export function getSaturdayOrdinal(year, month, day) {
 export function isWorkingDay(dateStr, config, holidays) {
   const d = new Date(dateStr + 'T00:00:00');
   const dayOfWeek = d.getDay();
-  const year = d.getFullYear();
-  const month = d.getMonth();
-  const day = d.getDate();
-
   if (dayOfWeek === 0) return false;
 
   if (holidays?.some(h => h.date === dateStr)) return false;
@@ -79,20 +75,7 @@ export function getCycleMonth(dateStr, payrollStartDay) {
 export function getCycleLabel(year, month, payrollStartDay, payrollEndDay) {
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   const prevMonth = month === 0 ? 11 : month - 1;
-  const prevYear = month === 0 ? year - 1 : year;
   return `${names[prevMonth]} ${payrollStartDay} – ${names[month]} ${payrollEndDay}, ${year}`;
-}
-
-export async function countWorkingDays(fromDate, toDate, config) {
-  return (await getWorkingDayCalendar(fromDate, toDate, config)).workingDays;
-}
-
-export async function getCycleWorkingDays(year, month, config) {
-  const startDay = config.payrollStartDay || 26;
-  const endDay = config.payrollEndDay || 25;
-  const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
-  const workingDays = await countWorkingDays(fromDate, toDate, config);
-  return { fromDate, toDate, workingDays };
 }
 
 export function getCycleCalendarStats(fromDate, toDate) {

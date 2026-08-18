@@ -17,7 +17,7 @@ const EMPTY_SME = {
 
 export default function SMEPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [smes, setSmes] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [expertiseOptions, setExpertiseOptions] = useState([]);

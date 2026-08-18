@@ -1,6 +1,5 @@
 import { connectDB } from '@/lib/db';
 import { SME } from '@/lib/models/index';
-import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 

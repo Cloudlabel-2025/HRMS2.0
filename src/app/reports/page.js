@@ -61,7 +61,7 @@ function LineChart({ labels, datasets }) {
 
 export default function ReportsPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [activeReport, setActiveReport] = useState('attendance');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);

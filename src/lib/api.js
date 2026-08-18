@@ -9,9 +9,8 @@ async function tryRefresh() {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
     });
-    let json;
     try {
-      json = await res.json();
+      await res.json();
     } catch {
       throw new Error('Session expired');
     }

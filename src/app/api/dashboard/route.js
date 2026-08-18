@@ -1,7 +1,6 @@
 import dbConnect from '@/lib/db';
 import { requireAuth } from '@/lib/middleware';
-import { ok, fail } from '@/lib/jwt';
-import User from '@/lib/models/User';
+import { ok } from '@/lib/jwt';
 import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
 import { Task } from '@/lib/models/Task';

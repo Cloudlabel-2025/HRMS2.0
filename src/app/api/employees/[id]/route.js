@@ -2,7 +2,7 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog, Employee, Shift } from '@/lib/models/index';
+import { Employee, Shift } from '@/lib/models/index';
 import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
 import { canAccessDepartment } from '@/lib/rbac';
 import { notify } from '@/lib/notify';

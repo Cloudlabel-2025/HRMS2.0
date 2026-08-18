@@ -14,7 +14,6 @@ export async function resolveShift(user, { asLean = true } = {}) {
   }
   return null;
 }
-
 export function getShiftEndMinutes(shiftDoc, config) {
   const endTime = shiftDoc?.endTime;
   if (!endTime || typeof endTime !== 'string') return 600;
@@ -27,16 +26,4 @@ export function getShiftEndMinutes(shiftDoc, config) {
     if (!isNaN(sh) && !isNaN(sm) && endMins < sh * 60 + sm) endMins += 24 * 60;
   }
   return endMins;
-}
-
-const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-
-// Lenient off-day check: only a shift that explicitly lists its working days can
-// exclude a date. Empty/undefined days means every day is a working day.
-export function isShiftWorkingDay(shiftDoc, dateStr) {
-  const days = shiftDoc?.days;
-  if (!Array.isArray(days) || days.length === 0) return true;
-  const d = new Date(dateStr + 'T00:00:00');
-  if (isNaN(d.getTime())) return true;
-  return days.includes(WEEKDAY_NAMES[d.getDay()]);
 }

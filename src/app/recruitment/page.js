@@ -45,14 +45,6 @@ export default function RecruitmentPage() {
   const [jobErrors, setJobErrors] = useState({});
   const [appErrors, setAppErrors] = useState({});
   const jobErrorTimers = typeof window !== 'undefined' ? (window.__jobErrTimers = window.__jobErrTimers || {}) : {};
-  const setFieldError = (key, msg) => {
-    setJobErrors(p => ({ ...p, [key]: msg }));
-    if (jobErrorTimers[key]) clearTimeout(jobErrorTimers[key]);
-    jobErrorTimers[key] = setTimeout(() => {
-      setJobErrors(p => { const n = { ...p }; delete n[key]; return n; });
-      delete jobErrorTimers[key];
-    }, 10000);
-  };
   const setFieldErrors = (errObj) => {
     setJobErrors(errObj);
     Object.keys(errObj).forEach(key => {
@@ -64,7 +56,6 @@ export default function RecruitmentPage() {
     });
   };
 
-  const [hrUsers, setHrUsers] = useState([]);
   const [toast, setToast] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
@@ -193,13 +184,6 @@ export default function RecruitmentPage() {
       api.get('/api/settings?type=departments').then(data => setDepartments(data.map(d => d.name))).catch(() => {});
       api.get('/api/settings?type=designations').then(data => setDesignations(Array.isArray(data) ? data : [])).catch(() => {});
       api.get('/api/employees').then(data => setEmployees(Array.isArray(data) ? data : [])).catch(() => {});
-      api.get('/api/employees?role=super_admin&status=active').then(d => {
-        const admins = Array.isArray(d) ? d : [];
-        api.get('/api/employees?role=admin_full&status=active').then(d2 => {
-          const combined = [...admins, ...(Array.isArray(d2) ? d2 : [])];
-          setHrUsers(combined);
-        }).catch(() => setHrUsers(admins));
-      }).catch(() => {});
     }
   }, [user]);
 

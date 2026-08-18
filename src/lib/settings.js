@@ -21,17 +21,17 @@ export function formatTime(timeStr, format = '24h') {
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
-export function parseTime(displayStr) {
+function parseTime(displayStr) {
   if (!displayStr) return '';
   if (/^\d{2}:\d{2}$/.test(displayStr)) return displayStr;
-  const m = displayStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!m) return displayStr;
-  let h = parseInt(m[1], 10);
-  const min = m[2];
-  const ampm = m[3].toUpperCase();
-  if (ampm === 'PM' && h !== 12) h += 12;
-  if (ampm === 'AM' && h === 12) h = 0;
-  return `${String(h).padStart(2, '0')}:${min}`;
+  const match = displayStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return displayStr;
+  let hour = parseInt(match[1], 10);
+  const minute = match[2];
+  const meridiem = match[3].toUpperCase();
+  if (meridiem === 'PM' && hour !== 12) hour += 12;
+  if (meridiem === 'AM' && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, '0')}:${minute}`;
 }
 
 const SettingsContext = createContext({

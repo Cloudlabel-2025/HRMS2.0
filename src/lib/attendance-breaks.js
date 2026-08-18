@@ -19,16 +19,6 @@ export function getBreakAllowance(type, shiftBreaks) {
   return rules.reduce((sum, b) => sum + (b.maxDuration ?? 0) * (b.maxCount ?? 1), 0);
 }
 
-export function getBreakMaxCount(type, shiftBreaks) {
-  const rules = (shiftBreaks || []).filter(b => b.type === type);
-  if (rules.length === 0) return 1;
-  return rules.reduce((sum, b) => sum + (b.maxCount ?? 1), 0);
-}
-
-export function getBreakTypes(shiftBreaks) {
-  return [...new Set((shiftBreaks || []).map(b => b.type).filter(Boolean))];
-}
-
 export function isBreakType(type) {
   return typeof type === 'string' && type !== 'task';
 }

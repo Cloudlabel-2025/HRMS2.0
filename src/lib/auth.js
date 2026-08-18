@@ -5,17 +5,6 @@ export { hasAccess };
 
 const AuthContext = createContext(null);
 
-export const ROLES = {
-  SUPER_ADMIN:  'super_admin',
-  ADMIN_FULL:   'admin_full',
-  RECRUITER:    'recruiter',
-  TEAM_ADMIN:   'team_admin',
-  TEAM_LEAD:    'team_lead',
-  EMPLOYEE:     'employee',
-  INTERN:       'intern',
-  SME:          'sme',
-};
-
 export const ROLE_LABELS = {
   super_admin:  'Super Admin',
   admin_full:   'Admin',
@@ -79,7 +68,9 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
-    void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
+    // Keep the revocation request alive when logout is immediately followed by
+    // a full-page redirect (the alumni portal's Back-button flow does this).
+    void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => {});
     localStorage.removeItem('hrms_user');
     localStorage.removeItem('hrms_impersonated_user');
     window.__impersonatedUser = null;
@@ -131,18 +122,6 @@ export function useAuth() {
     return { ...auth, user: window.__impersonatedUser, realUser: auth.user, isReadOnly: true };
   }
   return { ...auth, isReadOnly: false };
-}
-
-export function getToken() {
-  return null;
-}
-
-export function getRefreshToken() {
-  return null;
-}
-
-export function setToken(token) {
-  // Access tokens intentionally remain HTTP-only cookies and are never exposed to client code.
 }
 
 /** Client-side helper: can the given user view employees in targetDepartment? */

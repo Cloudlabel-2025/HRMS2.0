@@ -54,7 +54,6 @@ async function compressAnnouncementImage(file) {
 export default function CommunicationPage() {
   const { user } = useAuth();
   const { formatDate } = useSettings();
-  const [tab, setTab] = useState('announcements');
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);

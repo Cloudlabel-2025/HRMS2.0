@@ -16,7 +16,4 @@ export const WP_STATUS_STYLE = {
   stopped:         { bg: '#fef3c7', color: '#d97706', label: 'Stopped' },
 };
 
-export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-export const MONTHS_LONG = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-
 export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_admin'];

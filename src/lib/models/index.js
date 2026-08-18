@@ -449,11 +449,6 @@ const SystemConfigSchema = new mongoose.Schema({
   value: { type: mongoose.Schema.Types.Mixed },
 }, { timestamps: true });
 
-const SettingsSchema = new mongoose.Schema({
-  key:   { type: String, required: true, unique: true },
-  value: { type: mongoose.Schema.Types.Mixed },
-}, { timestamps: true });
-
 const SmeExpertiseSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true, trim: true },
 }, { timestamps: true });
@@ -509,7 +504,6 @@ if (process.env.NODE_ENV === 'development' && mongoose.models.ShiftChange) delet
 export const ShiftChange = mongoose.models.ShiftChange || mongoose.model('ShiftChange', ShiftChangeSchema);
 export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holiday', HolidaySchema);
 export const SystemConfig= mongoose.models.SystemConfig|| mongoose.model('SystemConfig', SystemConfigSchema);
-export const Settings    = mongoose.models.Settings    || mongoose.model('Settings', SettingsSchema);
 if (mongoose.models.AttendanceRegularization) delete mongoose.models.AttendanceRegularization;
 export const AttendanceRegularization = mongoose.model('AttendanceRegularization', AttendanceRegularizationSchema);
 export const TokenBlacklist = mongoose.models.TokenBlacklist || mongoose.model('TokenBlacklist', TokenBlacklistSchema);

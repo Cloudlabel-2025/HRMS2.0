@@ -1,6 +1,6 @@
 import { calculateHoursWorked, computeWorkRowDuration } from './attendance-constants';
 import { calculateBreakDeduction } from './attendance-breaks';
-import { getShiftEndMinutes, resolveShift, isShiftWorkingDay } from './shift-utils';
+import { getShiftEndMinutes } from './shift-utils';
 import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
 import { Holiday, Employee } from './models/index';
 import User from './models/User';

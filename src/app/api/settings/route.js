@@ -131,7 +131,7 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
 }
 
 export async function GET(req) {
-  const { user, error } = await requireAuth(req);
+  const { error } = await requireAuth(req);
   if (error) return error;
   await dbConnect();
   const type = new URL(req.url).searchParams.get('type');

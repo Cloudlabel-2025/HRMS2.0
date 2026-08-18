@@ -1,9 +1,8 @@
 import dbConnect from '@/lib/db';
-import User from '@/lib/models/User';
 import UsrIdentity from '@/lib/models/Identity';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { SelfServiceRequest } from '@/lib/models/index';
-import { requireAuth, auditLog } from '@/lib/middleware';
+import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { sanitizeIdentityRecord, sanitizeProfileRecord } from '@/lib/core/privacy';
 

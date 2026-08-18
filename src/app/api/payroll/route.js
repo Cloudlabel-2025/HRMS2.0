@@ -1,10 +1,7 @@
 import { connectDB } from '@/lib/db';
-import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
-import Attendance from '@/lib/models/Attendance';
-import User from '@/lib/models/User';
+import { Payroll } from '@/lib/models/Payroll';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { AuditLog } from '@/lib/models/index';
 
 export async function GET(req) {
   try {

@@ -18,7 +18,7 @@ function Label({ text, color }) {
 
 export default function LeavePoliciesPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime } = useSettings();
+  const { formatDate } = useSettings();
   const [tab, setTab] = useState('policies');
   const [policies, setPolicies] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -27,8 +27,6 @@ export default function LeavePoliciesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
-  const [showModal, setShowModal] = useState(null);
-  const [modalForm, setModalForm] = useState({});
 
   // Policy editor state
   const [editingPolicy, setEditingPolicy] = useState(null);

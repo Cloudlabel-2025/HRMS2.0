@@ -1,8 +1,7 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
-import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
-import { ok, fail } from '@/lib/jwt';
+import { fail } from '@/lib/jwt';
 
 export async function GET(req) {
   try {

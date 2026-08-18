@@ -7,8 +7,6 @@ export const IDENTITY_STATUSES = ['active', 'inactive', 'archived'];
 export const GENDER_VALUES = ['male', 'female', 'transgender', 'non_binary', 'prefer_not_to_say'];
 export const MARITAL_STATUS_VALUES = ['single', 'married', 'divorced', 'widowed', 'separated', 'prefer_not_to_say'];
 export const ADDRESS_TYPES = ['permanent', 'current', 'present', 'mailing', 'home'];
-export const IDENTIFIER_TYPES = ['pan', 'aadhaar'];
-
 export const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract', 'intern', 'consultant', 'apprentice'];
 export const EMPLOYMENT_STATUSES = ['onboarding', 'probation', 'active', 'suspended', 'notice_period', 'resigned', 'terminated', 'retired', 'alumni', 'rehired'];
 export const SEPARATION_TYPES = ['resignation', 'termination', 'retirement', 'contract_end', 'medical_exit', 'death', 'other'];

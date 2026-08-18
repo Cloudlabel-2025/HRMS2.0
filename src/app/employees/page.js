@@ -42,7 +42,7 @@ function composeAddress(form) {
 
 export default function EmployeesPage() {
   const { user } = useAuth();
-  const { formatDate, formatDateTime, formatTime } = useSettings();
+  const { formatDateTime, formatTime } = useSettings();
   const { errors: formErrs, setErrors: setFormErrs, clearError: clearFormErr, clearAll: clearFormErrs, Err: FErr } = useFormErrors();
   const [employees, setEmployees]   = useState([]);
   const [loading, setLoading]       = useState(true);
@@ -93,18 +93,6 @@ export default function EmployeesPage() {
   }, []);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast({ msg: '', type: 'success' }), 3000); };
-  const recordAuditAction = (action, details, severity = 'low') => {
-    api.post('/api/audit/action', { action, module: 'Employees', details, severity }).catch(() => {});
-  };
-  const rejectEmployeeSave = (message) => {
-    showToast(message, 'error');
-    recordAuditAction(
-      editEmp ? 'Employee Update Validation Failed' : 'Employee Create Validation Failed',
-      `${editEmp ? `Employee: ${editEmp.name}. ` : ''}${message}`,
-      'medium'
-    );
-  };
-
   const loadDepartments = () => api.get('/api/settings?type=departments').then(data => setDepartments(data.map(d => d.name))).catch(() => {});
   const loadDesignations = () => api.get('/api/settings?type=designations').then(data => setDesignations(data)).catch(() => {});
   const loadShifts = () => api.get('/api/settings?type=shifts').then(data => setShifts(Array.isArray(data) ? data : [])).catch(() => {});

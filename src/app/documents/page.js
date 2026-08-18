@@ -268,7 +268,6 @@ export default function DocumentsPage() {
   };
 
   const filtered = docs.filter(d => !search || d.name.toLowerCase().includes(search.toLowerCase()));
-  const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1;
   const paginatedDocs = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const expiringSoon = docs.filter(d => isExpiringSoon(d.expiry)).length;
