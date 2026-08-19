@@ -74,7 +74,7 @@ export default function AlumniPortalPage() {
     <div style={{minHeight:'100vh',background:'linear-gradient(180deg,#0f172a 0,#1e293b 260px,#f1f5f9 260px)',padding:'28px 16px 48px'}}>
       <div style={{maxWidth:960,margin:'0 auto'}}>
         <header style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:16,marginBottom:30,color:'#fff'}}>
-          <div style={{display:'flex',alignItems:'center',gap:12}}><div style={{width:44,height:44,borderRadius:13,background:'linear-gradient(135deg,#14b8a6,#3b82f6)',display:'grid',placeItems:'center'}}><i className="bi bi-mortarboard-fill" style={{fontSize:20}} /></div><div><div style={{fontSize:20,fontWeight:800}}>CHC Alumni Portal</div><div style={{fontSize:12,color:'#cbd5e1'}}>Your employment exit information</div></div></div>
+          <div style={{display:'flex',alignItems:'center',gap:12}}><img src="/logo.png" alt="CHC Logo" style={{width:44,height:44,borderRadius:'50%',objectFit:'cover',background:'#fff',padding:2}} /><div><div style={{fontSize:20,fontWeight:800}}>CHC Alumni Portal</div><div style={{fontSize:12,color:'#cbd5e1'}}>Your employment exit information</div></div></div>
           <button className="btn btn-outline-light btn-sm" onClick={signOut}><i className="bi bi-box-arrow-right me-2" />Sign out</button>
         </header>
 

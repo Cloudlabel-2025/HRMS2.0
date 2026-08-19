@@ -11,6 +11,15 @@ const geist = Geist({
 export const metadata = {
   title: 'HRMS Admin Panel',
   description: 'Enterprise Human Resource Management System',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon.png', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png' },
+    ],
+  },
 };
 
 export default function RootLayout({ children }) {

@@ -85,8 +85,8 @@ export default function LoginPage() {
     <div className="login-page">
       <div style={{ width: '100%', maxWidth: 440, padding: '0 16px' }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
-            <i className="bi bi-hexagon-fill" style={{ color: '#fff', fontSize: 24 }} />
+          <div style={{ width: 64, height: 64, borderRadius: '50%', background: '#fff', padding: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 8px 20px rgba(0,0,0,0.2)' }}>
+            <img src="/logo.png" alt="CHC Logo" style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
           </div>
           <h4 style={{ color: '#fff', fontWeight: 700, margin: 0 }}>CHC-HRMS</h4>
           <p style={{ color: '#94a3b8', fontSize: 13, margin: '4px 0 0' }}>Enterprise Human Resource Management</p>

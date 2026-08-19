@@ -34,27 +34,21 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     let cancelled = false;
-    const mayHaveSession = Boolean(localStorage.getItem('hrms_user'));
-
-    const requestBootstrap = () => fetch('/api/auth/bootstrap', { credentials: 'same-origin' });
 
     const loadSession = async () => {
       try {
-        let response = await requestBootstrap();
-        if (response.status === 401 && mayHaveSession) {
-          const refresh = await fetch('/api/auth/refresh', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-          });
-          if (refresh.ok) response = await requestBootstrap();
-        }
-        if (!response.ok) throw new Error('No active session');
+        const response = await fetch('/api/auth/bootstrap', { credentials: 'same-origin' });
+        if (!response.ok) throw new Error('Bootstrap request failed');
         const json = await response.json();
         if (cancelled) return;
-        localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
-        setUser(json.data.user);
-        setBootstrapSettings(json.data.settings ?? null);
+        if (json.data?.user) {
+          localStorage.setItem('hrms_user', JSON.stringify(json.data.user));
+          setUser(json.data.user);
+        } else {
+          localStorage.removeItem('hrms_user');
+          setUser(null);
+        }
+        setBootstrapSettings(json.data?.settings ?? null);
       } catch {
         if (cancelled) return;
         localStorage.removeItem('hrms_user');

@@ -44,7 +44,9 @@ async function request(url, options = {}, retry = true) {
       // Refresh failed — redirect to login
       if (typeof window !== 'undefined') {
         localStorage.removeItem('hrms_user');
-        window.location.replace('/login?reason=expired');
+        if (!window.location.pathname.startsWith('/login')) {
+          window.location.replace('/login?reason=expired');
+        }
       }
       throw new Error('Session expired');
     }

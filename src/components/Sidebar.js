@@ -93,7 +93,10 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
 
       <div className={`sidebar ${mobileOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
-          <h5><i className="bi bi-hexagon-fill me-2" style={{ background: 'inherit', WebkitBackgroundClip: 'inherit', WebkitTextFillColor: 'initial', color: '#60a5fa', fontSize: 18 }} />HRMS</h5>
+          <h5 className="d-flex align-items-center gap-2" style={{ margin: 0 }}>
+            <img src="/logo.png" alt="CHC Logo" style={{ width: 28, height: 28, borderRadius: '50%', objectFit: 'cover' }} />
+            <span>HRMS</span>
+          </h5>
           <button className="sidebar-close d-md-none" onClick={onMobileClose} aria-label="Close navigation">
             <i className="bi bi-x-lg" />
           </button>
