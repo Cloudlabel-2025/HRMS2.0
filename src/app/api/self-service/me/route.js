@@ -19,7 +19,7 @@ export async function GET(req) {
     if (!identity) return fail('Identity not found', 404);
 
     const profile = await EmpProfile.findOne({ identityId: identity._id }).populate('identityId');
-    const requests = await SelfServiceRequest.find({ identityId: identity._id }).sort({ createdAt: -1 }).limit(20);
+    const requests = await SelfServiceRequest.find({ identityId: identity._id }).populate('reviewerUserId', 'name').sort({ createdAt: -1 }).limit(20);
 
     return ok({
       identity: sanitizeIdentityRecord(identity, user.role, { isOwner: true }),

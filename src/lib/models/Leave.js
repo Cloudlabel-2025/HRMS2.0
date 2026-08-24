@@ -4,7 +4,7 @@ const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected', 'held
 
 const LeaveSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  typeCode: { type: String, required: true },
+  typeCode: { type: String, required: true, default: 'CL' },
   type:    { type: String, required: true }, // kept for backward compatibility; stores leave type name
   from:   { type: String, required: true },
   to:     { type: String, required: true },
@@ -53,6 +53,24 @@ const LeaveSchema = new mongoose.Schema({
 
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });
+
+LeaveSchema.pre('validate', function(next) {
+  if (!this.typeCode) {
+    if (this.type) {
+      const t = this.type.toLowerCase();
+      if (t.includes('casual')) this.typeCode = 'CL';
+      else if (t.includes('sick')) this.typeCode = 'SL';
+      else if (t.includes('privilege') || t.includes('earned')) this.typeCode = 'PL';
+      else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') this.typeCode = 'LOP';
+      else if (t.includes('maternity')) this.typeCode = 'ML';
+      else if (t.includes('paternity')) this.typeCode = 'PATL';
+      else this.typeCode = this.type;
+    } else {
+      this.typeCode = 'CL';
+    }
+  }
+  next();
+});
 
 delete mongoose.models.Leave;
 export default mongoose.models.Leave || mongoose.model('Leave', LeaveSchema);

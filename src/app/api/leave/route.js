@@ -81,6 +81,24 @@ export async function GET(req) {
       .sort({ createdAt: -1 })
       .lean();
 
+    leaves = leaves.map(leave => {
+      if (!leave.typeCode) {
+        if (leave.type) {
+          const t = leave.type.toLowerCase();
+          let tc = leave.type;
+          if (t.includes('casual')) tc = 'CL';
+          else if (t.includes('sick')) tc = 'SL';
+          else if (t.includes('privilege') || t.includes('earned')) tc = 'PL';
+          else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') tc = 'LOP';
+          else if (t.includes('maternity')) tc = 'ML';
+          else if (t.includes('paternity')) tc = 'PATL';
+          return { ...leave, typeCode: tc };
+        }
+        return { ...leave, typeCode: 'CL' };
+      }
+      return leave;
+    });
+
     if (scope === 'approvals') {
       const policyIds = [...new Set(leaves.map(leave => leave.policyId?.toString()).filter(Boolean))];
       const policies = policyIds.length

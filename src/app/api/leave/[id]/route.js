@@ -71,6 +71,21 @@ export async function PUT(req, { params }) {
     const leave = await Leave.findById(id).populate('userId', 'name email _id department role');
     if (!leave) return fail('Leave not found', 404);
 
+    if (!leave.typeCode) {
+      if (leave.type) {
+        const t = leave.type.toLowerCase();
+        if (t.includes('casual')) leave.typeCode = 'CL';
+        else if (t.includes('sick')) leave.typeCode = 'SL';
+        else if (t.includes('privilege') || t.includes('earned')) leave.typeCode = 'PL';
+        else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') leave.typeCode = 'LOP';
+        else if (t.includes('maternity')) leave.typeCode = 'ML';
+        else if (t.includes('paternity')) leave.typeCode = 'PATL';
+        else leave.typeCode = leave.type;
+      } else {
+        leave.typeCode = 'CL';
+      }
+    }
+
     if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
 
     const applicantId = leave.userId._id || leave.userId;

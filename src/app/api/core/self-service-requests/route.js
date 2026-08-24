@@ -211,7 +211,11 @@ export async function PUT(req) {
     }
 
     await auditLog('Self-Service Request Reviewed', 'SelfService', user._id, `${validation.data.action} ${request.requestType} request`, validation.data.action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, identity?.authUserId || null);
-    return ok({ request });
+    const updatedRequest = await SelfServiceRequest.findById(request._id)
+      .populate('identityId', 'legalName primaryEmail displayName')
+      .populate('profileId', 'employeeNumber employmentStatus department designation')
+      .populate('reviewerUserId', 'name');
+    return ok({ request: updatedRequest || request });
   } catch (e) {
     return fail(e.message, e.statusCode || 500);
   }

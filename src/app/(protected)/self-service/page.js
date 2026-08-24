@@ -285,6 +285,13 @@ export default function SelfServicePage() {
                     </div>
                   )}
                   <div className="small mt-1">{req.reason}</div>
+                  {req.reviewedAt && (
+                    <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, borderTop: '1px dashed #e2e8f0', paddingTop: 4 }}>
+                      {req.status === 'approved' ? 'Approved' : req.status === 'rejected' ? 'Rejected' : 'Reviewed'} on {formatDate(req.reviewedAt)}
+                      {req.reviewerUserId?.name ? <strong> by {req.reviewerUserId.name}</strong> : ''}
+                      {req.reviewNote && !['Approved by HR', 'Rejected by HR'].includes(req.reviewNote) ? ` · Note: ${req.reviewNote}` : ''}
+                    </div>
+                  )}
                 </div>
               ))}
               {requests.length === 0 && <div className="text-muted small">No requests yet.</div>}

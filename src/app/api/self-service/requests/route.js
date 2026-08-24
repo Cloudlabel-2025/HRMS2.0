@@ -74,7 +74,7 @@ export async function GET(req) {
       query.identityId = user.identityId || null;
     }
 
-    const requests = await SelfServiceRequest.find(query).sort({ createdAt: -1 }).limit(50);
+    const requests = await SelfServiceRequest.find(query).populate('reviewerUserId', 'name').sort({ createdAt: -1 }).limit(50);
     return ok({ requests });
   } catch (e) {
     return fail(e.message, 500);

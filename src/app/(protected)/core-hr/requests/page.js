@@ -172,7 +172,7 @@ export default function CoreHrRequestsPage() {
       await api.put('/api/core/self-service-requests', {
         id: selected._id,
         action,
-        reviewNote: reviewNote.trim() || (action === 'approved' ? 'Approved by HR' : 'Rejected by HR'),
+        reviewNote: reviewNote.trim(),
         ...(selected.requestType === 'resignation' && action === 'approved' ? {
           noticePeriodDays: Number(reviewNoticeDays || 0),
           lastWorkingDate: reviewLastWorkingDate,
@@ -253,6 +253,11 @@ export default function CoreHrRequestsPage() {
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {req.reason}
                     </div>
+                    {req.status !== 'pending' && (
+                      <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, fontStyle: 'italic' }}>
+                        {req.status === 'approved' ? 'Approved' : 'Rejected'} by {req.reviewerUserId?.name || 'HR'}
+                      </div>
+                    )}
                   </button>
                 ))}
               </div>
@@ -315,8 +320,16 @@ export default function CoreHrRequestsPage() {
 
               <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 16 }}>
                 Submitted on {formatDate(selected.createdAt)}
-                {selected.reviewedAt && ` · Reviewed on ${formatDate(selected.reviewedAt)}`}
-                {selected.reviewNote && ` · Note: ${selected.reviewNote}`}
+                {selected.reviewedAt && (
+                  <>
+                    {' · '}
+                    {selected.status === 'approved' ? 'Approved' : selected.status === 'rejected' ? 'Rejected' : 'Reviewed'} on {formatDate(selected.reviewedAt)}
+                    <span style={{ fontWeight: 600, color: '#334155' }}> by {selected.reviewerUserId?.name || 'HR'}</span>
+                  </>
+                )}
+                {selected.reviewNote && !['Approved by HR', 'Rejected by HR'].includes(selected.reviewNote) && (
+                  <span> · Note: {selected.reviewNote}</span>
+                )}
               </div>
 
               {selected.status === 'pending' && (
