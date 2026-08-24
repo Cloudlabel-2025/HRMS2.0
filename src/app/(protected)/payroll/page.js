@@ -26,12 +26,16 @@ export default function PayrollPage() {
   const [running, setRunning] = useState(false);
   const [showSlip, setShowSlip] = useState(null);
   const [showStructureModal, setShowStructureModal] = useState(false);
-  const [structureForm, setStructureForm] = useState({ userId: '', grossLPA: '' });
+  const [structureForm, setStructureForm] = useState({ userId: '', grossLPA: '', ruleId: '', overrides: [] });
   const strVal = (v) => v === '' || v === undefined || v === null ? '' : String(v);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [registerPage, setRegisterPage] = useState(1);
   const [structurePage, setStructurePage] = useState(1);
+  const [rules, setRules] = useState([]);
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [ruleForm, setRuleForm] = useState({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true } });
+  const [savingRule, setSavingRule] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -43,6 +47,9 @@ export default function PayrollPage() {
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
 
   const approvePayroll = async (action) => {
+    if (action === 'finalize' && !cycleReady) {
+      if (!confirm('The current payroll cycle has not ended yet. Finalizing now will lock salary payouts mid-cycle. Are you sure you want to finalize anyway?')) return;
+    }
     try {
       const res = await api.post('/api/payroll/approve', { month, action });
       showToast(`Payroll ${action}d — ${res.updated} records updated`);
@@ -55,14 +62,16 @@ export default function PayrollPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const [p, s, e] = await Promise.all([
+      const [p, s, e, r] = await Promise.all([
         api.get(`/api/payroll?month=${month}`),
         isAdmin ? api.get('/api/payroll/structure') : Promise.resolve([]),
         isAdmin ? api.get('/api/employees') : Promise.resolve([]),
+        isAdmin ? api.get('/api/payroll/rules') : Promise.resolve([]),
       ]);
       setPayrolls(Array.isArray(p) ? p : []);
       setStructures(Array.isArray(s) ? s : []);
       setEmployees(Array.isArray(e) ? e : []);
+      setRules(Array.isArray(r) ? r : []);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -83,7 +92,7 @@ export default function PayrollPage() {
     setRunning(true);
     try {
       const res = await api.post('/api/payroll/run', { month });
-      showToast(`Payroll processed for ${res.processed} employees`);
+      showToast(res.isMidCycle ? `Draft preview generated for ${res.processed} employees` : `Payroll processed for ${res.processed} employees`);
       load();
     } catch (e) {
       showToast(e.message, 'error');
@@ -122,7 +131,7 @@ export default function PayrollPage() {
         </div>
         <div class='box' style='flex:1'>
           <div style='font-weight:700;font-size:13px;color:#ef4444;margin-bottom:10px'>DEDUCTIONS</div>
-          <div class='row ded'><span>EPFO</span><span>${fmt(slip.epfo)}</span></div>
+          <div class='row ded'><span>EPFO</span><span>${fmt(slip.pf)}</span></div>
           <div class='row ded'><span>ESI</span><span>${fmt(slip.esi)}</span></div>
           <div class='row ded'><span>Loss of Pay</span><span>${fmt(slip.lossOfPay)}</span></div>
           <div class='row ded'><span>Total Deductions</span><span>${fmt(slip.totalDeductions)}</span></div>
@@ -143,6 +152,8 @@ export default function PayrollPage() {
       await api.post('/api/payroll/structure', {
         userId: structureForm.userId,
         grossLPA: +structureForm.grossLPA,
+        ruleId: structureForm.ruleId || null,
+        overrides: structureForm.overrides || [],
       });
       showToast('Salary structure saved');
       setShowStructureModal(false);
@@ -151,6 +162,25 @@ export default function PayrollPage() {
       showToast(e.message, 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveRule = async () => {
+    if (!ruleForm.name) return showToast('Rule name is required', 'error');
+    if (!ruleForm.earnings?.length) return showToast('At least one earning component is required', 'error');
+    if (!ruleForm.earnings.some(e => e.code === 'BASIC')) return showToast('A BASIC earning component is required', 'error');
+    setSavingRule(true);
+    try {
+      const payload = { ...ruleForm };
+      if (!payload._id) delete payload._id;
+      await api.post('/api/payroll/rules', payload);
+      showToast(ruleForm._id ? 'Rule updated' : 'Rule created');
+      setShowRuleModal(false);
+      load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSavingRule(false);
     }
   };
 
@@ -184,10 +214,10 @@ export default function PayrollPage() {
             <button className="btn btn-outline-success" onClick={() => approvePayroll('finalize')}>
               <i className="bi bi-lock me-2" />Finalize
             </button>
-            <button className="btn btn-primary" onClick={runPayroll} disabled={running || !cycleReady} title={!cycleReady ? 'Payroll cycle has not ended yet' : ''}>
-              {running ? <><span className="spinner-border spinner-border-sm me-2" />Running...</> : <><i className="bi bi-play-circle me-2" />Run Payroll</>}
+            <button className="btn btn-primary" onClick={runPayroll} disabled={running} title={!cycleReady ? 'Generates draft calculations for cycle in progress' : 'Generates draft calculations for cycle'}>
+              {running ? <><span className="spinner-border spinner-border-sm me-2" />Running...</> : <><i className="bi bi-play-circle me-2" />{cycleReady ? 'Run Payroll' : 'Run Preview Draft'}</>}
             </button>
-            {!cycleReady && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 12, padding: '6px 12px', borderRadius: 8, alignSelf: 'center' }}><i className="bi bi-exclamation-triangle me-1" />Cycle not ended</span>}
+            {!cycleReady && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8', fontSize: 12, padding: '6px 12px', borderRadius: 8, alignSelf: 'center' }}><i className="bi bi-info-circle me-1" />Cycle in progress — Preview mode</span>}
           </>}
         </div>
       </div>
@@ -196,8 +226,8 @@ export default function PayrollPage() {
         <div className="row g-3 mb-4">
           {[
             { label: 'Total Payroll', value: fmt(totalNet), icon: 'bi-cash-stack', color: '#3b82f6' },
-            { label: 'Processed', value: payrolls.filter(p => p.status === 'processed').length, icon: 'bi-check-circle', color: '#10b981' },
-            { label: 'Pending', value: payrolls.filter(p => p.status === 'pending').length, icon: 'bi-hourglass-split', color: '#f59e0b' },
+            { label: 'Finalized', value: payrolls.filter(p => p.status === 'finalized').length, icon: 'bi-check-circle', color: '#10b981' },
+            { label: 'Draft', value: payrolls.filter(p => p.status === 'draft').length, icon: 'bi-hourglass-split', color: '#f59e0b' },
             { label: 'Employees', value: payrolls.length, icon: 'bi-people', color: '#8b5cf6' },
           ].map((s, i) => (
             <div key={i} className="col-6 col-xl-3">
@@ -220,6 +250,7 @@ export default function PayrollPage() {
           ...(isAdmin ? [{ key: 'register', label: 'Payroll Register' }] : []),
           { key: 'myslip', label: 'My Payslip' },
           ...(isAdmin ? [{ key: 'structure', label: 'Salary Structure' }] : []),
+          ...(isAdmin ? [{ key: 'rules', label: 'Payroll Rules' }] : []),
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t.key ? '#fff' : 'transparent', color: tab === t.key ? '#1e293b' : '#64748b', boxShadow: tab === t.key ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
@@ -332,14 +363,14 @@ export default function PayrollPage() {
             <div className="card">
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Salary Structures</span>
-                <button className="btn btn-primary btn-sm" onClick={() => { setStructureForm({ userId: '', grossLPA: '' }); setShowStructureModal(true); }}><i className="bi bi-plus-lg me-1" />Add Structure</button>
+                <button className="btn btn-primary btn-sm" onClick={() => { setStructureForm({ userId: '', grossLPA: '', ruleId: '', overrides: [] }); setShowStructureModal(true); }}><i className="bi bi-plus-lg me-1" />Add Structure</button>
               </div>
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Employee</th><th>Gross LPA (₹)</th><th>Monthly Gross</th><th>Basic 50%</th><th>HRA 20%</th><th>DA 15%</th><th>CA 10%</th><th>MA 5%</th><th>Edit</th></tr></thead>
+                  <thead><tr><th>Employee</th><th>Gross LPA (₹)</th><th>Monthly Gross</th><th>Rule</th><th>Bonuses</th><th>Edit</th></tr></thead>
                   <tbody>
                     {structures.length === 0 ? (
-                      <tr><td colSpan={9}><div className="empty-state"><i className="bi bi-diagram-3" /><h6>No salary structures defined</h6></div></td></tr>
+                      <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-diagram-3" /><h6>No salary structures defined</h6></div></td></tr>
                     ) : structures.map ? structures.slice((structurePage - 1) * pageSize, structurePage * pageSize).map(s => {
                       const mg = s.grossLPA / 12;
                       return (
@@ -347,12 +378,9 @@ export default function PayrollPage() {
                         <td style={{ fontSize: 13, fontWeight: 600 }}>{s.userId?.name || '—'}</td>
                         <td style={{ fontSize: 13, fontWeight: 700 }}>{fmt(s.grossLPA)}</td>
                         <td style={{ fontSize: 13 }}>{fmt(mg)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.5)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.2)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.15)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.10)}</td>
-                        <td style={{ fontSize: 13 }}>{fmt(mg * 0.05)}</td>
-                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setStructureForm({ userId: s.userId?._id || '', grossLPA: String(s.grossLPA) }); setShowStructureModal(true); }}><i className="bi bi-pencil" /></button></td>
+                        <td style={{ fontSize: 12 }}>{s.ruleId?.name || <span style={{ color: '#94a3b8' }}>Default</span>}</td>
+                        <td style={{ fontSize: 12 }}>{s.overrides?.filter(o => o.type === 'bonus' && o.value > 0).map(o => `${o.label}: ${fmt(o.value)}`).join(', ') || '—'}</td>
+                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setStructureForm({ userId: s.userId?._id || '', grossLPA: String(s.grossLPA), ruleId: s.ruleId?._id || '', overrides: s.overrides || [] }); setShowStructureModal(true); }}><i className="bi bi-pencil" /></button></td>
                       </tr>
                       );
                     }) : null}
@@ -368,6 +396,34 @@ export default function PayrollPage() {
                   pageSize={pageSize}
                 />
               )}
+            </div>
+          )}
+
+          {tab === 'rules' && isAdmin && (
+            <div className="card">
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>Payroll Rules</span>
+                <button className="btn btn-primary btn-sm" onClick={() => { setRuleForm({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0 } }); setShowRuleModal(true); }}><i className="bi bi-plus-lg me-1" />Add Rule</button>
+              </div>
+              <div className="table-responsive">
+                <table className="table mb-0">
+                  <thead><tr><th>Rule Name</th><th>Default</th><th>Earnings</th><th>Deductions</th><th>LOP Basis</th><th>Edit</th></tr></thead>
+                  <tbody>
+                    {rules.length === 0 ? (
+                      <tr><td colSpan={6}><div className="empty-state"><i className="bi bi-diagram-3" /><h6>No payroll rules defined</h6></div></td></tr>
+                    ) : rules.map(r => (
+                      <tr key={r._id}>
+                        <td style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</td>
+                        <td>{r.isDefault ? <span className="badge status-approved">Default</span> : '—'}</td>
+                        <td style={{ fontSize: 12 }}>{r.earnings?.map(e => `${e.label} (${e.value}${e.type.includes('percent') ? '%' : ''})`).join(', ')}</td>
+                        <td style={{ fontSize: 12 }}>{r.deductions?.filter(d => d.enabled !== false).map(d => d.label).join(', ') || '—'}</td>
+                        <td style={{ fontSize: 12 }}>{r.lopConfig?.basis === 'calendar_days' ? 'Calendar Days' : 'Working Days'}</td>
+                        <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setRuleForm({ ...r }); setShowRuleModal(true); }}><i className="bi bi-pencil" /></button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>
@@ -388,13 +444,112 @@ export default function PayrollPage() {
                   <button className="btn-close" onClick={() => setShowSlip(null)} />
                 </div>
               </div>
-              {[['Monthly Gross', showSlip.monthlyGross], ['Basic Pay', showSlip.basicPay], ['HRA', showSlip.hra], ['DA', showSlip.dearnessAllowance], ['CA', showSlip.conveyanceAllowance], ['MA', showSlip.medicalAllowance]].map(([l, v]) => (
-                <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', fontSize: 13 }}><span style={{ color: '#64748b' }}>{l}</span><span>{fmt(v)}</span></div>
+              {(showSlip.earningsArray?.length ? showSlip.earningsArray : [['Monthly Gross', showSlip.monthlyGross], ['Basic Pay', showSlip.basicPay], ['HRA', showSlip.hra], ['DA', showSlip.dearnessAllowance], ['CA', showSlip.conveyanceAllowance], ['MA', showSlip.medicalAllowance]].map(([l, v]) => ({ label: l, amount: v }))).map((e, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', fontSize: 13 }}><span style={{ color: '#64748b' }}>{e.label}</span><span>{fmt(e.amount)}</span></div>
               ))}
-              {[['PF', showSlip.pf], ['ESI', showSlip.esi], ['LOP', showSlip.lossOfPay]].map(([l, v]) => (
-                <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', color: '#ef4444', fontSize: 13 }}><span>{l}</span><span>-{fmt(v)}</span></div>
+              {(showSlip.deductionsArray?.length ? showSlip.deductionsArray : [{ label: 'PF', amount: showSlip.pf }, { label: 'ESI', amount: showSlip.esi }, { label: 'LOP', amount: showSlip.lossOfPay }]).map((d, i) => (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', color: '#ef4444', fontSize: 13 }}><span>{d.label}</span><span>-{fmt(d.amount)}</span></div>
               ))}
+              {showSlip.bonuses?.length > 0 && <>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#8b5cf6', marginTop: 8, marginBottom: 4 }}>BONUSES</div>
+                {showSlip.bonuses.map((b, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9', color: '#8b5cf6', fontSize: 13 }}><span>{b.label}</span><span>+{fmt(b.amount)}</span></div>
+                ))}
+              </>}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', fontWeight: 800, fontSize: 16 }}><span>Net Pay</span><span style={{ color: '#3b82f6' }}>{fmt(showSlip.netPay)}</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Payroll Rule Modal */}
+      {showRuleModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1060 }}>
+          <div className="modal-dialog modal-dialog-centered modal-lg" style={{ maxWidth: 720 }}>
+            <div className="modal-content">
+              <div className="modal-header"><h5 className="modal-title">{ruleForm._id ? 'Edit' : 'New'} Payroll Rule</h5><button className="btn-close" onClick={() => setShowRuleModal(false)} /></div>
+              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                <div className="row g-3">
+                  <div className="col-8">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Rule Name</label>
+                    <input className="form-control" value={ruleForm.name} onChange={e => setRuleForm(p => ({ ...p, name: e.target.value }))} placeholder="e.g. Standard India" />
+                  </div>
+                  <div className="col-4 d-flex align-items-end">
+                    <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.isDefault || false} onChange={e => setRuleForm(p => ({ ...p, isDefault: e.target.checked }))} id="ruleDefault" /><label className="form-check-label" htmlFor="ruleDefault" style={{ fontSize: 13 }}>Default Rule</label></div>
+                  </div>
+
+                  {/* Earnings */}
+                  <div className="col-12">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <label className="form-label mb-0" style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>Earnings Components</label>
+                      <button className="btn btn-outline-success btn-sm" style={{ fontSize: 11 }} onClick={() => setRuleForm(p => ({ ...p, earnings: [...(p.earnings || []), { code: '', label: '', type: 'percent_of_gross', value: 0 }] }))}><i className="bi bi-plus me-1" />Add</button>
+                    </div>
+                    {(ruleForm.earnings || []).map((comp, idx) => (
+                      <div key={idx} className="row g-2 mb-2 align-items-center">
+                        <div className="col-2"><input className="form-control form-control-sm" placeholder="Code" value={comp.code} onChange={e => { const arr = [...ruleForm.earnings]; arr[idx] = { ...arr[idx], code: e.target.value.toUpperCase() }; setRuleForm(p => ({ ...p, earnings: arr })); }} /></div>
+                        <div className="col-3"><input className="form-control form-control-sm" placeholder="Label" value={comp.label} onChange={e => { const arr = [...ruleForm.earnings]; arr[idx] = { ...arr[idx], label: e.target.value }; setRuleForm(p => ({ ...p, earnings: arr })); }} /></div>
+                        <div className="col-3"><select className="form-select form-select-sm" value={comp.type} onChange={e => { const arr = [...ruleForm.earnings]; arr[idx] = { ...arr[idx], type: e.target.value }; setRuleForm(p => ({ ...p, earnings: arr })); }}><option value="percent_of_gross">% of Gross</option><option value="percent_of_basic">% of Basic</option><option value="fixed">Fixed ₹</option><option value="remainder">Remainder</option></select></div>
+                        <div className="col-2"><input type="number" className="form-control form-control-sm" placeholder="Value" value={comp.value} onChange={e => { const arr = [...ruleForm.earnings]; arr[idx] = { ...arr[idx], value: +e.target.value }; setRuleForm(p => ({ ...p, earnings: arr })); }} /></div>
+                        <div className="col-2 text-end">{comp.code !== 'BASIC' && <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => setRuleForm(p => ({ ...p, earnings: p.earnings.filter((_, i) => i !== idx) }))}><i className="bi bi-trash" /></button>}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Deductions */}
+                  <div className="col-12">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <label className="form-label mb-0" style={{ fontSize: 13, fontWeight: 700, color: '#ef4444' }}>Deductions</label>
+                      <button className="btn btn-outline-danger btn-sm" style={{ fontSize: 11 }} onClick={() => setRuleForm(p => ({ ...p, deductions: [...(p.deductions || []), { code: '', label: '', type: 'percent_of_gross', value: 0, cap: null, eligibilityMaxGross: null, enabled: true }] }))}><i className="bi bi-plus me-1" />Add</button>
+                    </div>
+                    {(ruleForm.deductions || []).map((comp, idx) => (
+                      <div key={idx} className="row g-2 mb-2 align-items-center">
+                        <div className="col-2"><input className="form-control form-control-sm" placeholder="Code" value={comp.code} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], code: e.target.value.toUpperCase() }; setRuleForm(p => ({ ...p, deductions: arr })); }} /></div>
+                        <div className="col-2"><input className="form-control form-control-sm" placeholder="Label" value={comp.label} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], label: e.target.value }; setRuleForm(p => ({ ...p, deductions: arr })); }} /></div>
+                        <div className="col-2"><select className="form-select form-select-sm" value={comp.type} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], type: e.target.value }; setRuleForm(p => ({ ...p, deductions: arr })); }}><option value="percent_of_basic_da">% of Basic+DA</option><option value="percent_of_gross">% of Gross</option><option value="fixed">Fixed ₹</option></select></div>
+                        <div className="col-1"><input type="number" className="form-control form-control-sm" placeholder="Val" value={comp.value} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], value: +e.target.value }; setRuleForm(p => ({ ...p, deductions: arr })); }} /></div>
+                        <div className="col-2"><input type="number" className="form-control form-control-sm" placeholder="Cap ₹" value={comp.cap || ''} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], cap: e.target.value ? +e.target.value : null }; setRuleForm(p => ({ ...p, deductions: arr })); }} /></div>
+                        <div className="col-2"><input type="number" className="form-control form-control-sm" placeholder="Max Gross" value={comp.eligibilityMaxGross || ''} onChange={e => { const arr = [...ruleForm.deductions]; arr[idx] = { ...arr[idx], eligibilityMaxGross: e.target.value ? +e.target.value : null }; setRuleForm(p => ({ ...p, deductions: arr })); }} /></div>
+                        <div className="col-1 text-end"><button className="btn btn-sm btn-outline-danger" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => setRuleForm(p => ({ ...p, deductions: p.deductions.filter((_, i) => i !== idx) }))}><i className="bi bi-trash" /></button></div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* LOP Config */}
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 700, color: '#f59e0b' }}>LOP Configuration</label>
+                    <div className="row g-2">
+                      <div className="col-3">
+                        <label className="form-label" style={{ fontSize: 11 }}>LOP Basis</label>
+                        <select className="form-select form-select-sm" value={ruleForm.lopConfig?.basis || 'working_days'} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, basis: e.target.value } }))}>
+                          <option value="working_days">Working Days (Cycle)</option>
+                          <option value="calendar_days">Calendar Days (Month)</option>
+                          <option value="fixed_26">Fixed 26 Days</option>
+                          <option value="fixed_30">Fixed 30 Days</option>
+                        </select>
+                      </div>
+                      <div className="col-3">
+                        <label className="form-label" style={{ fontSize: 11 }}>Deduct From</label>
+                        <select className="form-select form-select-sm" value={ruleForm.lopConfig?.deductFrom || 'gross'} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, deductFrom: e.target.value } }))}>
+                          <option value="gross">Gross Salary</option>
+                          <option value="basic">Basic Salary</option>
+                          <option value="basic_da">Basic + DA</option>
+                        </select>
+                      </div>
+                      <div className="col-3">
+                        <label className="form-label" style={{ fontSize: 11 }}>Grace LOP Days</label>
+                        <input type="number" min="0" className="form-control form-control-sm" placeholder="e.g. 0" value={ruleForm.lopConfig?.graceDays ?? 0} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, graceDays: +e.target.value } }))} />
+                      </div>
+                      <div className="col-3 d-flex align-items-end">
+                        <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.lopConfig?.countHalfDay !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, countHalfDay: e.target.checked } }))} id="halfDayLop" /><label className="form-check-label" htmlFor="halfDayLop" style={{ fontSize: 12 }}>Half-day = 0.5 LOP</label></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowRuleModal(false)}>Cancel</button>
+                <button className="btn btn-primary" onClick={saveRule} disabled={savingRule}>{savingRule ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save Rule'}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -424,6 +579,28 @@ export default function PayrollPage() {
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Gross LPA (₹)</label>
                     <input type="number" className="form-control" value={strVal(structureForm.grossLPA)} onChange={e => setStructureForm(p => ({ ...p, grossLPA: e.target.value }))} placeholder="e.g. 180000" />
+                  </div>
+                  <div className="col-12">
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Payroll Rule</label>
+                    <select className="form-select" value={structureForm.ruleId || ''} onChange={e => setStructureForm(p => ({ ...p, ruleId: e.target.value }))}>
+                      <option value="">Default Rule</option>
+                      {rules.map(r => <option key={r._id} value={r._id}>{r.name}{r.isDefault ? ' (Default)' : ''}</option>)}
+                    </select>
+                  </div>
+                  <div className="col-12">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <label className="form-label mb-0" style={{ fontSize: 13, fontWeight: 600 }}>Bonuses / Overrides</label>
+                      <button className="btn btn-outline-primary btn-sm" style={{ fontSize: 11 }} onClick={() => setStructureForm(p => ({ ...p, overrides: [...(p.overrides || []), { code: 'BONUS', label: 'Bonus', type: 'bonus', value: 0, recurring: true }] }))}><i className="bi bi-plus me-1" />Add</button>
+                    </div>
+                    {(structureForm.overrides || []).map((ovr, idx) => (
+                      <div key={idx} className="row g-2 mb-2 align-items-center">
+                        <div className="col-3"><input className="form-control form-control-sm" placeholder="Code" value={ovr.code || ''} onChange={e => { const arr = [...structureForm.overrides]; arr[idx] = { ...arr[idx], code: e.target.value }; setStructureForm(p => ({ ...p, overrides: arr })); }} /></div>
+                        <div className="col-3"><input className="form-control form-control-sm" placeholder="Label" value={ovr.label || ''} onChange={e => { const arr = [...structureForm.overrides]; arr[idx] = { ...arr[idx], label: e.target.value }; setStructureForm(p => ({ ...p, overrides: arr })); }} /></div>
+                        <div className="col-2"><input type="number" className="form-control form-control-sm" placeholder="₹" value={ovr.value || ''} onChange={e => { const arr = [...structureForm.overrides]; arr[idx] = { ...arr[idx], value: +e.target.value }; setStructureForm(p => ({ ...p, overrides: arr })); }} /></div>
+                        <div className="col-2"><div className="form-check mt-1"><input className="form-check-input" type="checkbox" checked={ovr.recurring !== false} onChange={e => { const arr = [...structureForm.overrides]; arr[idx] = { ...arr[idx], recurring: e.target.checked }; setStructureForm(p => ({ ...p, overrides: arr })); }} /><label className="form-check-label" style={{ fontSize: 11 }}>Monthly</label></div></div>
+                        <div className="col-2 text-end"><button className="btn btn-sm btn-outline-danger" style={{ fontSize: 10, padding: '2px 6px' }} onClick={() => setStructureForm(p => ({ ...p, overrides: p.overrides.filter((_, i) => i !== idx) }))}><i className="bi bi-trash" /></button></div>
+                      </div>
+                    ))}
                   </div>
                   {structureForm.grossLPA > 0 && (
                     <div className="col-12" style={{ background: '#f8fafc', borderRadius: 8, padding: 12, marginTop: 4 }}>

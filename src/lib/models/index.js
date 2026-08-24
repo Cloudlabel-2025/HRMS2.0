@@ -412,6 +412,7 @@ const SmeExpertiseSchema = new mongoose.Schema({
 // Re-export models from separate files
 export { Task, Project } from './Task';
 export { Payroll, SalaryStructure } from './Payroll';
+export { default as PayrollRule } from './PayrollRule';
 
 // ── Exports ───────────────────────────────────────────────────────────────────
 if (mongoose.models.Goal) delete mongoose.models.Goal;

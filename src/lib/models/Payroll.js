@@ -1,8 +1,17 @@
 import mongoose from 'mongoose';
+import './PayrollRule';
 
 const SalaryStructureSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
   grossLPA:{ type: Number, required: true },
+  ruleId:  { type: mongoose.Schema.Types.ObjectId, ref: 'PayrollRule', default: null },
+  overrides: [{
+    code:      { type: String, required: true },
+    label:     { type: String, default: '' },
+    type:      { type: String, enum: ['earning', 'deduction', 'bonus'], default: 'bonus' },
+    value:     { type: Number, default: 0 },
+    recurring: { type: Boolean, default: true },
+  }],
 }, { timestamps: true });
 
 const PayrollSchema = new mongoose.Schema({
@@ -16,6 +25,14 @@ const PayrollSchema = new mongoose.Schema({
   dearnessAllowance:   { type: Number },
   conveyanceAllowance: { type: Number },
   medicalAllowance:    { type: Number },
+
+  // Dynamic component arrays (new rule-driven system)
+  earningsArray:   [{ code: String, label: String, amount: Number, _id: false }],
+  deductionsArray: [{ code: String, label: String, amount: Number, _id: false }],
+  bonuses:         [{ code: String, label: String, amount: Number, _id: false }],
+  totalEarnings:   { type: Number, default: 0 },
+  totalBonuses:    { type: Number, default: 0 },
+  ruleSnapshot:    { name: String, ruleId: { type: mongoose.Schema.Types.ObjectId } },
 
   // Deductions
   pf:         { type: Number },
@@ -45,6 +62,11 @@ const PayrollSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 PayrollSchema.index({ userId: 1, month: 1 }, { unique: true });
+
+if (process.env.NODE_ENV === 'development') {
+  delete mongoose.models.SalaryStructure;
+  delete mongoose.models.Payroll;
+}
 
 export const SalaryStructure = mongoose.models.SalaryStructure || mongoose.model('SalaryStructure', SalaryStructureSchema);
 export const Payroll         = mongoose.models.Payroll         || mongoose.model('Payroll', PayrollSchema);

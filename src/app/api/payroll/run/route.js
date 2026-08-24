@@ -1,5 +1,6 @@
 import { connectDB } from '@/lib/db';
 import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
+import PayrollRule from '@/lib/models/PayrollRule';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, isWorkingDay } from '@/lib/payroll-cycle';
@@ -28,9 +29,7 @@ export async function POST(req) {
     const { fromDate, toDate } = getCycleRange(startDay, endDay, year, monthIndex);
 
     const todayStr = new Date().toISOString().slice(0, 10);
-    if (todayStr <= toDate) {
-      return fail(`Payroll can only be processed after the cycle end date (${toDate})`, 400);
-    }
+    const isMidCycle = todayStr <= toDate;
 
     const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
     const workingDays = workingCalendar.workingDays;
@@ -44,6 +43,9 @@ export async function POST(req) {
 
     const calendarStats = getCycleCalendarStats(fromDate, toDate);
 
+    // Load default payroll rule
+    const defaultRule = await PayrollRule.findOne({ isDefault: true }).lean();
+
     const employees = await User.find({ status: 'active' });
     const results = [];
 
@@ -53,6 +55,12 @@ export async function POST(req) {
 
       const structure = await SalaryStructure.findOne({ userId: emp._id });
       if (!structure) continue;
+
+      // Resolve the payroll rule for this employee
+      const rule = structure.ruleId
+        ? (await PayrollRule.findById(structure.ruleId).lean()) || defaultRule
+        : defaultRule;
+      const lopConfig = rule?.lopConfig || { basis: 'working_days', deductFrom: 'gross', countHalfDay: true };
 
       let presentDays;
       let lopDays;
@@ -67,7 +75,8 @@ export async function POST(req) {
         });
         // Any clocked working day is present. Short hours and late arrival are
         // deliberately informational and never become LOP.
-        presentDays = records.filter(r => workingDateSet.has(r.date) && r.clockIn && ['present','late','half_day'].includes(r.status)).length;
+        presentDays = records.filter(r => workingDateSet.has(r.date) && r.clockIn && ['present','late','half_day'].includes(r.status))
+          .reduce((sum, r) => sum + (r.status === 'half_day' && lopConfig.countHalfDay ? 0.5 : 1), 0);
 
         const { default: Leave } = await import('@/lib/models/Leave');
         const approvedLeaves = await Leave.find({
@@ -95,28 +104,38 @@ export async function POST(req) {
       }
 
       const result = calculatePayroll({
+        rule,
         grossLPA: structure.grossLPA,
-        totalDaysInMonth: calendarStats.totalDays,
-        sundaysInMonth: calendarStats.sundays,
-        alternateSaturdaysInMonth: calendarStats.alternateSaturdays,
-        unpaidLeavesTaken: lopDays,
         workingDays,
+        totalDaysInMonth: calendarStats.totalDays,
+        lopDays,
+        overrides: structure.overrides || [],
+        adhocBonuses: [],
       });
 
       const payroll = await Payroll.findOneAndUpdate(
         { userId: emp._id, month },
         {
-          monthlyGross: result.earnings.monthlyGross,
-          basicPay: result.earnings.basicPay,
-          hra: result.earnings.hra,
-          dearnessAllowance: result.earnings.dearnessAllowance,
-          conveyanceAllowance: result.earnings.conveyanceAllowance,
-          medicalAllowance: result.earnings.medicalAllowance,
-          pf: result.deductions.employeePF,
-          esi: result.deductions.employeeESI,
-          lossOfPay: result.deductions.lossOfPayDeduction,
-          totalDeductions: result.deductions.totalDeductions,
-          netPay: result.netTakeHome,
+          // Legacy flat fields (backward compat)
+          monthlyGross:        result.legacy.monthlyGross,
+          basicPay:            result.legacy.basicPay,
+          hra:                 result.legacy.hra,
+          dearnessAllowance:   result.legacy.dearnessAllowance,
+          conveyanceAllowance: result.legacy.conveyanceAllowance,
+          medicalAllowance:    result.legacy.medicalAllowance,
+          pf:                  result.legacy.pf,
+          esi:                 result.legacy.esi,
+          lossOfPay:           result.legacy.lossOfPay,
+          totalDeductions:     result.legacy.totalDeductions,
+          netPay:              result.netPay,
+          // Dynamic arrays (new rule-driven system)
+          earningsArray:       result.earnings,
+          deductionsArray:     result.deductions,
+          bonuses:             result.bonuses,
+          totalEarnings:       result.totalEarnings,
+          totalBonuses:        result.totalBonuses,
+          ruleSnapshot:        { name: rule?.name || 'Default', ruleId: rule?._id || null },
+          // Attendance
           presentDays,
           lopDays,
           workingDays,
@@ -137,7 +156,7 @@ export async function POST(req) {
       auditLog('Payroll Run', 'Payroll', user._id, `Payroll draft generated for ${month} (${workingDays} working days)`, 'high', ip, null, r.userId)
     ));
 
-    return ok({ processed: results.length, month, workingDays });
+    return ok({ processed: results.length, month, workingDays, isMidCycle });
   } catch (e) {
     return fail(e.message, 500);
   }
