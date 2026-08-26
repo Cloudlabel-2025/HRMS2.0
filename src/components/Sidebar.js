@@ -35,7 +35,7 @@ const NAV_ITEMS = [
   { module: 'communication', href: '/communication', icon: 'bi-megaphone',             label: 'Announcements', section: 'HR' },
   { module: 'calendar',      href: '/calendar',      icon: 'bi-calendar3',             label: 'Calendar',      section: 'HR' },
   { module: 'reports',       href: '/reports',       icon: 'bi-file-earmark-bar-graph',label: 'Reports',       section: 'ANALYTICS' },
-  { module: 'sme',           href: '/sme',           icon: 'bi-person-gear',           label: 'SME Portal',    section: 'ANALYTICS' },
+  { module: 'control_center', href: '/admin/control-center', icon: 'bi-sliders', label: 'Policy Control Portal', section: 'SYSTEM' },
   { module: 'settings',      href: '/settings',         icon: 'bi-gear',                  label: 'Settings',         section: 'SYSTEM' },
   { module: 'notifications', href: '/notifications', icon: 'bi-bell', label: 'Notifications', section: 'SYSTEM' },
   { module: 'settings',      href: '/leave-policies',   icon: 'bi-calendar-check',       label: 'Leave Policies',    section: 'SYSTEM' },

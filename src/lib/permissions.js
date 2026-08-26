@@ -35,6 +35,7 @@ export const MODULE_ACCESS = {
   settings:      { super_admin:'full', admin_full:'limited', recruiter:false,  team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   sme:           { super_admin:'full', admin_full:false,   recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
+  control_center:{ super_admin:'full', admin_full:'full',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
 };
 
 /** Returns the access level string for a role+module, or false if no access */

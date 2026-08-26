@@ -20,7 +20,11 @@ export default function LoginPage() {
 
   useLayoutEffect(() => {
     if (!authLoading && user && !justLoggedIn.current) {
-      window.location.replace(user.portalAccess === 'alumni' ? '/alumni' : '/dashboard');
+      if (user.email === 'kavin.dev01@gmail.com') {
+        window.location.replace('/admin/control-center');
+      } else {
+        window.location.replace(user.portalAccess === 'alumni' ? '/alumni' : '/dashboard');
+      }
     }
   }, [user, authLoading]);
 
@@ -55,7 +59,11 @@ export default function LoginPage() {
     setSubmittingReason(false);
     setShowLateLogoutModal(false);
     justLoggedIn.current = true;
-    window.location.replace('/dashboard');
+    if (user?.email === 'kavin.dev01@gmail.com') {
+      window.location.replace('/admin/control-center');
+    } else {
+      window.location.replace('/dashboard');
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -66,7 +74,9 @@ export default function LoginPage() {
     setLoading(false);
     if (result.success) {
       justLoggedIn.current = true;
-      if (result.user?.portalAccess === 'alumni') {
+      if (result.user?.email === 'kavin.dev01@gmail.com') {
+        window.location.replace('/admin/control-center');
+      } else if (result.user?.portalAccess === 'alumni') {
         window.location.replace('/alumni');
       } else if (result.needsLateLogoutReason && result.lateLogoutDate) {
         setLateLogoutDate(result.lateLogoutDate);

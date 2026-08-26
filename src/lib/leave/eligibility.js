@@ -39,7 +39,13 @@ export async function buildEmployeeContext(userId) {
     department:       profile?.department || user.department || '',
     employmentStatus: profile?.employmentStatus || 'active',
     serviceMonths:    serviceMonths || 0,
-    customAttributes: identity?.customAttributes ? Object.fromEntries(identity.customAttributes) : {},
+    customAttributes: identity?.customAttributes
+      ? (identity.customAttributes instanceof Map
+          ? Object.fromEntries(identity.customAttributes)
+          : typeof identity.customAttributes === 'object'
+            ? { ...identity.customAttributes }
+            : {})
+      : {},
   };
 }
 
@@ -56,7 +62,9 @@ export function evaluateEligibility(rules, context) {
   }
 
   for (const rule of rules) {
+    if (!rule) continue;
     let { field, operator, value } = rule;
+    if (!field || typeof field !== 'string') continue;
     let employeeValue;
 
     if (field.startsWith('customAttr.')) {
