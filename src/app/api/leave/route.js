@@ -412,6 +412,9 @@ export async function POST(req) {
 
     // Get / create balance and check availability
     const balance = await getOrCreateBalance(user._id, policy);
+    if (!balance || !Array.isArray(balance.balances)) {
+      return fail('Could not resolve or create your leave balance record.', 400);
+    }
     const balanceEntry = balance.balances.find(b => b.typeCode === typeCode);
     if (!balanceEntry) {
       return fail(`No balance record found or you are not eligible for ${typeConfig.name}`, 400);
@@ -438,19 +441,19 @@ export async function POST(req) {
     }
 
     // Build workflow approvals from policy
-    const activeWorkflow = (typeConfig.useCustomWorkflow && typeConfig.approvalWorkflow && typeConfig.approvalWorkflow.length > 0)
+    const activeWorkflow = (typeConfig.useCustomWorkflow && Array.isArray(typeConfig.approvalWorkflow) && typeConfig.approvalWorkflow.length > 0)
       ? typeConfig.approvalWorkflow
-      : (policy.approvalWorkflow || []);
+      : (Array.isArray(policy.approvalWorkflow) ? policy.approvalWorkflow : []);
 
-    const workflowApprovals = activeWorkflow.map(step => ({
+    const workflowApprovals = Array.isArray(activeWorkflow) ? activeWorkflow.map(step => ({
       step: step.step,
-      label: step.label,
+      label: step.label || `Step ${step.step}`,
       action: 'pending',
       approvedBy: null,
       approvedAt: null,
       holdReason: '',
-      actionType: step.actionType,
-    }));
+      actionType: step.actionType || 'approve',
+    })) : [];
 
     // Create leave record
     const leave = await Leave.create({
@@ -481,8 +484,8 @@ export async function POST(req) {
     await balance.save();
 
     // Notify the first step approvers
-    const firstStep = activeWorkflow?.[0];
-    if (firstStep) {
+    const firstStep = Array.isArray(activeWorkflow) ? activeWorkflow[0] : null;
+    if (firstStep && Array.isArray(firstStep.approverRoles) && firstStep.approverRoles.length > 0) {
       const approvers = await User.find({ role: { $in: firstStep.approverRoles }, status: 'active' }).select('_id');
       if (approvers.length) {
         await notify(
@@ -498,6 +501,7 @@ export async function POST(req) {
     await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${typeConfig.name} (${from} to ${to})`, 'low', ip, null, user._id);
     return ok(leave, 201);
   } catch (e) {
-    return fail(e.message, 500);
+    console.error('[LEAVE POST ERROR]:', e);
+    return fail(e.message || 'An error occurred processing leave request', 500);
   }
 }
