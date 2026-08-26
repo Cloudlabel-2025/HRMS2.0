@@ -54,7 +54,7 @@ const LeaveSchema = new mongoose.Schema({
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });
 
-LeaveSchema.pre('validate', function(next) {
+LeaveSchema.pre('validate', function() {
   if (!this.typeCode) {
     if (this.type) {
       const t = this.type.toLowerCase();
@@ -69,7 +69,6 @@ LeaveSchema.pre('validate', function(next) {
       this.typeCode = 'CL';
     }
   }
-  next();
 });
 
 delete mongoose.models.Leave;
