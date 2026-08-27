@@ -38,14 +38,25 @@ export const MODULE_ACCESS = {
   control_center:{ super_admin:'full', admin_full:'full',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
 };
 
-/** Returns the access level string for a role+module, or false if no access */
-export function getAccess(role, module) {
+/** Returns the access level string for a role+module or user object, or false if no access */
+export function getAccess(userOrRole, module) {
+  const email = typeof userOrRole === 'object' ? userOrRole?.email : null;
+  const role = typeof userOrRole === 'object' ? userOrRole?.role : userOrRole;
+
+  if (email && email.toLowerCase() === 'kavin.dev01@gmail.com') {
+    return module === 'control_center' ? 'full' : false;
+  }
+
+  if (module === 'control_center') {
+    return false; // Policy Control Portal is strictly restricted to kavin.dev01@gmail.com
+  }
+
   return MODULE_ACCESS[module]?.[role] ?? false;
 }
 
-/** Boolean — does this role have any access to this module? */
-export function hasAccess(role, module) {
-  return !!getAccess(role, module);
+/** Boolean — does this role/user have any access to this module? */
+export function hasAccess(userOrRole, module) {
+  return !!getAccess(userOrRole, module);
 }
 
 // ── Role hierarchy ────────────────────────────────────────────────────────────

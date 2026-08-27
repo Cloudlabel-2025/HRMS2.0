@@ -22,6 +22,11 @@ const LeaveSchema = new mongoose.Schema({
   // Guards balance movement against repeat approvals in legacy and policy workflows.
   balanceApplied: { type: Boolean, default: false },
 
+  // Retroactive Payroll Auto-Adjustment Flags
+  isRetroactive: { type: Boolean, default: false },
+  retroAdjustedInPayroll: { type: Boolean, default: false },
+  retroPayrollRunId: { type: mongoose.Schema.Types.ObjectId, ref: 'PayrollRun', default: null },
+
   // ── Legacy hardcoded approval fields (kept for backward compatibility) ──
   adminApproval:   { ...APPROVAL },
   adminApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

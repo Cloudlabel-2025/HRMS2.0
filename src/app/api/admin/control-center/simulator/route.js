@@ -11,8 +11,8 @@ export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (!['super_admin', 'admin_full'].includes(user.role)) {
-      return fail('Access denied: Admin rights required', 403);
+    if (user.email?.toLowerCase() !== 'kavin.dev01@gmail.com') {
+      return fail('Access denied: Policy Control Portal is strictly restricted to designated Dev Admin', 403);
     }
 
     const body = await req.json();

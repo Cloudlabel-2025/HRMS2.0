@@ -68,7 +68,11 @@ const LeavePolicySchema = new mongoose.Schema({
   name:        { type: String, required: true, trim: true },
   description: { type: String, default: '' },
   isDefault:   { type: Boolean, default: false },
-  status:      { type: String, enum: ['active', 'archived'], default: 'active' },
+  status:      { type: String, enum: ['draft', 'active', 'archived'], default: 'active' },
+  version:     { type: Number, default: 1 },
+  publishedAt: { type: Date, default: null },
+  publishedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  draftConfig: { type: mongoose.Schema.Types.Mixed, default: null },
   effectiveFrom: { type: Date, required: true },
   effectiveTo:   { type: Date, default: null },
 
@@ -85,6 +89,8 @@ const LeavePolicySchema = new mongoose.Schema({
   maxPendingApplications: { type: Number, default: 1 },
   countWeekends:          { type: Boolean, default: false },
   countHolidays:          { type: Boolean, default: false },
+  sandwichRule:           { type: Boolean, default: false },
+  retroAdjustmentAllowed: { type: Boolean, default: true },
 }, { timestamps: true });
 
 LeavePolicySchema.pre('save', async function () {

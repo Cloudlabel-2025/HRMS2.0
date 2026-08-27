@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -13,6 +13,7 @@ const IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 export function PersistentAppShell({ children }) {
   const { user, loading, logout, isReadOnly } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [title, setTitle] = useState('');
   const timerRef = useRef(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -60,7 +61,16 @@ export function PersistentAppShell({ children }) {
   useLayoutEffect(() => {
     if (!loading && !user) router.replace('/login');
     if (!loading && user?.portalAccess === 'alumni') router.replace('/alumni');
-  }, [user, loading, router]);
+    if (!loading && user) {
+      if (user.email?.toLowerCase() === 'kavin.dev01@gmail.com') {
+        if (!pathname.startsWith('/admin/control-center')) {
+          router.replace('/admin/control-center');
+        }
+      } else if (pathname.startsWith('/admin/control-center')) {
+        router.replace('/dashboard');
+      }
+    }
+  }, [user, loading, router, pathname]);
 
   useEffect(() => {
     if (!user) return;

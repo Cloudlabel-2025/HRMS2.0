@@ -101,6 +101,21 @@ export async function POST(req) {
         }, 0);
 
         lopDays = Math.max(0, workingDays - (presentDays + paidLeaveDays));
+
+        // Retroactive Leave Adjustments for prior locked cycles
+        const retroLeaves = await Leave.find({
+          userId: emp._id,
+          status: 'approved',
+          isRetroactive: true,
+          retroAdjustedInPayroll: false,
+        });
+
+        let retroLopDays = 0;
+        for (const rLeave of retroLeaves) {
+          retroLopDays += Number(rLeave.unpaidDays) || (rLeave.typeCode === 'LOP' ? Number(rLeave.days) : 0);
+        }
+
+        var retroLopDaysVal = retroLopDays;
       }
 
       const result = calculatePayroll({
@@ -109,6 +124,7 @@ export async function POST(req) {
         workingDays,
         totalDaysInMonth: calendarStats.totalDays,
         lopDays,
+        retroLopDays: typeof retroLopDaysVal !== 'undefined' ? retroLopDaysVal : 0,
         overrides: structure.overrides || [],
         adhocBonuses: [],
       });

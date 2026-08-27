@@ -33,6 +33,33 @@ export default function ControlCenterPage() {
 
   const [simResult, setSimResult] = useState(null);
 
+  // Policy Creation state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newPolicyForm, setNewPolicyForm] = useState({
+    name: '',
+    description: '',
+    isDefault: false,
+  });
+
+  const handleCreatePolicy = async (e) => {
+    e.preventDefault();
+    if (!newPolicyForm.name.trim()) return showToast('Please enter policy name', 'error');
+    setCreating(true);
+    try {
+      const res = await api.post('/api/admin/control-center/policies', newPolicyForm);
+      showToast(res.message || 'New Leave Policy created successfully!');
+      setShowCreateModal(false);
+      setNewPolicyForm({ name: '', description: '', isDefault: false });
+      await loadData();
+      if (res.policy?._id) handlePolicySelect(res.policy._id);
+    } catch (err) {
+      showToast(err.message || 'Failed to create policy', 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
@@ -70,22 +97,24 @@ export default function ControlCenterPage() {
     if (found) setCurrentPolicy(JSON.parse(JSON.stringify(found)));
   };
 
-  const handleSavePolicy = async () => {
+  const handleSavePolicy = async (action = 'publish') => {
     if (!currentPolicy) return;
     setSaving(true);
     try {
       const payload = {
+        action,
         policyId: currentPolicy._id,
         name: currentPolicy.name,
         description: currentPolicy.description,
         countWeekends: currentPolicy.countWeekends,
         countHolidays: currentPolicy.countHolidays,
+        sandwichRule: currentPolicy.sandwichRule,
         maxPendingApplications: currentPolicy.maxPendingApplications,
         requireProbationCompletion: currentPolicy.requireProbationCompletion,
         leaveTypeConfigs: currentPolicy.leaveTypeConfigs,
       };
-      await api.put('/api/admin/control-center/policies', payload);
-      showToast('Leave Policy configuration updated successfully!');
+      const res = await api.put('/api/admin/control-center/policies', payload);
+      showToast(res.message || (action === 'save_draft' ? 'Draft configuration saved!' : 'Policy configuration published live!'));
       loadData();
     } catch (e) {
       showToast(e.message || 'Failed to update policy', 'error');
@@ -222,17 +251,63 @@ export default function ControlCenterPage() {
           {/* TAB 1: LEAVE POLICY CONTROL */}
           {activeTab === 'policy' && currentPolicy && (
             <div className="row g-4">
+              {/* Policy Selector & Create Header Bar */}
+              <div className="col-12">
+                <div className="card shadow-sm border-0" style={{ borderRadius: 14, background: '#f8fafc' }}>
+                  <div className="card-body p-3 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                    <div className="d-flex align-items-center gap-3" style={{ flex: 1, minWidth: 280 }}>
+                      <label className="fw-bold text-secondary mb-0" style={{ fontSize: 13, whiteSpace: 'nowrap' }}>
+                        <i className="bi bi-collection-fill me-2 text-primary" />Select Leave Policy:
+                      </label>
+                      <select
+                        className="form-select"
+                        value={selectedPolicyId}
+                        onChange={e => handlePolicySelect(e.target.value)}
+                        style={{ maxWidth: 380, fontWeight: 600 }}
+                      >
+                        {policies.map(p => (
+                          <option key={p._id} value={p._id}>
+                            {p.name} {p.isDefault ? '(Corporate Default)' : ''} — v{p.version || 1}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <button
+                      className="btn btn-outline-primary fw-bold"
+                      onClick={() => setShowCreateModal(true)}
+                      style={{ borderRadius: 8, padding: '7px 16px', fontSize: 13 }}
+                    >
+                      <i className="bi bi-plus-lg me-2" />Create New Leave Policy
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="col-12">
                 <div className="card shadow-sm border-0" style={{ borderRadius: 14 }}>
                   <div className="card-body p-4">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                       <div>
-                        <h5 style={{ fontWeight: 700, margin: 0, color: '#0f172a' }}>Global Leave Policy Settings</h5>
-                        <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>Configure weekend calculations, holiday rules, and application limits</p>
+                        <div className="d-flex align-items-center gap-2">
+                          <h5 style={{ fontWeight: 700, margin: 0, color: '#0f172a' }}>Global Leave Policy Settings</h5>
+                          <span className="badge bg-secondary" style={{ fontSize: 11 }}>v{currentPolicy.version || 1}</span>
+                          {currentPolicy.draftConfig && (
+                            <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Staged Draft Exists</span>
+                          )}
+                        </div>
+                        <p style={{ margin: 0, fontSize: 13, color: '#64748b' }}>Configure weekend calculations, holiday rules, application limits, and sandwich leave rules</p>
                       </div>
-                      <button className="btn btn-primary" onClick={handleSavePolicy} disabled={saving} style={{ borderRadius: 8, padding: '8px 20px', fontWeight: 600 }}>
-                        {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-save me-2" />Save Policy Configuration</>}
-                      </button>
+
+                      <div className="d-flex gap-2">
+                        <button className="btn btn-outline-secondary" onClick={() => handleSavePolicy('save_draft')} disabled={saving} style={{ borderRadius: 8, padding: '8px 16px', fontWeight: 600 }}>
+                          {saving ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-file-earmark-diff me-2" />}
+                          Save Staged Draft
+                        </button>
+                        <button className="btn btn-primary" onClick={() => handleSavePolicy('publish')} disabled={saving} style={{ borderRadius: 8, padding: '8px 20px', fontWeight: 600, background: '#4338ca', borderColor: '#4338ca' }}>
+                          {saving ? <><span className="spinner-border spinner-border-sm me-2" />Publishing...</> : <><i className="bi bi-send-check me-2" />Publish Policy Configuration</>}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="row g-3">
@@ -256,7 +331,7 @@ export default function ControlCenterPage() {
                       </div>
 
                       {/* Toggles */}
-                      <div className="col-md-4 mt-4">
+                      <div className="col-md-3 mt-4">
                         <div className="form-check form-switch p-3 border rounded-3" style={{ background: currentPolicy.countWeekends ? '#eff6ff' : '#f8fafc', borderColor: currentPolicy.countWeekends ? '#bfdbfe' : '#e2e8f0' }}>
                           <input
                             className="form-check-input ms-0 me-3"
@@ -270,12 +345,12 @@ export default function ControlCenterPage() {
                             Count Weekends as Leave Days
                           </label>
                           <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                            When enabled, Saturdays and Sundays consume leave quota. (Disable for working Saturday rules).
+                            When enabled, Saturdays and Sundays consume leave quota.
                           </div>
                         </div>
                       </div>
 
-                      <div className="col-md-4 mt-4">
+                      <div className="col-md-3 mt-4">
                         <div className="form-check form-switch p-3 border rounded-3" style={{ background: currentPolicy.countHolidays ? '#eff6ff' : '#f8fafc', borderColor: currentPolicy.countHolidays ? '#bfdbfe' : '#e2e8f0' }}>
                           <input
                             className="form-check-input ms-0 me-3"
@@ -286,15 +361,34 @@ export default function ControlCenterPage() {
                             onChange={e => setCurrentPolicy({ ...currentPolicy, countHolidays: e.target.checked })}
                           />
                           <label className="form-check-label fw-bold text-dark" htmlFor="countHolidaysSwitch" style={{ fontSize: 13 }}>
-                            Count Official Holidays as Leave Days
+                            Count Holidays as Leave Days
                           </label>
                           <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                            When enabled, public holidays within leave date ranges count as leave.
+                            When enabled, public holidays within range count as leave.
                           </div>
                         </div>
                       </div>
 
-                      <div className="col-md-4 mt-4">
+                      <div className="col-md-3 mt-4">
+                        <div className="form-check form-switch p-3 border rounded-3" style={{ background: currentPolicy.sandwichRule ? '#eff6ff' : '#f8fafc', borderColor: currentPolicy.sandwichRule ? '#bfdbfe' : '#e2e8f0' }}>
+                          <input
+                            className="form-check-input ms-0 me-3"
+                            type="checkbox"
+                            role="switch"
+                            id="sandwichRuleSwitch"
+                            checked={currentPolicy.sandwichRule || false}
+                            onChange={e => setCurrentPolicy({ ...currentPolicy, sandwichRule: e.target.checked })}
+                          />
+                          <label className="form-check-label fw-bold text-dark" htmlFor="sandwichRuleSwitch" style={{ fontSize: 13 }}>
+                            Enable Sandwich Leave Rule
+                          </label>
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                            Intervening non-working weekends/holidays count as leave.
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="col-md-3 mt-4">
                         <div className="form-check form-switch p-3 border rounded-3" style={{ background: currentPolicy.requireProbationCompletion ? '#eff6ff' : '#f8fafc', borderColor: currentPolicy.requireProbationCompletion ? '#bfdbfe' : '#e2e8f0' }}>
                           <input
                             className="form-check-input ms-0 me-3"
@@ -308,7 +402,7 @@ export default function ControlCenterPage() {
                             Require Probation Completion
                           </label>
                           <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
-                            Restricts leave applications for employees on probation status.
+                            Restricts applications for employees on probation status.
                           </div>
                         </div>
                       </div>
@@ -324,15 +418,23 @@ export default function ControlCenterPage() {
                   {(currentPolicy.leaveTypeConfigs || []).map((cfg, idx) => (
                     <div key={cfg.code || idx} className="col-md-6">
                       <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 14 }}>
-                        <div className="card-header bg-white border-bottom-0 pt-3 px-4 d-flex justify-content-between align-items-center">
+                        <div className="card-header bg-white border-bottom-0 pt-3 px-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
                           <div className="d-flex align-items-center gap-2">
                             <span className="badge bg-primary" style={{ fontSize: 12, padding: '5px 10px' }}>{cfg.code}</span>
                             <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{cfg.name}</span>
+                            <span className={`badge ${cfg.enabled !== false ? 'bg-success' : 'bg-secondary'}`} style={{ fontSize: 10 }}>
+                              {cfg.enabled !== false ? '✓ Listed for Users' : 'Hidden from Users'}
+                            </span>
                           </div>
-                          <div className="form-check form-switch">
+                          <div className="form-check form-switch d-flex align-items-center gap-2">
+                            <label className="form-check-label fw-bold text-secondary" style={{ fontSize: 11, cursor: 'pointer' }}>
+                              {cfg.enabled !== false ? 'Active' : 'Disabled'}
+                            </label>
                             <input
-                              className="form-check-input"
+                              className="form-check-input ms-0"
                               type="checkbox"
+                              role="switch"
+                              title="Enable or disable this leave type for employee leave applications"
                               checked={cfg.enabled !== false}
                               onChange={e => {
                                 const updated = [...currentPolicy.leaveTypeConfigs];
@@ -710,6 +812,75 @@ export default function ControlCenterPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Create New Policy Modal */}
+      {showCreateModal && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(15, 23, 42, 0.6)', zIndex: 99999,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          backdropFilter: 'blur(4px)',
+        }}>
+          <div style={{ background: '#fff', borderRadius: 16, maxWidth: 520, width: '100%', padding: 28, boxShadow: '0 20px 50px rgba(0,0,0,0.2)' }}>
+            <div className="d-flex justify-content-between align-items-center mb-3">
+              <h5 style={{ fontWeight: 700, margin: 0, color: '#0f172a' }}>
+                <i className="bi bi-file-earmark-plus me-2 text-primary" />Create New Leave Policy
+              </h5>
+              <button className="btn-close" onClick={() => setShowCreateModal(false)} />
+            </div>
+            <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>
+              Define a new leave policy rule-set. Standard leave types (CL, SL, PL, LOP) will be initialized automatically.
+            </p>
+
+            <form onSubmit={handleCreatePolicy}>
+              <div className="mb-3">
+                <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Policy Name *</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Executive Leave Policy 2026"
+                  value={newPolicyForm.name}
+                  onChange={e => setNewPolicyForm({ ...newPolicyForm, name: e.target.value })}
+                  required
+                />
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description</label>
+                <textarea
+                  className="form-control"
+                  rows={2}
+                  placeholder="Describe scope, rules, or intended user groups..."
+                  value={newPolicyForm.description}
+                  onChange={e => setNewPolicyForm({ ...newPolicyForm, description: e.target.value })}
+                />
+              </div>
+
+              <div className="mb-4 form-check">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="isDefaultCheck"
+                  checked={newPolicyForm.isDefault}
+                  onChange={e => setNewPolicyForm({ ...newPolicyForm, isDefault: e.target.checked })}
+                />
+                <label className="form-check-label" htmlFor="isDefaultCheck" style={{ fontSize: 13 }}>
+                  Set as Corporate Default Policy
+                </label>
+              </div>
+
+              <div className="d-flex justify-content-end gap-2">
+                <button type="button" className="btn btn-light fw-bold" onClick={() => setShowCreateModal(false)} style={{ borderRadius: 8 }}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary fw-bold" disabled={creating} style={{ borderRadius: 8, padding: '8px 20px' }}>
+                  {creating ? <><span className="spinner-border spinner-border-sm me-2" />Creating...</> : 'Create & Provision Policy'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </AppShell>
   );

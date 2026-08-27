@@ -76,7 +76,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
     window.location.href = '/dashboard';
   };
 
-  const visibleItems = NAV_ITEMS.filter(item => hasAccess(user.role, item.module));
+  const visibleItems = NAV_ITEMS.filter(item => hasAccess(user, item.module));
   const sections = [...new Set(visibleItems.map(i => i.section))];
   const mobileNavItems = MOBILE_NAV_MODULES
     .map(module => visibleItems.find(item => item.module === module))

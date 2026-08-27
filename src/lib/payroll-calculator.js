@@ -132,6 +132,16 @@ export function calculatePayroll({
     deductionsList.push({ code: 'LOP', label: 'Loss of Pay', amount: lossOfPayDeduction });
     totalDeductions += lossOfPayDeduction;
   }
+
+  // Retroactive LOP Auto-Adjustment
+  const retroLopDays = Number(arguments[0]?.retroLopDays) || 0;
+  const retroLopDeduction = round(salaryPerDay * retroLopDays);
+
+  if (retroLopDeduction > 0) {
+    deductionsList.push({ code: 'RETRO_LOP_ADJ', label: 'Retroactive Loss of Pay Adjustment', amount: retroLopDeduction });
+    totalDeductions += retroLopDeduction;
+  }
+
   totalDeductions = round(totalDeductions);
 
   // ── Bonuses ─────────────────────────────────────────────────────────────────
