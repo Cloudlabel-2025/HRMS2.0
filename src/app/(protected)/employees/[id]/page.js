@@ -20,6 +20,7 @@ import {
   startWorkProgressExportJob,
   subscribeWorkProgressExport,
 } from '@/lib/work-progress-export';
+import ConfirmCancelExportModal from '@/components/ConfirmCancelExportModal';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -101,6 +102,7 @@ export default function EmployeeProfilePage() {
   const [showTimer, setShowTimer] = useState(false);
   const [downloadRemaining, setDownloadRemaining] = useState(0);
   const [exportJob, setExportJob] = useState(null);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -336,6 +338,12 @@ export default function EmployeeProfilePage() {
       employeeId: id,
       employeeName: data?.employee?.name || 'Employee',
       filters: { fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate },
+      employeeMeta: {
+        role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
+        department: data?.employee?.department || '',
+        designation: data?.employee?.designation || '',
+      },
+      source: 'employee',
     });
     setExportJob(job);
     setDownloadRemaining(getWorkProgressExportRemaining(job));
@@ -350,6 +358,7 @@ export default function EmployeeProfilePage() {
     setExportJob(null);
     setShowTimer(false);
     setDownloadRemaining(0);
+    setShowCancelConfirm(false);
   };
 
   if (loading) return (
@@ -1233,7 +1242,7 @@ export default function EmployeeProfilePage() {
                       <div className="alert alert-danger py-2" style={{ fontSize: 13, marginBottom: 12 }}>{exportJob.error || 'Export failed'}</div>
                     ) : null}
                     <div style={{ display: 'flex', justifyContent: 'center', gap: 8 }}>
-                      <button className="btn btn-outline-danger btn-sm" onClick={cancelTimer} style={{ fontSize: 12 }}>Cancel</button>
+                      <button className="btn btn-outline-danger btn-sm" onClick={() => setShowCancelConfirm(true)} style={{ fontSize: 12 }}>Cancel</button>
                       <button className="btn btn-outline-secondary btn-sm" onClick={minimizeTimer} style={{ fontSize: 12 }}>Minimize</button>
                     </div>
                   </div>
@@ -1241,6 +1250,11 @@ export default function EmployeeProfilePage() {
               </div>
             </div>
           )}
+          <ConfirmCancelExportModal
+            show={showCancelConfirm}
+            onClose={() => setShowCancelConfirm(false)}
+            onConfirm={cancelTimer}
+          />
         </>
       )}
 

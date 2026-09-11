@@ -11,6 +11,7 @@ import {
   subscribeWorkProgressExport,
 } from '@/lib/work-progress-export';
 import { useShellData } from '@/lib/shell-data';
+import ConfirmCancelExportModal from '@/components/ConfirmCancelExportModal';
 
 const formatExportTime = seconds => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
 
@@ -51,6 +52,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
   const { pendingRequests, employeeProfileId } = useShellData();
   const [exportJob, setExportJob] = useState(null);
   const [exportRemaining, setExportRemaining] = useState(0);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   useEffect(() => {
     const syncJob = job => {
@@ -102,19 +104,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           </button>
         </div>
 
-        {exportJob?.minimized && (
-          <div style={{ margin: '0 12px 10px', padding: '9px 10px', borderRadius: 10, background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.28)', color: '#dbeafe' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <i className={`bi ${exportJob.status === 'failed' ? 'bi-exclamation-triangle' : 'bi-file-earmark-excel'}`} style={{ color: exportJob.status === 'failed' ? '#fca5a5' : '#86efac' }} />
-              <button onClick={() => router.push(`/employees/${exportJob.employeeId}`)} style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: 'inherit', textAlign: 'left', padding: 0 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exportJob.employeeName}</div>
-                <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 1 }}>{exportJob.status === 'failed' ? 'Export failed' : exportJob.status === 'exporting' ? 'Creating Excel…' : formatExportTime(exportRemaining)}</div>
-              </button>
-              <button onClick={cancelWorkProgressExportJob} title="Cancel export" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', padding: 2 }}><i className="bi bi-x-lg" /></button>
-            </div>
-          </div>
-        )}
-
         {/* User profile card */}
         <Link href={employeeProfileId ? `/employees/${employeeProfileId}` : '/profile'} className="sidebar-user" onClick={onMobileClose} style={{ textDecoration: 'none', color: 'inherit' }}>
           <div className="sidebar-user-avatar" style={{ background: `linear-gradient(135deg, ${ROLE_COLORS[user.role]}, #6366f1)`, overflow: 'hidden' }}>
@@ -125,6 +114,20 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
             <div className="sidebar-user-role">{ROLE_LABELS[user.role]}</div>
           </div>
         </Link>
+
+        {/* Minimized work-sheet export countdown — pinned directly below the employee name so it keeps running visibly after minimize. At 00:00 the Excel auto-downloads. */}
+        {exportJob?.minimized && (
+          <div style={{ margin: '10px 12px 0', padding: '9px 10px', borderRadius: 10, background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.28)', color: '#dbeafe' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <i className={`bi ${exportJob.status === 'failed' ? 'bi-exclamation-triangle' : 'bi-file-earmark-excel'}`} style={{ color: exportJob.status === 'failed' ? '#fca5a5' : '#86efac' }} />
+              <button onClick={() => router.push(exportJob.source === 'profile' ? '/profile' : `/employees/${exportJob.employeeId}`)} style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', color: 'inherit', textAlign: 'left', padding: 0 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{exportJob.employeeName}</div>
+                <div style={{ fontSize: 12, fontFamily: 'monospace', marginTop: 1 }}>{exportJob.status === 'failed' ? 'Export failed' : exportJob.status === 'exporting' ? 'Creating Excel…' : formatExportTime(exportRemaining)}</div>
+              </button>
+              <button onClick={() => setShowCancelConfirm(true)} title="Cancel export" style={{ border: 'none', background: 'transparent', color: '#cbd5e1', padding: 2 }}><i className="bi bi-x-lg" /></button>
+            </div>
+          </div>
+        )}
 
         <div className="sidebar-nav">
           {sections.map(section => (
@@ -200,6 +203,11 @@ export default function Sidebar({ mobileOpen = false, onMobileClose = () => {} }
           Return Home
         </button>
       )}
+      <ConfirmCancelExportModal
+        show={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        onConfirm={() => { cancelWorkProgressExportJob(); setShowCancelConfirm(false); }}
+      />
     </>
   );
 }

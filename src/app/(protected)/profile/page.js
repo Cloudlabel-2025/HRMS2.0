@@ -8,9 +8,18 @@ import DateInput from '@/components/DateInput';
 import Time from '@/components/Time';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE } from '@/lib/constants';
-import { triggerDownload } from '@/lib/csv-utils';
+import {
+  cancelWorkProgressExportJob,
+  downloadWorkProgressExcel,
+  getWorkProgressExportJob,
+  getWorkProgressExportRemaining,
+  minimizeWorkProgressExportJob,
+  startWorkProgressExportJob,
+  subscribeWorkProgressExport,
+} from '@/lib/work-progress-export';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
+import ConfirmCancelExportModal from '@/components/ConfirmCancelExportModal';
 
 const TABS = [
   { key: 'overview',     label: 'Overview',      icon: 'bi-person-lines-fill' },
@@ -83,9 +92,13 @@ export default function ProfilePage() {
   const [filterToMonth, setFilterToMonth] = useState('');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
+  const [fromDateError, setFromDateError] = useState('');
+  const [toDateError, setToDateError] = useState('');
   const [showTimer, setShowTimer] = useState(false);
   const [downloadRemaining, setDownloadRemaining] = useState(0);
-  const timerRef = useRef(null);
+  const [exportJob, setExportJob] = useState(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
 
   const [showPhotoActions, setShowPhotoActions] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -127,8 +140,25 @@ export default function ProfilePage() {
   }, [tab]);
 
   useEffect(() => {
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, []);
+    const employeeId = data?.employee?._id;
+    if (!employeeId) return;
+    const syncJob = job => {
+      const mine = job && String(job.employeeId) === String(employeeId) ? job : null;
+      setExportJob(mine);
+      setShowTimer(!!mine && !mine.minimized);
+      setDownloadRemaining(getWorkProgressExportRemaining(mine));
+    };
+    syncJob(getWorkProgressExportJob());
+    const unsubscribe = subscribeWorkProgressExport(syncJob);
+    const interval = setInterval(() => {
+      const job = getWorkProgressExportJob();
+      const mine = job && String(job.employeeId) === String(employeeId) ? job : null;
+      setExportJob(mine);
+      setDownloadRemaining(getWorkProgressExportRemaining(mine));
+      if (mine && !mine.minimized) setShowTimer(true);
+    }, 1000);
+    return () => { unsubscribe(); clearInterval(interval); };
+  }, [data?.employee?._id]);
 
   const compressProfilePhoto = async (file) => {
     if (file.size > 25 * 1024 * 1024) throw new Error('Choose an image smaller than 25 MB.');
@@ -220,6 +250,8 @@ export default function ProfilePage() {
     setFilterToMonth('');
     setFilterFromDate('');
     setFilterToDate('');
+    setFromDateError('');
+    setToDateError('');
   };
   const wpMonthOptions = useMemo(() => {
     const seen = new Set();
@@ -229,6 +261,18 @@ export default function ProfilePage() {
     }
     return opts;
   }, [wpCycles]);
+  // Actual data range — From/To dates are strictly limited to this range.
+  const dataBounds = useMemo(() => {
+    const dates = wpCycles.flatMap(c => (c.dates || []).map(d => d.date)).filter(Boolean).sort();
+    return dates.length ? { min: dates[0], max: dates[dates.length - 1] } : { min: '', max: '' };
+  }, [wpCycles]);
+  const dateRangeError = useMemo(() => {
+    if (filterFromDate && dataBounds.min && filterFromDate < dataBounds.min) return `From Date must be on or after ${dataBounds.min}`;
+    if (filterToDate && dataBounds.max && filterToDate > dataBounds.max) return `To Date must be on or before ${dataBounds.max}`;
+    if (filterFromDate && filterToDate && filterFromDate > filterToDate) return 'From Date must be on or before To Date';
+    return '';
+  }, [filterFromDate, filterToDate, dataBounds]);
+  const dateFiltersInvalid = Boolean(fromDateError || toDateError || dateRangeError);
   const filteredCycles = useMemo(() => {
     let filtered = wpCycles;
     if (filterFromMonth) filtered = filtered.filter(c => c.key >= filterFromMonth);
@@ -290,36 +334,59 @@ export default function ProfilePage() {
     const completed = pending.filter(t => t.completedDate).map(t => ({ text: t.text, completedDate: t.completedDate, attempts: t.attempts, totalMins: t.totalMins }));
     return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
   }, [wpCycles]);
-  const toCsvRows = (cycles) => {
-    const rows = [['Cycle', 'Date', 'Status', 'Clock In', 'Clock Out', 'Hours', '#', 'Type', 'Task Details', 'Start Time', 'End Time', 'Task Status', 'Remarks', 'Feedback']];
-    for (const cycle of cycles) {
-      for (const d of cycle.dates) {
-        if (!d.workProgress?.length) { rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), '', '', '', '', '', '', '', '']); continue; }
-        for (let i = 0; i < d.workProgress.length; i++) {
-          const wp = d.workProgress[i];
-          rows.push([cycle.label, d.date, d.status, formatTime(d.clockIn) || '', formatTime(d.clockOut) || '', formatMins(d.hoursWorked), String(i + 1), wp.type || 'task', wp.taskDetails || '', formatTime(wp.startTime) || '', formatTime(wp.endTime) || '', wp.status || '', wp.remarks || '', wp.feedback || '']);
-        }
-      }
+  const buildExportFilters = () => ({ fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate });
+  const buildEmployeeMeta = () => ({
+    role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
+    department: data?.employee?.department || '',
+    designation: data?.employee?.designation || '',
+  });
+  const handleWpDownload = async () => {
+    if (filteredCycles.length === 0 || exportBusy || dateFiltersInvalid) {
+      if (dateFiltersInvalid) setPhotoError(dateRangeError || fromDateError || toDateError || 'Fix the date filters before downloading.');
+      return;
     }
-    return rows;
-  };
-  const handleWpDownload = () => {
-    const rows = toCsvRows(filteredCycles);
-    const entryCount = rows.length - 1;
-    if (entryCount <= 5) { triggerDownload(rows, `work_progress_${data?.employee?.name || 'export'}.csv`); return; }
-    if (timerRef.current) clearInterval(timerRef.current);
-    setDownloadRemaining(1800);
+    const existing = getWorkProgressExportJob();
+    if (existing) {
+      const mine = data?.employee?._id && String(existing.employeeId) === String(data.employee._id);
+      if (mine) { setExportJob(existing); setShowTimer(!existing.minimized); setDownloadRemaining(getWorkProgressExportRemaining(existing)); }
+      setPhotoError(mine ? 'Your work-sheet export is already running.' : 'Another work-sheet export is already running.');
+      return;
+    }
+    const filters = buildExportFilters();
+    const employeeMeta = buildEmployeeMeta();
+    // Small datasets download immediately as Excel — no countdown needed.
+    if (totalEntryCount <= 5) {
+      setExportBusy(true);
+      try {
+        await downloadWorkProgressExcel(filteredCycles, data?.employee?.name || 'Employee', filters, employeeMeta);
+      } catch (e) { setPhotoError(e.message || 'Excel export failed'); }
+      finally { setExportBusy(false); }
+      return;
+    }
+    // Large datasets run on a 30-minute countdown that keeps running in the
+    // sidebar when minimized, then auto-downloads the Excel at 00:00.
+    const job = startWorkProgressExportJob({
+      employeeId: data.employee._id,
+      employeeName: data?.employee?.name || 'Employee',
+      filters,
+      employeeMeta,
+      source: 'profile',
+    });
+    setExportJob(job);
+    setDownloadRemaining(getWorkProgressExportRemaining(job));
     setShowTimer(true);
-    timerRef.current = setInterval(() => {
-      setDownloadRemaining(prev => {
-        if (prev <= 1) { clearInterval(timerRef.current); timerRef.current = null; triggerDownload(rows, `work_progress_${data?.employee?.name || 'export'}.csv`); return 0; }
-        return prev - 1;
-      });
-    }, 1000);
   };
-  const closeTimer = () => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    setShowTimer(false); setDownloadRemaining(0);
+  const minimizeTimer = () => {
+    // Keep the countdown running in the sidebar — do not clear anything.
+    minimizeWorkProgressExportJob();
+    setShowTimer(false);
+  };
+  const cancelTimer = () => {
+    cancelWorkProgressExportJob();
+    setExportJob(null);
+    setShowTimer(false);
+    setDownloadRemaining(0);
+    setShowCancelConfirm(false);
   };
 
   if (loading) return (
@@ -1017,8 +1084,9 @@ export default function ProfilePage() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>Daily Work Sheet</span>
               </div>
               <button className="btn btn-sm" style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 600 }}
-                onClick={handleWpDownload} disabled={filteredCycles.length === 0}>
-                <i className="bi bi-download me-1" />Download{filteredCycles.length > 0 ? ` (${totalEntryCount})` : ''}
+                onClick={handleWpDownload} disabled={filteredCycles.length === 0 || exportBusy || dateFiltersInvalid}
+                title={dateFiltersInvalid ? (dateRangeError || fromDateError || toDateError) : undefined}>
+                {exportBusy ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Preparing Excel…</> : <><i className="bi bi-download me-1" />Download{filteredCycles.length > 0 ? ` (${totalEntryCount})` : ''}</>}
               </button>
             </div>
           </div>
@@ -1046,11 +1114,31 @@ export default function ProfilePage() {
                 </div>
                 <div className="col-md-2">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
-                  <DateInput className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
+                  <DateInput
+                    className="form-control"
+                    style={{ fontSize: 13 }}
+                    value={filterFromDate}
+                    onChange={e => setFilterFromDate(e.target.value)}
+                    allowTyping
+                    showHint
+                    min={dataBounds.min || undefined}
+                    max={filterToDate || dataBounds.max || undefined}
+                    onErrorChange={setFromDateError}
+                  />
                 </div>
                 <div className="col-md-2">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
-                  <DateInput className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
+                  <DateInput
+                    className="form-control"
+                    style={{ fontSize: 13 }}
+                    value={filterToDate}
+                    onChange={e => setFilterToDate(e.target.value)}
+                    allowTyping
+                    showHint
+                    min={filterFromDate || dataBounds.min || undefined}
+                    max={dataBounds.max || undefined}
+                    onErrorChange={setToDateError}
+                  />
                 </div>
                 <div className="col-md-2">
                   <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={resetWpFilters}>
@@ -1058,6 +1146,17 @@ export default function ProfilePage() {
                   </button>
                 </div>
               </div>
+              {dataBounds.min && dataBounds.max && (
+                <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <i className="bi bi-calendar-range" style={{ fontSize: 12, color: '#3b82f6' }} />
+                  Data available: {formatDate(dataBounds.min)} – {formatDate(dataBounds.max)} · type or pick a date within this range
+                </div>
+              )}
+              {dateRangeError && (
+                <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <i className="bi bi-exclamation-circle-fill" style={{ fontSize: 11 }} />{dateRangeError}
+                </div>
+              )}
             </div>
           </div>
 
@@ -1192,7 +1291,7 @@ export default function ProfilePage() {
                       <i className="bi bi-download" style={{ fontSize: 28, color: '#3b82f6' }} />
                     </div>
                     <h6 style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>Preparing Download</h6>
-                    <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>Large dataset — download will be ready in approximately 30 minutes</p>
+                    <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>Large dataset — Excel will auto-download in approximately 30 minutes. You can minimize; the countdown keeps running in the sidebar.</p>
                     <div style={{ fontSize: 42, fontWeight: 800, fontFamily: 'monospace', color: '#1e293b', marginBottom: 16 }}>{formatDuration(downloadRemaining)}</div>
                     <div style={{ height: 8, borderRadius: 4, background: '#f1f5f9', overflow: 'hidden', marginBottom: 20 }}>
                       <div style={{ height: '100%', borderRadius: 4, background: 'linear-gradient(90deg, #3b82f6, #2563eb)', width: `${downloadRemaining <= 0 ? 100 : ((1800 - downloadRemaining) / 1800) * 100}%`, transition: 'width 1s linear' }} />
@@ -1200,13 +1299,21 @@ export default function ProfilePage() {
                     {downloadRemaining <= 0 ? (
                       <div className="alert alert-success py-2" style={{ fontSize: 13, margin: 0 }}><i className="bi bi-check-circle me-2" />Download started!</div>
                     ) : (
-                      <button className="btn btn-outline-secondary btn-sm" onClick={closeTimer} style={{ fontSize: 12 }}>Minimize</button>
+                      <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                        <button className="btn btn-outline-secondary btn-sm" onClick={minimizeTimer} style={{ fontSize: 12 }}>Minimize</button>
+                        <button className="btn btn-outline-danger btn-sm" onClick={() => setShowCancelConfirm(true)} style={{ fontSize: 12 }}>Cancel</button>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
             </div>
           )}
+          <ConfirmCancelExportModal
+            show={showCancelConfirm}
+            onClose={() => setShowCancelConfirm(false)}
+            onConfirm={cancelTimer}
+          />
         </>
       )}
 

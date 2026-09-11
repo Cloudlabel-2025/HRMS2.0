@@ -49,12 +49,14 @@ export function saveWorkProgressExportJob(job) {
   return job;
 }
 
-export function startWorkProgressExportJob({ employeeId, employeeName, filters }) {
+export function startWorkProgressExportJob({ employeeId, employeeName, filters, employeeMeta, source }) {
   return saveWorkProgressExportJob({
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     employeeId,
     employeeName,
     filters,
+    employeeMeta: employeeMeta || null,
+    source: source || 'employee',
     createdAt: Date.now(),
     expiresAt: Date.now() + WORK_PROGRESS_EXPORT_SECONDS * 1000,
     minimized: false,
@@ -201,13 +203,18 @@ function addDailySheet(workbook, dateEntry, employeeName) {
   return sheet;
 }
 
-export async function downloadWorkProgressExcel(cycles, employeeName, filters = {}) {
+export async function downloadWorkProgressExcel(cycles, employeeName, filters = {}, employeeMeta = null) {
   const { default: ExcelJS } = await import('exceljs');
   const monthlyCycles = groupByCalendarMonth(cycles);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = 'HRMS';
   workbook.created = new Date();
   workbook.modified = new Date();
+
+  const meta = employeeMeta || filters?.employeeMeta || {};
+  const roleLabel = meta.role || filters?.role || '';
+  const departmentLabel = meta.department || filters?.department || '';
+  const designationLabel = meta.designation || filters?.designation || '';
 
   const summary = workbook.addWorksheet('Summary', { properties: { tabColor: { argb: '0F172A' } } });
   summary.views = [{ showGridLines: false }];
@@ -216,22 +223,39 @@ export async function downloadWorkProgressExcel(cycles, employeeName, filters = 
   summary.getCell('A1').value = 'Daily Work Sheet Export';
   summary.getCell('A1').font = { bold: true, size: 20, color: { argb: 'FFFFFF' } };
   summary.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: '0F172A' } };
-  summary.getCell('A1').alignment = { vertical: 'middle' };
+  summary.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
   summary.getRow(1).height = 38;
   const dateCount = monthlyCycles.reduce((sum, cycle) => sum + (cycle.dates?.length || 0), 0);
   const taskCount = monthlyCycles.reduce((sum, cycle) => sum + (cycle.dates || []).reduce((dateSum, date) => dateSum + (date.workProgress?.length || 0), 0), 0);
+  // First page = summary: employee identity + downloaded from/to range.
+  // Every date within the from/to range is included via groupByCalendarMonth above.
   const summaryRows = [
-    ['Employee', employeeName], ['Selected from', filters.fromDate || filters.fromMonth || 'All available'],
-    ['Selected to', filters.toDate || filters.toMonth || 'All available'], ['Months', monthlyCycles.length], ['Dates', dateCount], ['Work entries', taskCount], ['Generated at', new Date()],
+    ['Employee', employeeName || '—'],
+    ['Role', roleLabel || '—'],
+    ['Department', departmentLabel || '—'],
+    ['Designation', designationLabel || '—'],
+    ['Downloaded From (Date)', filters.fromDate || 'All available'],
+    ['Downloaded To (Date)', filters.toDate || 'All available'],
+    ['Downloaded From (Month)', filters.fromMonth || 'All available'],
+    ['Downloaded To (Month)', filters.toMonth || 'All available'],
+    ['Months', monthlyCycles.length], ['Dates', dateCount], ['Work entries', taskCount], ['Generated at', new Date()],
   ];
   summary.addRows(summaryRows);
   summary.getColumn(1).font = { bold: true, color: { argb: '475569' } };
-  summary.getColumn(2).alignment = { wrapText: true };
-  summary.getCell('B8').numFmt = 'dd-mmm-yyyy hh:mm';
+  summary.getColumn(2).alignment = { wrapText: true, vertical: 'middle' };
+  summary.getCell(`B${summaryRows.length + 1}`).numFmt = 'dd-mmm-yyyy hh:mm';
   summary.eachRow((row, index) => {
     if (index > 1) {
       row.height = 24;
-      row.eachCell(cell => { cell.border = { bottom: { style: 'thin', color: { argb: 'E2E8F0' } } }; cell.alignment = { vertical: 'middle', wrapText: true }; });
+      row.eachCell(cell => {
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'E2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'E2E8F0' } },
+          left: { style: 'thin', color: { argb: 'E2E8F0' } },
+          right: { style: 'thin', color: { argb: 'E2E8F0' } },
+        };
+        cell.alignment = { vertical: 'middle', wrapText: true };
+      });
     }
   });
 
@@ -263,7 +287,8 @@ export async function executeWorkProgressExport(job) {
     if (job.filters?.fromDate) params.set('fromDate', job.filters.fromDate);
     if (job.filters?.toDate) params.set('toDate', job.filters.toDate);
     const cycles = await api.get(`/api/employees/${job.employeeId}/work-progress${params.size ? `?${params}` : ''}`);
-    await downloadWorkProgressExcel(Array.isArray(cycles) ? cycles : [], job.employeeName, job.filters);
+    await downloadWorkProgressExcel(Array.isArray(cycles) ? cycles : [], job.employeeName, job.filters, job.employeeMeta);
+    // Countdown reached zero -> Excel auto-download completes, then clear the job.
     cancelWorkProgressExportJob();
   } catch (error) {
     saveWorkProgressExportJob({ ...job, status: 'failed', error: error.message || 'Export failed', minimized: true });

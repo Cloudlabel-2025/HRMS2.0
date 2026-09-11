@@ -5,17 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 import User from '@/lib/models/User';
 import { hasAccess, getManagedUserIds, canAssignTask } from '@/lib/rbac';
 import { Notification } from '@/lib/models/index';
-
-async function getTaskStakeholders(assigneeId, actorId) {
-  const [assignee, admins] = await Promise.all([
-    User.findById(assigneeId).select('teamLeadId teamAdminId').lean(),
-    User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean(),
-  ]);
-  const ids = [assigneeId, assignee?.teamLeadId, assignee?.teamAdminId, ...admins.map(admin => admin._id)]
-    .filter(Boolean)
-    .map(id => id.toString());
-  return [...new Set(ids)].filter(id => id !== actorId.toString());
-}
+import { getTaskStakeholders } from '@/lib/taskUtils';
 
 export async function GET(req) {
   try {

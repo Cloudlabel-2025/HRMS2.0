@@ -86,7 +86,6 @@ export async function POST(req) {
       departments: Array.isArray(body.departments) ? body.departments : [],
       startDate: body.startDate,
       endDate: body.endDate,
-      progress: Number(body.progress) || 0,
       status: body.status || 'active',
       approvalRequired: crossDept,
       approvalStatus: crossDept ? 'pending' : 'approved',

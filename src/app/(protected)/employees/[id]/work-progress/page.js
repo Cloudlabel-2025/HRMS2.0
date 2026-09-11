@@ -10,6 +10,7 @@ import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, WP_STATUS_STYLE } from '@/lib/constants';
 import { triggerDownload } from '@/lib/csv-utils';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
+import ConfirmCancelExportModal from '@/components/ConfirmCancelExportModal';
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60);
@@ -50,7 +51,7 @@ function FilterCard({ children }) {
   );
 }
 
-function DownloadTimerModal({ show, remaining, onClose }) {
+function DownloadTimerModal({ show, remaining, onClose, onCancel }) {
   if (!show) return null;
   const pct = remaining <= 0 ? 100 : ((1800 - remaining) / 1800) * 100;
   return (
@@ -79,9 +80,16 @@ function DownloadTimerModal({ show, remaining, onClose }) {
                 <i className="bi bi-check-circle me-2" />Download started!
               </div>
             ) : (
-              <button className="btn btn-outline-secondary btn-sm" onClick={onClose} style={{ fontSize: 12 }}>
-                Minimize
-              </button>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={onClose} style={{ fontSize: 12 }}>
+                  Minimize
+                </button>
+                {onCancel && (
+                  <button className="btn btn-outline-danger btn-sm" onClick={onCancel} style={{ fontSize: 12 }}>
+                    Cancel
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -111,6 +119,7 @@ export default function WorkProgressPage() {
   // Download timer
   const [showTimer, setShowTimer] = useState(false);
   const [downloadRemaining, setDownloadRemaining] = useState(0);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const timerRef = useRef(null);
 
   const showToast = (msg, type = 'success') => {
@@ -241,6 +250,11 @@ export default function WorkProgressPage() {
     }
     setShowTimer(false);
     setDownloadRemaining(0);
+  };
+
+  const confirmCancelTimer = () => {
+    closeTimer();
+    setShowCancelConfirm(false);
   };
 
   if (loading) return (
@@ -496,6 +510,12 @@ export default function WorkProgressPage() {
         show={showTimer}
         remaining={downloadRemaining}
         onClose={closeTimer}
+        onCancel={() => setShowCancelConfirm(true)}
+      />
+      <ConfirmCancelExportModal
+        show={showCancelConfirm}
+        onClose={() => setShowCancelConfirm(false)}
+        onConfirm={confirmCancelTimer}
       />
     </AppShell>
   );

@@ -150,10 +150,10 @@ export async function canAssignTask(user, assigneeUser) {
   if (user.role === 'super_admin') return true;
   if (user.role === 'admin_full') return rankOf(assigneeUser?.role) < rankOf(user.role);
   if (user.role === 'team_lead') {
-    return !!user.department && user.department === assigneeUser?.department && ['team_admin', 'employee', 'intern'].includes(assigneeUser?.role);
+    return !!user.department && user.department === assigneeUser?.department && ['team_admin', 'employee', 'intern', 'sme'].includes(assigneeUser?.role);
   }
   if (user.role === 'team_admin') {
-    return !!user.department && user.department === assigneeUser?.department && ['employee', 'intern'].includes(assigneeUser?.role);
+    return !!user.department && user.department === assigneeUser?.department && ['employee', 'intern', 'sme'].includes(assigneeUser?.role);
   }
   return false;
 }

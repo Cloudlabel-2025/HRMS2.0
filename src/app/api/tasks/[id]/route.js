@@ -5,17 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 import { canManageUser, getManagedUserIds, canEditTaskDetails } from '@/lib/rbac';
 import User from '@/lib/models/User';
 import { Notification } from '@/lib/models/index';
-
-async function getTaskStakeholders(assigneeId, actorId) {
-  const [assignee, admins] = await Promise.all([
-    User.findById(assigneeId).select('teamLeadId teamAdminId').lean(),
-    User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean(),
-  ]);
-  const ids = [assigneeId, assignee?.teamLeadId, assignee?.teamAdminId, ...admins.map(admin => admin._id)]
-    .filter(Boolean)
-    .map(id => id.toString());
-  return [...new Set(ids)].filter(id => id !== actorId.toString());
-}
+import { getTaskStakeholders } from '@/lib/taskUtils';
 
 export async function PUT(req, { params }) {
   try {
@@ -37,12 +27,21 @@ export async function PUT(req, { params }) {
       if (!canUpdate) return fail('Access denied', 403);
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : new Date().toISOString().slice(0, 10);
       const updated = await Task.findByIdAndUpdate(id, { $push: { activityLog: { date, comment, addedBy: user._id } } }, { new: true }).populate('assignedTo', 'name avatar').populate('projectId', 'name');
+      const recipientIds = await getTaskStakeholders(task.assignedTo, user._id);
+      if (recipientIds.length) await Notification.insertMany(recipientIds.map(userId => ({
+        userId,
+        title: 'New Task Comment',
+        message: `${user.name} commented on task "${task.title}": ${comment.slice(0, 80)}${comment.length > 80 ? '...' : ''}`,
+        type: 'general',
+        refId: task._id,
+      })));
       auditLog('Task Activity Added', 'Tasks', user._id, `Added an activity update to task "${task.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, task.assignedTo);
       return ok(updated);
     }
 
     // Status-only update — any role can do this
-    if (Object.keys(body).length === 1 && body.status) {
+    const statusKeys = Object.keys(body).filter(k => body[k] !== undefined);
+    if (statusKeys.length === 1 && statusKeys[0] === 'status' && body.status) {
       if (!['To Do', 'In Progress', 'Pending', 'Completed', 'Blocked'].includes(body.status)) return fail('Invalid task status', 400);
       // Employees/interns can only update their own tasks
       if (!MANAGER_ROLES.includes(user.role)) {
@@ -80,10 +79,12 @@ export async function PUT(req, { params }) {
     if (nextAssignee.status !== 'active') return fail('Tasks can only be assigned to active employees', 400);
 
     // Validate due date is within project's date range
-    const taskProject = await Project.findById(body.projectId).select('startDate endDate team').lean();
+    const taskProject = await Project.findById(body.projectId).select('startDate endDate team departments approvalRequired approvalStatus createdBy').lean();
     if (!taskProject) return fail('Project not found', 404);
     const managedIds = await getManagedUserIds(user);
-    if (managedIds !== null && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
+    const projectStakeholder = String(taskProject.createdBy) === String(user._id) || (Array.isArray(taskProject.departments) && taskProject.departments.includes(user.department));
+    const crossDeptApproved = taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder;
+    if (managedIds !== null && !crossDeptApproved && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
       return fail('Access denied', 403);
     }
     if (taskProject) {
@@ -131,6 +132,18 @@ export async function DELETE(req, { params }) {
     const task = await Task.findById(id).populate('assignedBy', 'name role');
     if (!task) return fail('Task not found', 404);
     if (!canEditTaskDetails(user, task)) return fail('Access denied', 403);
+
+    // Verify user belongs to the project team (or cross-dept approved)
+    const taskProject = await Project.findById(task.projectId).select('team departments approvalRequired approvalStatus createdBy').lean();
+    if (taskProject) {
+      const managedIds = await getManagedUserIds(user);
+      const projectStakeholder = String(taskProject.createdBy) === String(user._id) || (Array.isArray(taskProject.departments) && taskProject.departments.includes(user.department));
+      const crossDeptApproved = taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder;
+      if (managedIds !== null && !crossDeptApproved && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
+        return fail('Access denied', 403);
+      }
+    }
+
     await Task.findByIdAndDelete(id);
     auditLog('Task Deleted', 'Tasks', user._id, `Deleted task "${task.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, task.assignedTo);
     return ok({ deleted: true });

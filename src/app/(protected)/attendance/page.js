@@ -784,9 +784,21 @@ export default function AttendancePage() {
 
   const commitWorkRow = async (idx, patch) => {
     const currentRows = todayRecord?.workProgress || [];
-    const rows = patch.status === 'completed'
+    const targetRow = currentRows[idx];
+    const wasActive = !!(targetRow?.startTime && !targetRow?.endTime);
+    let rows = patch.status === 'completed'
       ? applyCompletion(currentRows, idx)
       : currentRows.map((row, i) => i === idx ? { ...row, ...patch } : row);
+    // If the active task was completed via the status dropdown, auto-start the
+    // next task (mirrors End Current Task) so the End button never gets stuck
+    // disabled. Pre-fill previous taskDetails per UX decision.
+    if (patch.status === 'completed' && wasActive && targetRow?.type === 'task' && !clockedOut && !anyActiveBreak()) {
+      const hasActive = rows.some(r => r.startTime && !r.endTime);
+      if (!hasActive) {
+        const completionTime = nowTimeStr();
+        rows = [...rows, buildTaskRow(completionTime, targetRow?.taskDetails || '')];
+      }
+    }
     syncWorkRef(rows);
     try { await persistTodayRecord({ workProgress: rows }); }
     catch (e) { showToast(e.message, 'error'); }
@@ -1147,6 +1159,17 @@ export default function AttendancePage() {
     const dbRows = getWorkProgress();
     const activeIdx = activeWorkIndex();
     const canEndTask = clockedIn && !clockedOut && !anyActiveBreak() && activeIdx !== -1 && dbRows[activeIdx]?.type === 'task';
+    const endTaskDisabledReason = !clockedIn
+      ? 'Clock in first to end a task.'
+      : clockedOut
+        ? 'You have already clocked out today.'
+        : anyActiveBreak()
+          ? 'End your current break first.'
+          : activeIdx === -1
+            ? 'No active task — changing status to Completed auto-starts next task.'
+            : dbRows[activeIdx]?.type !== 'task'
+              ? 'No active task — changing status to Completed auto-starts next task.'
+              : '';
 
     // Build virtual rows with dbIdx so edits point to the right array elements
     const rows = dbRows.map((row, dbIdx) => ({
@@ -1203,9 +1226,11 @@ export default function AttendancePage() {
             <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={saveWorkLoading || !clockedIn} onClick={handleSaveWork}>
               {saveWorkLoading ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Saving...</> : <><i className="bi bi-floppy me-1" />Save</>}
             </button>
-            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={!canEndTask} onClick={endCurrentTask}>
-              <i className="bi bi-check2-circle me-1" />End Current Task
-            </button>
+            <span title={canEndTask ? 'End current task and start next' : endTaskDisabledReason} style={{ display: 'inline-flex' }}>
+              <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12, pointerEvents: canEndTask ? 'auto' : 'none' }} disabled={!canEndTask} onClick={endCurrentTask}>
+                <i className="bi bi-check2-circle me-1" />End Current Task
+              </button>
+            </span>
           </div>
         </div>
         {rows.length === 0 ? (

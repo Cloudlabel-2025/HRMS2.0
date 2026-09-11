@@ -43,6 +43,11 @@ function formatStatusDuration(date) {
   return `${Math.max(1, mins)}m`;
 }
 
+function isOverdue(task) {
+  if (!task.due || task.status === 'Completed') return false;
+  return task.due < new Date().toISOString().slice(0, 10);
+}
+
 export default function TasksPage() {
   const { user } = useAuth();
   const { formatDate } = useSettings();
@@ -64,9 +69,7 @@ export default function TasksPage() {
   const [projectDocs, setProjectDocs]   = useState([]);
   const [docsLoading, setDocsLoading]   = useState(false);
   const [uploadDocModal, setUploadDocModal] = useState(false);
-  const [uploadForm, setUploadForm]     = useState({ name: '', fileUrl: '', fileSize: '', fileType: 'pdf', projectId: '', taskId: null });
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [fileUploading, setFileUploading] = useState(false);
+  const [uploadForm, setUploadForm]     = useState({ name: '', fileUrl: '', fileType: 'link', projectId: '', taskId: null });
   const [loading, setLoading]           = useState(true);
   const [saving, setSaving]         = useState(false);
   const [toast, setToast]           = useState(null);
@@ -84,15 +87,21 @@ export default function TasksPage() {
   const [projectCandidates, setProjectCandidates] = useState([]);
   const [loadingCandidates, setLoadingCandidates] = useState(false);
   const [taskCandidates, setTaskCandidates] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [taskDocName, setTaskDocName] = useState('');
+  const [taskDocUrl, setTaskDocUrl] = useState('');
   const pageSize = 10;
 
   useEffect(() => {
     setListPage(1);
     setProjPage(1);
-  }, [tab, filterProject]);
+  }, [tab, filterProject, searchQuery, filterPriority, filterStatus]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
+  const isSuperAdmin = ['super_admin', 'admin_full'].includes(user?.role);
 
   const canEditTask = (task) => {
     const uid = user?._id || user?.id;
@@ -100,6 +109,13 @@ export default function TasksPage() {
     if (assignedToId && String(assignedToId) === String(uid)) return false;
     if (!task?.assignedBy) return ['super_admin', 'admin_full'].includes(user?.role);
     return rankOf(user?.role) >= rankOf(task.assignedBy?.role);
+  };
+
+  const canOpenTask = (task) => {
+    const uid = user?._id || user?.id;
+    const assignedToId = task?.assignedTo?._id || task?.assignedTo;
+    if (assignedToId && String(assignedToId) === String(uid)) return true;
+    return canEditTask(task);
   };
 
   const loadAll = async () => {
@@ -228,8 +244,6 @@ export default function TasksPage() {
       due: task.due || '',
     });
     setSelectedProjectObj(projects.find(p => String(p._id) === String(pid)) || null);
-    setUploadForm({ name: '', fileUrl: '', fileSize: '', fileType: 'pdf', projectId: pid, taskId: task._id });
-    setSelectedFile(null);
     loadProjectDocs(pid);
     setShowModal(true);
   };
@@ -267,6 +281,8 @@ export default function TasksPage() {
         showToast('Task created');
       }
       setShowModal(false);
+      setTaskDocName('');
+      setTaskDocUrl('');
       loadAll();
     } catch (e) {
       showToast(e.message, 'error');
@@ -350,35 +366,22 @@ export default function TasksPage() {
   };
 
   const handleUploadDoc = async () => {
-    if (!uploadForm.name || !uploadForm.taskId) { showToast('Name and task are required', 'error'); return; }
-    if (!selectedFile && !uploadForm.fileUrl) { showToast('Please select a file', 'error'); return; }
-    if (selectedFile?.size > 3 * 1024 * 1024) { showToast('Document must be smaller than 3 MB', 'error'); return; }
+    if (!uploadForm.name) { showToast('Document name is required', 'error'); return; }
+    if (!uploadForm.fileUrl) { showToast('Document URL is required', 'error'); return; }
+    try { new URL(uploadForm.fileUrl); } catch { showToast('Please enter a valid URL', 'error'); return; }
     setSaving(true);
     try {
-      let fileUrl = uploadForm.fileUrl;
-      if (selectedFile) {
-        setFileUploading(true);
-        const fd = new FormData();
-        fd.append('file', selectedFile);
-        fd.append('projectId', uploadForm.projectId);
-        const uploadRes = await fetch('/api/upload', { method: 'POST', credentials: 'same-origin', body: fd });
-        const uploadJson = await uploadRes.json();
-        if (!uploadRes.ok) throw new Error(uploadJson.error || 'Upload failed');
-        fileUrl = uploadJson.data.url;
-        setFileUploading(false);
-      }
-      await api.post('/api/projects/documents', { ...uploadForm, fileUrl, fileSize: uploadForm.fileSize, fileType: uploadForm.fileType });
-      showToast('Document uploaded');
+      const ext = uploadForm.fileUrl.split('.').pop().split('?')[0].toLowerCase();
+      const fileType = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'rar'].includes(ext) ? ext : 'link';
+      await api.post('/api/projects/documents', { ...uploadForm, fileType });
+      showToast('Document added');
       setUploadDocModal(false);
-      setSelectedFile(null);
-      setSelectedFile(null);
-      setUploadForm({ name: '', fileUrl: '', fileSize: '', fileType: 'pdf', projectId: '', taskId: null });
+      setUploadForm({ name: '', fileUrl: '', fileType: 'link', projectId: '', taskId: null });
       if (uploadForm.projectId) loadProjectDocs(uploadForm.projectId);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
       setSaving(false);
-      setFileUploading(false);
     }
   };
 
@@ -387,9 +390,38 @@ export default function TasksPage() {
     try {
       await api.delete(`/api/projects/documents/${docId}`);
       showToast('Document deleted');
-      if (selectedDocProject) loadProjectDocs(selectedDocProject);
+      const pid = selectedDocProject || editTask?.projectId?._id || editTask?.projectId;
+      if (pid) loadProjectDocs(pid);
     } catch (e) {
       showToast(e.message, 'error');
+    }
+  };
+
+  const handleAddTaskDoc = async () => {
+    if (!taskDocName.trim()) { showToast('Document name is required', 'error'); return; }
+    if (!taskDocUrl.trim()) { showToast('Document URL is required', 'error'); return; }
+    try { new URL(taskDocUrl); } catch { showToast('Please enter a valid URL', 'error'); return; }
+    const pid = editTask?.projectId?._id || editTask?.projectId;
+    if (!pid) { showToast('No project associated with this task', 'error'); return; }
+    setSaving(true);
+    try {
+      const ext = taskDocUrl.split('.').pop().split('?')[0].toLowerCase();
+      const fileType = ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'zip', 'rar'].includes(ext) ? ext : 'link';
+      await api.post('/api/projects/documents', {
+        name: taskDocName.trim(),
+        fileUrl: taskDocUrl.trim(),
+        fileType,
+        projectId: pid,
+        taskId: editTask._id,
+      });
+      showToast('Document added');
+      setTaskDocName('');
+      setTaskDocUrl('');
+      loadProjectDocs(pid);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -419,7 +451,11 @@ export default function TasksPage() {
     }
   };
 
-  const filtered = tasks.filter(t => !filterProject || t.projectId?._id === filterProject || t.projectId === filterProject);
+  const filtered = tasks
+    .filter(t => !filterProject || t.projectId?._id === filterProject || t.projectId === filterProject)
+    .filter(t => !searchQuery || t.title.toLowerCase().includes(searchQuery.toLowerCase()))
+    .filter(t => !filterPriority || t.priority === filterPriority)
+    .filter(t => !filterStatus || t.status === filterStatus);
   const userProjectIds = [...new Set(tasks.map(t => t.projectId?._id || t.projectId).filter(Boolean))];
   const visibleProjects = projects.filter(p => userProjectIds.includes(p._id));
 
@@ -439,12 +475,12 @@ export default function TasksPage() {
     if (user?.role === 'super_admin') return true;
     if (user?.role === 'admin_full') return e.role !== 'super_admin';
     if (user?.role === 'team_lead') {
-      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['team_admin', 'employee', 'intern'].includes(e.role);
-      return e.department === user.department && ['team_admin', 'employee', 'intern'].includes(e.role);
+      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['team_admin', 'employee', 'intern', 'sme'].includes(e.role);
+      return e.department === user.department && ['team_admin', 'employee', 'intern', 'sme'].includes(e.role);
     }
     if (user?.role === 'team_admin') {
-      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['employee', 'intern'].includes(e.role);
-      return e.department === user.department && ['employee', 'intern'].includes(e.role);
+      if (projectApprovedCrossDept) return selectedProjectDepts.includes(e.department) && ['employee', 'intern', 'sme'].includes(e.role);
+      return e.department === user.department && ['employee', 'intern', 'sme'].includes(e.role);
     }
     return false;
   });
@@ -463,7 +499,10 @@ export default function TasksPage() {
       <div className="page-header">
         <div>
           <h4>Tasks & Projects</h4>
-          <p>{tasks.filter(t => t.status !== 'Completed').length} active · {tasks.filter(t => t.status === 'Completed').length} completed</p>
+          <p>
+            {tasks.filter(t => t.status !== 'Completed').length} active · {tasks.filter(t => t.status === 'Completed').length} completed
+            {tasks.filter(isOverdue).length > 0 && <span style={{ color: '#dc2626', fontWeight: 600 }}> · {tasks.filter(isOverdue).length} overdue</span>}
+          </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline-secondary" onClick={openProjectDocs}><i className="bi bi-folder2-open me-2" />Project Documents</button>
@@ -478,7 +517,7 @@ export default function TasksPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
-        {['kanban', 'list', 'projects', ...(isAdmin ? ['permissions'] : [])].map(t => (
+        {['kanban', 'list', 'projects', ...(isSuperAdmin ? ['permissions'] : [])].map(t => (
           <button key={t} onClick={() => setTab(t)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#1e293b' : '#64748b', boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.08)' : 'none' }}>
             {t === 'kanban' ? 'Kanban Board' : t === 'list' ? 'List View' : t === 'permissions' ? 'Permissions' : 'Projects'}
@@ -492,6 +531,34 @@ export default function TasksPage() {
             <option value="">All Projects</option>
             {visibleProjects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
           </select>
+        </div>
+      )}
+
+      {(tab === 'kanban' || tab === 'list') && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ position: 'relative', flex: '1 1 220px', maxWidth: 320 }}>
+            <i className="bi bi-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: '#94a3b8' }} />
+            <input
+              className="form-control"
+              style={{ fontSize: 13, paddingLeft: 32 }}
+              placeholder="Search tasks..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <select className="form-select" style={{ width: 150, fontSize: 13 }} value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
+            <option value="">All Priorities</option>
+            {PRIORITIES.map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
+          </select>
+          <select className="form-select" style={{ width: 160, fontSize: 13 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
+            <option value="">All Statuses</option>
+            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {(searchQuery || filterPriority || filterStatus) && (
+            <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12 }} onClick={() => { setSearchQuery(''); setFilterPriority(''); setFilterStatus(''); }}>
+              <i className="bi bi-x-lg me-1" />Clear
+            </button>
+          )}
         </div>
       )}
 
@@ -510,6 +577,9 @@ export default function TasksPage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLORS[status] }} />
                         <span style={{ fontWeight: 700, fontSize: 13 }}>{status}</span>
+                        {colTasks.filter(isOverdue).length > 0 && (
+                          <span style={{ background: '#fef2f2', color: '#dc2626', borderRadius: 20, padding: '2px 8px', fontSize: 10, fontWeight: 700 }}>{colTasks.filter(isOverdue).length} overdue</span>
+                        )}
                       </div>
                       <span style={{ background: '#e2e8f0', color: '#64748b', borderRadius: 20, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{colTasks.length}</span>
                     </div>
@@ -518,6 +588,7 @@ export default function TasksPage() {
                       <div key={task._id} className="kanban-card" onClick={() => openEdit(task)}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
                           <span style={{ fontSize: 12.5, fontWeight: 600, color: '#1e293b', lineHeight: 1.4, flex: 1 }}>{task.title}</span>
+                          {isOverdue(task) && <span style={{ background: '#fef2f2', color: '#dc2626', borderRadius: 4, padding: '1px 6px', fontSize: 9, fontWeight: 800, flexShrink: 0, marginLeft: 4 }}>OVERDUE</span>}
                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: PRIORITY_COLORS[task.priority], flexShrink: 0, marginTop: 4, marginLeft: 6 }} />
                         </div>
                         <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 8 }}>
@@ -535,7 +606,7 @@ export default function TasksPage() {
                           In {task.status} for {formatStatusDuration(getCurrentStatusStartedAt(task))}
                         </div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                          {STATUSES.filter(s => s !== status).filter(s => s !== 'Blocked' || isAdmin).map(s => (
+                          {STATUSES.filter(s => s !== status).filter(s => (s === 'Blocked' || s === 'Completed') ? isAdmin : true).map(s => (
                             <button key={s} onClick={e => { e.stopPropagation(); moveTask(task._id, s); }}
                               style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${STATUS_COLORS[s]}40`, background: STATUS_COLORS[s] + '10', color: STATUS_COLORS[s], cursor: 'pointer', fontWeight: 600 }}>
                               {s}
@@ -555,10 +626,10 @@ export default function TasksPage() {
             <div className="card">
               <div className="table-responsive">
                 <table className="table mb-0">
-                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>In status</th><th>Due</th>{filtered.some(canEditTask) && <th>Edit</th>}</tr></thead>
+                  <thead><tr><th>Task</th><th>Project</th><th>Assignee</th><th>Priority</th><th>Status</th><th>In status</th><th>Due</th>{filtered.some(canOpenTask) && <th>Edit</th>}</tr></thead>
                   <tbody>
                     {filtered.length === 0 ? (
-                      <tr><td colSpan={filtered.some(canEditTask) ? 8 : 7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
+                      <tr><td colSpan={filtered.some(canOpenTask) ? 8 : 7}><div className="empty-state"><i className="bi bi-check2-square" /><p>No tasks found</p></div></td></tr>
                     ) : filtered.slice((listPage - 1) * pageSize, listPage * pageSize).map(task => (
                       <tr key={task._id}>
                         <td>
@@ -583,8 +654,12 @@ export default function TasksPage() {
                         </td>
                         <td><span className="badge" style={{ background: STATUS_COLORS[task.status] + '20', color: STATUS_COLORS[task.status] }}>{task.status}</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', whiteSpace: 'nowrap' }}><i className="bi bi-stopwatch me-1" />{formatStatusDuration(getCurrentStatusStartedAt(task))}</td>
-                        <td style={{ fontSize: 12, color: '#64748b' }}>{task.due || '—'}</td>
-                        {canEditTask(task) && <td><button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(task)}><i className="bi bi-pencil" /></button></td>}
+                        <td style={{ fontSize: 12, color: '#64748b' }}>
+                          {isOverdue(task) ? (
+                            <span style={{ color: '#dc2626', fontWeight: 700 }}><i className="bi bi-clock-history me-1" />Overdue</span>
+                          ) : (task.due || '—')}
+                        </td>
+                        {canOpenTask(task) && <td><button className="btn btn-sm btn-outline-primary" style={{ padding: '3px 8px', fontSize: 12 }} onClick={() => openEdit(task)}><i className="bi bi-pencil" /></button></td>}
                       </tr>
                     ))}
                   </tbody>
@@ -737,7 +812,7 @@ export default function TasksPage() {
             <div className="modal-content">
               <div className="modal-header">
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h5 className="modal-title">{editTask ? 'Edit Task' : 'New Task'}</h5>{editTask && <button className="btn btn-sm btn-outline-secondary" title="Download task comments" onClick={downloadTaskActivity}><i className="bi bi-download" /></button>}</div>
-                <button className="btn-close" onClick={() => setShowModal(false)} />
+                <button className="btn-close" onClick={() => { setShowModal(false); setTaskDocName(''); setTaskDocUrl(''); }} />
               </div>
               <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto', background: '#f8fafc' }}>
                 <div className="row g-3">
@@ -785,12 +860,12 @@ export default function TasksPage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
                     <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} disabled={!canEditForm} />
                   </div>
-                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><div style={{ display: 'flex', gap: 8 }}><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /><button type="button" className="btn btn-outline-primary" onClick={addTaskActivity} disabled={saving} title="Add dated comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} /></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-paperclip me-2" />Documents</div></div></>}
-                  {editTask && <div className="col-12"><div className="row g-2"><div className="col-md-4"><input className="form-control" placeholder="Document name" value={uploadForm.name} onChange={e => setUploadForm(p => ({ ...p, name: e.target.value }))} /></div><div className="col-md-4"><input className="form-control" type="file" onChange={e => { const file = e.target.files?.[0]; if (file) { if (file.size > 3 * 1024 * 1024) { showToast('Document must be smaller than 3 MB', 'error'); e.target.value = ''; return; } setSelectedFile(file); setUploadForm(p => ({ ...p, name: p.name || file.name, fileType: file.name.split('.').pop() || p.fileType, fileSize: `${(file.size / 1024).toFixed(1)} KB` })); } }} /></div><div className="col-md-4"><input className="form-control" placeholder="Or paste document URL" value={uploadForm.fileUrl} onChange={e => setUploadForm(p => ({ ...p, fileUrl: e.target.value }))} /></div><div className="col-12"><small className="text-muted">Upload a document under 3 MB or provide a document URL.</small><button type="button" className="btn btn-sm btn-outline-primary ms-2" onClick={handleUploadDoc} disabled={saving || fileUploading}><i className="bi bi-upload me-1" />{fileUploading ? 'Uploading...' : 'Add Document'}</button></div><div className="col-12"><div style={{ fontSize: 12, fontWeight: 700, color: '#475569', marginTop: 5, marginBottom: 4 }}>Uploaded Files</div><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, padding: 8 }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: '5px 3px', borderBottom: '1px solid #f1f5f9' }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a></div>) : <span style={{ color: '#64748b', fontSize: 12 }}>No files uploaded for this task.</span>}</div></div></div></div>}
+                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><div style={{ display: 'flex', gap: 8 }}><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /><button type="button" className="btn btn-outline-primary" onClick={addTaskActivity} disabled={saving} title="Add dated comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} /></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div></>}
+                  {editTask && <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: "#2563eb", textTransform: "uppercase", letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: "1px solid #dbeafe" }}><i className="bi bi-paperclip me-2" />Documents</div><div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="Document name" value={taskDocName} onChange={e => setTaskDocName(e.target.value)} /><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="https://..." value={taskDocUrl} onChange={e => setTaskDocUrl(e.target.value)} /><button type="button" className="btn btn-sm btn-outline-primary" onClick={handleAddTaskDoc} disabled={saving} style={{ whiteSpace: "nowrap" }}><i className="bi bi-plus-lg me-1" />Add</button></div><div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, padding: 8, maxHeight: 120, overflowY: "auto" }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: "5px 3px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a><button type="button" className="btn btn-sm" style={{ padding: "0 4px", fontSize: 10, color: "#dc2626", background: "none", border: "none" }} onClick={() => handleDeleteDoc(doc._id)} title="Delete"><i className="bi bi-x-lg" /></button></div>) : <span style={{ color: "#64748b", fontSize: 12 }}>No documents yet.</span>}</div></div>}
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); setTaskDocName(''); setTaskDocUrl(''); }}>Cancel</button>
                 <button className="btn btn-primary" onClick={handleSave} disabled={saving || !canEditForm}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : editTask ? 'Save Changes' : 'Create Task'}
                 </button>
@@ -893,7 +968,7 @@ export default function TasksPage() {
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title"><i className="bi bi-upload me-2" />Upload Document</h5>
+                <h5 className="modal-title"><i className="bi bi-upload me-2" />Add Document</h5>
                 <button className="btn-close" onClick={() => setUploadDocModal(false)} />
               </div>
               <div className="modal-body">
@@ -902,9 +977,9 @@ export default function TasksPage() {
                   </div>
                 <div className="row g-3">
                   <div className="col-12">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task *</label>
-                    <select className="form-select" value={uploadForm.taskId || ''} onChange={e => setUploadForm(p => ({ ...p, taskId: e.target.value || null }))}>
-                      <option value="">Select a task</option>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task</label>
+                    <select className="form-select" value={uploadForm.taskId || ''} onChange={e => setUploadForm(p => ({ ...p, taskId: e.target.value === 'none' ? null : e.target.value || null }))}>
+                      <option value="none">No task (Project document)</option>
                       {tasks.filter(t => t.projectId?._id === uploadForm.projectId || t.projectId === uploadForm.projectId).map(task => (
                         <option key={task._id} value={task._id}>{task.title}</option>
                       ))}
@@ -915,22 +990,16 @@ export default function TasksPage() {
                     <input className="form-control" value={uploadForm.name} onChange={e => setUploadForm(p => ({ ...p, name: e.target.value }))} />
                   </div>
                   <div className="col-12">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Add Document *</label>
-                    <input className="form-control" type="file" onChange={e => { const f = e.target.files?.[0]; if (f) { setSelectedFile(f); setUploadForm(p => ({ ...p, fileType: f.name.split('.').pop() || p.fileType })); } }} style={{ padding: '6px 12px', minHeight: 42 }} />
-                    {selectedFile && <div style={{ fontSize: 11, color: '#16a34a', marginTop: 4 }}><i className="bi bi-check-circle me-1" />{selectedFile.name}</div>}
-                  </div>
-                  <div className="col-6">
-                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>File Type</label>
-                    <select className="form-select" value={uploadForm.fileType} onChange={e => setUploadForm(p => ({ ...p, fileType: e.target.value }))}>
-                      {['pdf', 'doc', 'docx', 'zip', 'image', 'other'].map(t => <option key={t}>{t}</option>)}
-                    </select>
+                    <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Document URL *</label>
+                    <input className="form-control" value={uploadForm.fileUrl} onChange={e => setUploadForm(p => ({ ...p, fileUrl: e.target.value }))} placeholder="https://example.com/document.pdf" />
+                    <small className="text-muted">Paste a link to the document (Google Drive, Notion, etc.)</small>
                   </div>
                 </div>
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setUploadDocModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleUploadDoc} disabled={saving || fileUploading}>
-                  {fileUploading ? <><span className="spinner-border spinner-border-sm me-2" />Uploading file...</> : saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Upload'}
+                <button className="btn btn-primary" onClick={handleUploadDoc} disabled={saving}>
+                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Add Document'}
                 </button>
               </div>
             </div>
