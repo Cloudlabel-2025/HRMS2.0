@@ -53,6 +53,22 @@ const AttendanceSchema = new mongoose.Schema({
   approvedHalfDayLeave: { type: Boolean, default: false },
   relatedLeaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null },
   nonWorkingDayType: { type: String, enum: ['none', 'holiday', 'weekly_off'], default: 'none' },
+  permission: {
+    requestId: { type: mongoose.Schema.Types.ObjectId, ref: 'SelfServiceRequest', default: null },
+    startTime: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    endTime: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    duration: { type: Number, default: null },
+    grantedDuration: { type: Number, default: null },
+    usedDuration: { type: Number, default: null },
+    refundedDuration: { type: Number, default: null },
+    actualClockIn: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    effectiveClockIn: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    applied: { type: Boolean, default: false },
+    isMidDay: { type: Boolean, default: false },
+    status: { type: String, enum: ['approved'], default: 'approved' },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    approvedAt: { type: Date, default: null },
+  },
 }, { timestamps: true });
 
 AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });

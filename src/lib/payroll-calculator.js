@@ -27,6 +27,7 @@ export const DEFAULT_RULE = {
  * @param {number}  params.workingDays  - Working days in the cycle
  * @param {number}  params.totalDaysInMonth - Calendar days in the month/cycle
  * @param {number}  params.lopDays      - Loss of Pay days
+ * @param {number}  params.retroLopDays - Retroactive LOP days from prior locked cycles
  * @param {Array}   params.overrides    - Per-employee overrides from SalaryStructure
  * @param {Array}   params.adhocBonuses - One-time bonuses for this run [{code,label,amount}]
  */
@@ -36,6 +37,7 @@ export function calculatePayroll({
   workingDays,
   totalDaysInMonth,
   lopDays = 0,
+  retroLopDays = 0,
   overrides = [],
   adhocBonuses = [],
 }) {
@@ -134,8 +136,8 @@ export function calculatePayroll({
   }
 
   // Retroactive LOP Auto-Adjustment
-  const retroLopDays = Number(arguments[0]?.retroLopDays) || 0;
-  const retroLopDeduction = round(salaryPerDay * retroLopDays);
+  const retroDays = Number(retroLopDays) || 0;
+  const retroLopDeduction = round(salaryPerDay * retroDays);
 
   if (retroLopDeduction > 0) {
     deductionsList.push({ code: 'RETRO_LOP_ADJ', label: 'Retroactive Loss of Pay Adjustment', amount: retroLopDeduction });

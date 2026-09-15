@@ -85,12 +85,14 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
 
   const elapsedMins = Math.max(0, clockOutMinutes - clockInMinutes);
   const deduction = calculateBreakDeduction(record.breaks, shiftCfg.breaks);
-  const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(elapsedMins, deduction, shiftCfg);
+  const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(elapsedMins, deduction, shiftCfg);
   record.baseHoursWorked = baseHours;
   record.breakDeduction = deduction;
   record.hoursWorked = hoursWorked;
   record.payableHours = payableHours;
-  record.shortHours = shortHours;
+  // Permission day: suppress shortHours — highlight hours only, no impact.
+  const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
+  record.shortHours = hasPermission ? false : rawShortHours;
   if (record.approvedHalfDayLeave) {
     record.status = 'present';
     record.lateFlag = false;

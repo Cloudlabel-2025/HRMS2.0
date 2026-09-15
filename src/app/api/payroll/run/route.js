@@ -34,9 +34,11 @@ export async function POST(req) {
     const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
     const workingDays = workingCalendar.workingDays;
     const holidayDocs = workingCalendar.holidays.map(date => ({ date }));
+    // Single source for working dates: local-midnight iteration (same as
+    // getWorkingDayCalendar) to avoid UTC DST day-slip.
     const workingDateSet = new Set();
-    for (let cursor = new Date(`${fromDate}T00:00:00Z`), end = new Date(`${toDate}T00:00:00Z`); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-      const date = cursor.toISOString().slice(0, 10);
+    for (let cursor = new Date(`${fromDate}T00:00:00`), end = new Date(`${toDate}T00:00:00`); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+      const date = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
       if (isWorkingDay(date, config, holidayDocs)) workingDateSet.add(date);
     }
     const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
@@ -52,6 +54,8 @@ export async function POST(req) {
     for (const emp of employees) {
       const existing = await Payroll.findOne({ userId: emp._id, month });
       if (existing?.status === 'finalized') continue;
+      // Never demote an approved payroll back to draft without reopen.
+      if (existing?.status === 'approved') continue;
 
       const structure = await SalaryStructure.findOne({ userId: emp._id });
       if (!structure) continue;
@@ -64,6 +68,8 @@ export async function POST(req) {
 
       let presentDays;
       let lopDays;
+      let retroLopDaysVal = 0;
+      let retroLeaveIdsVal = [];
 
       if (isEmployer(emp.role)) {
         presentDays = workingDays;
@@ -94,8 +100,9 @@ export async function POST(req) {
           let overlap = 0;
           const start = leave.from < fromDate ? fromDate : leave.from;
           const end = leave.to > toDate ? toDate : leave.to;
-          for (let cursor = new Date(`${start}T00:00:00Z`), last = new Date(`${end}T00:00:00Z`); cursor <= last; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
-            if (workingDateSet.has(cursor.toISOString().slice(0, 10))) overlap += leave.halfDay ? 0.5 : 1;
+          for (let cursor = new Date(`${start}T00:00:00`), last = new Date(`${end}T00:00:00`); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
+            const d = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
+            if (workingDateSet.has(d)) overlap += leave.halfDay ? 0.5 : 1;
           }
           return sum + (overlap * paidRatio);
         }, 0);
@@ -111,11 +118,13 @@ export async function POST(req) {
         });
 
         let retroLopDays = 0;
+        const retroLeaveIds = [];
         for (const rLeave of retroLeaves) {
           retroLopDays += Number(rLeave.unpaidDays) || (rLeave.typeCode === 'LOP' ? Number(rLeave.days) : 0);
+          retroLeaveIds.push(rLeave._id);
         }
-
-        var retroLopDaysVal = retroLopDays;
+        retroLopDaysVal = retroLopDays;
+        retroLeaveIdsVal = retroLeaveIds;
       }
 
       const result = calculatePayroll({
@@ -124,7 +133,7 @@ export async function POST(req) {
         workingDays,
         totalDaysInMonth: calendarStats.totalDays,
         lopDays,
-        retroLopDays: typeof retroLopDaysVal !== 'undefined' ? retroLopDaysVal : 0,
+        retroLopDays: retroLopDaysVal,
         overrides: structure.overrides || [],
         adhocBonuses: [],
       });
@@ -164,6 +173,16 @@ export async function POST(req) {
         },
         { upsert: true, new: true }
       );
+      // Mark retro leaves as consumed so the next run does not re-deduct them.
+      if (retroLeaveIdsVal.length > 0) {
+        try {
+          const { default: Leave } = await import('@/lib/models/Leave');
+          await Leave.updateMany(
+            { _id: { $in: retroLeaveIdsVal } },
+            { $set: { retroAdjustedInPayroll: true, retroPayrollRunId: payroll._id } }
+          );
+        } catch (e) { console.error('Failed to mark retro leaves consumed:', e?.message || e); }
+      }
       results.push(payroll);
     }
 

@@ -24,8 +24,9 @@ export function getAttendanceDate(now, shiftStartTime, shiftEndTime) {
   // Shift that crosses midnight (end < start)
   if (endMinutes < startMinutes) {
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
-    // Before shift end → still the previous shift day
-    if (nowMinutes <= endMinutes) {
+    // Strictly before shift end → still the previous shift day.
+    // At exactly endMinutes the shift is over, so use the calendar date.
+    if (nowMinutes < endMinutes) {
       const prev = new Date(now);
       prev.setDate(prev.getDate() - 1);
       return formatDate(prev);

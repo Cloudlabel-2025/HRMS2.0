@@ -45,6 +45,13 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
     setNotifications(p => p.map(n => n._id === id ? { ...n, read: true } : n));
   };
 
+  const loadNotifs = async () => {
+    try {
+      const data = await api.get('/api/notifications');
+      if (Array.isArray(data)) setNotifications(data);
+    } catch {}
+  };
+
   if (!user) return null;
 
   return (

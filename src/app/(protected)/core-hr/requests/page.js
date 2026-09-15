@@ -116,7 +116,7 @@ function PayloadView({ requestType, payload, formatTime }) {
         </div>
         {payload.isThirdOrMore && (
           <div className="alert alert-warning py-2 px-3 mt-3 mb-0" style={{ fontSize: 13, borderLeft: '4px solid #f59e0b', color: '#854d0e', backgroundColor: '#fef9c3', borderColor: '#fef08a' }}>
-            <strong>⚠️ Warning:</strong> This is the employee's <strong>{payload.permissionCountInCycle}th</strong> permission request in this payroll cycle ({payload.cycleRange?.fromDate} to {payload.cycleRange?.toDate}).
+            <strong>⚠️ Warning:</strong> This is the employee's <strong>{payload.permissionCountInCycle}th</strong> permission request in this payroll cycle ({payload.cycleRange?.fromDate} to {payload.cycleRange?.toDate}). Monthly allowance is 120 mins with no carry-forward; approval checks remaining balance.
           </div>
         )}
       </div>

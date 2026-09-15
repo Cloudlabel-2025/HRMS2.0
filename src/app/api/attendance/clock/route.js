@@ -10,7 +10,9 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime, toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
-import { getShiftConfig, calculateHoursWorked, determineStatus, diffMins } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
+import { resolveDayStatus } from '@/lib/attendance-resolver';
+import { computePermissionUsage, permissionCoversShiftStart } from '@/lib/permission-allowance';
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -132,7 +134,8 @@ export async function POST(req) {
 
       let shiftHour = 9, shiftMin = 0;
       let shiftFound = false;
-      let permissionAdjustedClockIn = null;
+      let clockInPermission = null;
+      let permissionUsage = { used: 0, refunded: 0, applied: false, isMidDay: true };
       if (shiftDoc?.startTime) {
         const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
         shiftHour = sh; shiftMin = sm;
@@ -159,39 +162,24 @@ export async function POST(req) {
           'payload.date': today
         });
 
-        const shiftStartMins = shiftHour * 60 + shiftMin;
-        const limitMins = shiftStartMins + 120;
-        const nowMins = now.getHours() * 60 + now.getMinutes();
-        const fmtTime = t => {
-          if (!t) return t;
-          const tf = config?.timeFormat;
-          if (tf !== '12h') return t;
-          const [h, m] = t.split(':').map(Number);
-          if (isNaN(h) || isNaN(m)) return t;
-          const ampm = h >= 12 ? 'PM' : 'AM';
-          return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${ampm}`;
-        };
-
-        for (const perm of approvedPermissions) {
-          const startTime = perm.payload?.startTime;
-          const endTime = perm.payload?.endTime;
-          if (startTime && endTime) {
-            const [psh, psm] = startTime.split(':').map(Number);
-            const [peh, pem] = endTime.split(':').map(Number);
-            const permStartMins = psh * 60 + psm;
-            let permEndMins = peh * 60 + pem;
-            if (permEndMins < permStartMins) permEndMins += 24 * 60;
-
-            if (permStartMins <= limitMins) {
-              if (nowMins < permEndMins) {
-                auditLog('Clock In Blocked', 'Attendance', user._id, `Block due to active morning permission (${fmtTime(startTime)} to ${fmtTime(endTime)})`, 'low', ip, null, user._id);
-                return fail(`You have an approved permission request today from ${fmtTime(startTime)} to ${fmtTime(endTime)}. You cannot clock in until the permission is over.`, 400);
-              }
-            }
-            if (permStartMins <= shiftStartMins && permEndMins >= shiftStartMins && nowMins <= permEndMins + cfg.lateThreshold) {
-              permissionAdjustedClockIn = `${String(shiftHour).padStart(2, '0')}:${String(shiftMin).padStart(2, '0')}`;
-            }
-          }
+        // Only one permission per day is allowed. Strict end-inclusive
+        // (grace 0): actual at/before permEnd => present; actual at/after
+        // permEnd+1m falls through to normal late evaluation.
+        // e.g. permission 09:00-11:00: 11:00 = present, 11:01 = late.
+        // Mid-day windows (not covering shift start) never affect late.
+        const perm = approvedPermissions[0] || null;
+        clockInPermission = perm;
+        if (perm?.payload?.endTime) {
+          const granted = Number(perm.payload?.duration || 0) || 0;
+          const shiftStartMins = shiftHour * 60 + shiftMin;
+          permissionUsage = computePermissionUsage({
+            actualClockIn: timeStr,
+            permStart: perm.payload?.startTime,
+            permEnd: perm.payload?.endTime,
+            grantedDuration: granted,
+            shiftStartMins,
+            lateThreshold: cfg?.lateThreshold ?? 15,
+          });
         }
       }
 
@@ -220,18 +208,54 @@ export async function POST(req) {
         shiftMin = 0;
       }
 
-      const attendanceClockIn = permissionAdjustedClockIn || timeStr;
+      // clockIn always stores the real wall time. Permission never rewrites it;
+      // late/present is decided against the permission window instead.
+      const attendanceClockIn = timeStr;
       const [h, m] = attendanceClockIn.split(':').map(Number);
+      const shiftStartMins = shiftHour * 60 + shiftMin;
       let minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
       if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
       let lateFlag = false;
       let status = 'present';
+      let permissionApplied = false;
+      let isMidDayPermission = false;
 
       if (shiftFound) {
-        const result = determineStatus(minutesSinceShiftStart, cfg);
+        const result = resolveDayStatus({
+          clockIn: timeStr,
+          permission: clockInPermission ? {
+            startTime: clockInPermission.payload?.startTime,
+            endTime: clockInPermission.payload?.endTime,
+          } : null,
+          approvedHalfDayLeave: !!onLeave?.halfDay,
+          nonWorkingDayType,
+          leaveOverrideStatus: 'none',
+          minutesSinceShiftStart,
+          shiftStartMins,
+          cfg,
+        });
         status = result.status;
         lateFlag = result.lateFlag;
+        // Resolver says applied when arrival is inside a covering window;
+        // usage calc says applied when time was actually consumed.
+        // Trust the stricter of the two so early arrivals (used=0) don't
+        // claim applied status.
+        permissionApplied = result.permissionApplied && permissionUsage.applied;
+        // Early arrival before shift start is on time and consumes nothing.
+        const actualMins = h * 60 + m;
+        if (clockInPermission && actualMins <= shiftStartMins) {
+          permissionApplied = false;
+          permissionUsage = {
+            ...permissionUsage,
+            used: 0,
+            refunded: Number(clockInPermission.payload?.duration || 0) || 0,
+            applied: false,
+          };
+        }
+        isMidDayPermission = result.isMidDayPermission || permissionUsage.isMidDay;
+        // Mid-day permission never flips late; usage already counts full grant.
+        if (isMidDayPermission) permissionApplied = false;
       }
 
       // Approved half-day leave plus a clock-in is a full payable attendance day:
@@ -241,7 +265,13 @@ export async function POST(req) {
         lateFlag = false;
       }
 
-      const isEarlyLogin = shiftFound && shiftHour * 60 + shiftMin > (h * 60 + m);
+      // Wraparound-aware: early = clocked before shift start within the same
+      // shift day (e.g. shift 22:00, clock 21:00 → early; clock 01:00 next
+      // calendar day belongs to the 22:00 shift date, not early).
+      const shiftStartMinsForEarly = shiftHour * 60 + shiftMin;
+      const clockMinsForEarly = h * 60 + m;
+      const earlyGap = (shiftStartMinsForEarly - clockMinsForEarly + 1440) % 1440;
+      const isEarlyLogin = shiftFound && earlyGap > 0 && earlyGap < 720;
 
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },
@@ -251,12 +281,34 @@ export async function POST(req) {
             status,
             lateFlag,
             earlyLogin: isEarlyLogin,
-            note: permissionAdjustedClockIn
-              ? `Clock-in adjusted from ${timeStr} to ${attendanceClockIn} for approved permission`
+            note: clockInPermission
+              ? `Clocked in at ${timeStr}${permissionApplied ? ` with approved permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} (used ${permissionUsage.used}/${Number(clockInPermission.payload?.duration || 0)} mins)` : isMidDayPermission ? ` (mid-day permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} on file; late judged by shift)` : ` (arrived outside permission window ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''})`}${body.reason ? ` Early login reason: ${body.reason}` : ''}`
               : body.reason ? `Early login reason: ${body.reason}` : '',
             approvedHalfDayLeave: !!onLeave?.halfDay,
             relatedLeaveId: onLeave?._id || null,
             nonWorkingDayType,
+            ...(clockInPermission ? (() => {
+              const granted = Number(clockInPermission.payload?.duration || 0) || null;
+              const effectiveClockIn = permissionApplied
+                ? `${String(shiftHour).padStart(2, '0')}:${String(shiftMin).padStart(2, '0')}`
+                : timeStr;
+              return {
+                permission: {
+                  requestId: clockInPermission._id,
+                  startTime: clockInPermission.payload?.startTime || null,
+                  endTime: clockInPermission.payload?.endTime || null,
+                  duration: granted,
+                  grantedDuration: granted,
+                  usedDuration: permissionUsage.used,
+                  refundedDuration: permissionUsage.refunded,
+                  actualClockIn: timeStr,
+                  effectiveClockIn,
+                  applied: permissionApplied,
+                  isMidDay: isMidDayPermission,
+                  status: 'approved',
+                },
+              };
+            })() : {}),
             ...(geo ? { geoLocation: geo } : {}),
           },
           $setOnInsert: {
@@ -301,7 +353,23 @@ export async function POST(req) {
         auditLog('Clock In (Leave Day)', 'Attendance', user._id, `Clocked in on approved ${onLeave.type} day`, 'medium', ip, null, user._id);
       }
 
-      await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}`, 'low', ip, null, user._id);
+      // Reconcile used vs granted on the permission request so unused time
+      // returns to the monthly allowance (approved counts used, not granted).
+      if (clockInPermission) {
+        try {
+          await SelfServiceRequest.findByIdAndUpdate(clockInPermission._id, {
+            $set: {
+              'payload.usedDuration': permissionUsage.used,
+              'payload.refundedMins': permissionUsage.refunded,
+              'payload.applied': permissionApplied,
+              'payload.actualClockIn': timeStr,
+              'payload.isMidDay': isMidDayPermission,
+            },
+          });
+        } catch (e) { console.error('Permission usage reconcile failed:', e?.message || e); }
+      }
+
+      await auditLog('Clock In', 'Attendance', user._id, `Clocked in at ${timeStr}, Status: ${status}${lateFlag ? ' (Late)' : ''}${clockInPermission ? ` (Permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} used ${permissionUsage.used}m)` : ''}`, 'low', ip, null, user._id);
 
       publishRecordEvent('clockin', record);
 
@@ -349,7 +417,12 @@ export async function POST(req) {
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
       const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
-      const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(finalMinutes, deduction, cfg);
+      const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, cfg);
+      // Permission day: keep real hours worked for display (highlight Xh Ym / 8h)
+      // but never flag shortHours / early clock-out — the excused time has no
+      // business impact. Employee may still voluntarily work the full 8 hours.
+      const hasPermission = !!(outRecord.permission?.requestId || outRecord.permission?.startTime);
+      const shortHours = hasPermission ? false : rawShortHours;
       deductionBreakdown = {
         totalDeduction: deduction,
         breakLog: updatedBreaks.map(b => ({

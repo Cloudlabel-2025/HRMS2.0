@@ -6,6 +6,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
 import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
@@ -103,13 +104,16 @@ export async function POST(req) {
         const finalClockOut = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
         const finalMinutes = Math.max(0, finalClockOutMins - clockInMins);
 
-        const deduction = record.breakDeduction || 0;
-        const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
-        const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
-
         const updatedBreaks = (record.breaks || []).map(row => (
           row.start && !row.end ? { ...row, end: finalClockOut } : row
         ));
+        // Recompute from actual break records — never trust stored deduction.
+        const deduction = calculateBreakDeduction(updatedBreaks, recordShiftCfg.breaks);
+        const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
+        const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
+        const shortHours = hasPermission ? false : rawShortHours;
+        const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
+
         const finalized = finalizeDayWork(record.workProgress, finalClockOut, record.date);
 
         // Atomically claim AND finalize — single operation prevents race & crash-orphaning

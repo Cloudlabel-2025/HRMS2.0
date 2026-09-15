@@ -37,6 +37,8 @@ export default function SelfServicePage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [formErrors, setFormErrors] = useState({});
+  const [permBalance, setPermBalance] = useState(null);
+  const [permBalanceLoading, setPermBalanceLoading] = useState(false);
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -152,6 +154,17 @@ export default function SelfServicePage() {
   useEffect(() => {
     if (user) load();
   }, [user]);
+
+  useEffect(() => {
+    if (form.requestType !== 'permission' || !form.permissionDate) { setPermBalance(null); return; }
+    let cancelled = false;
+    setPermBalanceLoading(true);
+    api.get('/api/self-service/permission-balance?date=' + form.permissionDate)
+      .then(r => { if (!cancelled) setPermBalance(r?.balance || null); })
+      .catch(() => { if (!cancelled) setPermBalance(null); })
+      .finally(() => { if (!cancelled) setPermBalanceLoading(false); });
+    return () => { cancelled = true; };
+  }, [form.requestType, form.permissionDate]);
 
   const submit = async () => {
     if (!validate()) return;
@@ -321,6 +334,15 @@ export default function SelfServicePage() {
 
               {form.requestType === 'permission' && (
                 <>
+                  <div className="col-12">
+                    <div className="alert alert-info py-2 mb-0" style={{ fontSize: 12 }}>
+                      {permBalanceLoading ? 'Loading permission balance…' : permBalance ? (
+                        <>Monthly allowance: <strong>{permBalance.allowance} mins</strong> · Used: <strong>{permBalance.totalUsed} mins</strong> · Remaining: <strong>{permBalance.remaining} mins</strong> ({permBalance.fromDate} to {permBalance.toDate}). No carry-forward.</>
+                      ) : (
+                        <>Monthly allowance: 120 mins per payroll cycle (no carry-forward). Select a date to see remaining balance.</>
+                      )}
+                    </div>
+                  </div>
                   <div className="col-md-4">
                     <label className="form-label">Permission Date <span style={{color:'#ef4444'}}>*</span></label>
                     <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />

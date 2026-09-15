@@ -378,10 +378,11 @@ export async function PUT(req) {
         attendance.baseHoursWorked = base;
 
         attendance.breakDeduction = calculateBreakDeduction(attendanceBreaks, regCfg.breaks);
-        const { hoursWorked, payableHours, shortHours } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
+        const { hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
         attendance.hoursWorked = hoursWorked;
         attendance.payableHours = payableHours;
-        attendance.shortHours = shortHours;
+        const hasRegPermission = !!(attendance.permission?.requestId || attendance.permission?.startTime);
+        attendance.shortHours = hasRegPermission ? false : rawShortHours;
         attendance.status = 'present';
 
         // Recalculate lateFlag based on shift start

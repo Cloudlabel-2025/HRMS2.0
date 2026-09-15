@@ -117,6 +117,30 @@ async function applyApprovedRequest(request, reviewer) {
   }
 
   if (request.requestType === 'permission') {
+    // Re-check monthly allowance at approval time (creation already checked).
+    try {
+      const { getGlobalConfig, getCycleMonth, getCycleRange } = await import('@/lib/payroll-cycle');
+      const { getPermissionAllowanceMins, getPermissionUsageForCycle } = await import('@/lib/permission-allowance');
+      const cfg = await getGlobalConfig();
+      const permDate = request.payload?.date;
+      const granted = Number(request.payload?.duration || 0) || 0;
+      if (permDate && granted > 0) {
+        const startDay = cfg.payrollStartDay || 26;
+        const endDay = cfg.payrollEndDay || 25;
+        const { year, month } = getCycleMonth(permDate, startDay);
+        const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
+        const usage = await getPermissionUsageForCycle(request.profileId, fromDate, toDate);
+        const allowance = getPermissionAllowanceMins(cfg);
+        // usage includes this pending request; approve only if it still fits.
+        if (usage.totalUsed > allowance) {
+          throw new Error(`Permission allowance exceeded for cycle ${fromDate} to ${toDate}.`);
+        }
+      }
+    } catch (e) {
+      if (String(e?.message || '').includes('allowance exceeded')) throw e;
+      console.error('Permission allowance re-check failed:', e?.message || e);
+    }
+
     await recordLifecycleHistory({
       entityType: 'identity',
       entityId: identity._id,
@@ -132,6 +156,49 @@ async function applyApprovedRequest(request, reviewer) {
       actorRole: reviewer.role,
       metadata: { requestId: request._id.toString(), source: 'self-service-permission' },
     });
+
+    // Mirror the approved permission onto the day's attendance so the
+    // 8-hours day view shows it even before the employee clocks in.
+    // clockIn stays null until the employee actually clocks in; the real
+    // wall time is always preserved (never overwritten with shift start).
+    try {
+      const { default: Attendance } = await import('@/lib/models/Attendance');
+      const permDate = request.payload?.date;
+      if (permDate && identity.authUserId) {
+        const startTime = request.payload?.startTime || null;
+        const endTime = request.payload?.endTime || null;
+        const granted = Number(request.payload?.duration || 0) || null;
+        await Attendance.findOneAndUpdate(
+          { userId: identity.authUserId, date: permDate },
+          {
+            $set: {
+              permission: {
+                requestId: request._id,
+                startTime,
+                endTime,
+                duration: granted,
+                grantedDuration: granted,
+                usedDuration: null,
+                refundedDuration: null,
+                actualClockIn: null,
+                effectiveClockIn: null,
+                applied: false,
+                isMidDay: false,
+                status: 'approved',
+                approvedBy: reviewer._id,
+                approvedAt: new Date(),
+              },
+              note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}`,
+            },
+            $setOnInsert: { status: 'present' },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      }
+    } catch (e) {
+      // Non-fatal: approval itself succeeded; attendance mirror is best-effort.
+      console.error('Failed to mirror approved permission to attendance:', e?.message || e);
+    }
   }
 }
 

@@ -9,6 +9,7 @@ import { CORE_HR_ADMIN_ROLES } from '@/lib/core/constants';
 import { CreateSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
 import { getGlobalConfig, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
+import { getPermissionAllowanceMins, getPermissionUsageForCycle } from '@/lib/permission-allowance';
 
 function normalizePayload(requestType, payload) {
   if (requestType === 'profile_update') {
@@ -149,15 +150,58 @@ export async function POST(req) {
       let durationMins = (eh * 60 + em) - (sh * 60 + sm);
       if (durationMins < 0) durationMins += 24 * 60;
 
+      if (durationMins <= 0) {
+        return fail('End time must be after start time', 400);
+      }
+
       if (durationMins > 120) {
         return fail('Permission request cannot exceed 2 hours', 400);
       }
+
+      // Only one permission per day — block if an approved OR pending
+      // permission already exists for this date.
+      const existingForDate = await SelfServiceRequest.findOne({
+        profileId: profile._id,
+        requestType: 'permission',
+        status: { $in: ['approved', 'pending'] },
+        'payload.date': date,
+      }).lean();
+      if (existingForDate) {
+        auditLog('Self-Service Request Failed', 'SelfService', user._id, `Duplicate permission request for ${date}`, 'low', ip, null, user._id);
+        return fail('Only one permission is allowed per day. You already have a permission request for this date.', 409);
+      }
+
+      // A day can hold either a leave or a permission, never both.
+      try {
+        const { Leave } = await import('@/lib/models/index');
+        const leaveConflict = await Leave.findOne({
+          userId: user._id,
+          status: { $in: ['pending', 'approved'] },
+          from: { $lte: date },
+          to: { $gte: date },
+        }).lean();
+        if (leaveConflict) {
+          auditLog('Self-Service Request Failed', 'SelfService', user._id, `Leave already registered for ${date}`, 'low', ip, null, user._id);
+          return fail(`You already have a ${leaveConflict.status} leave covering ${date}. A day can hold either a leave or a permission, not both.`, 409);
+        }
+      } catch (e) { console.error('Permission-leave conflict check failed:', e?.message || e); }
 
       const config = await getGlobalConfig();
       const startDay = config.payrollStartDay || 26;
       const endDay = config.payrollEndDay || 25;
       const { year, month } = getCycleMonth(date, startDay);
       const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
+
+      // Monthly allowance (default 120 mins per payroll cycle, no carry-forward).
+      // Approved requests count usedDuration (refunded time frees balance);
+      // pending requests reserve their full duration.
+      const allowance = getPermissionAllowanceMins(config);
+      const usage = await getPermissionUsageForCycle(profile._id, fromDate, toDate);
+      const remaining = Math.max(0, allowance - usage.totalUsed);
+      if (durationMins > remaining) {
+        auditLog('Self-Service Request Failed', 'SelfService', user._id, `Permission allowance exceeded for cycle ${fromDate} to ${toDate} (remaining ${remaining}m)`, 'low', ip, null, user._id);
+        return fail(`Permission allowance exceeded. You have ${remaining} mins remaining in this cycle (${fromDate} to ${toDate}) of ${allowance} mins.`, 409);
+      }
 
       const count = await SelfServiceRequest.countDocuments({
         profileId: profile._id,

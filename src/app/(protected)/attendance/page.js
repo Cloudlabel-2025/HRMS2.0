@@ -44,7 +44,9 @@ function nowTimeStr() {
 function diffMins(start, end) {
   if (!start || !end) return 0;
   const s = toMinutes(start), e = toMinutes(end);
-  return e > s ? e - s : 0;
+  // Overnight-aware: e.g. break 23:30-00:30 = 60m (matches server attendance-constants.diffMins).
+  if (e >= s) return e - s;
+  return e + 24 * 60 - s;
 }
 
 export default function AttendancePage() {
@@ -1559,7 +1561,7 @@ export default function AttendancePage() {
                   { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
                   { label: 'Late', value: teamToday.filter(r => r.status === 'late').length, icon: 'bi-clock', color: '#f59e0b' },
                   { label: 'Half Day', value: teamToday.filter(r => r.status === 'half_day').length, icon: 'bi-sun', color: '#ea580c' },
-                  { label: 'Short Hours', value: teamToday.filter(r => r.shortHours).length, icon: 'bi-hourglass-split', color: '#7c3aed' },
+                  { label: 'Short Hours', value: teamToday.filter(r => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length, icon: 'bi-hourglass-split', color: '#7c3aed' },
                 ].map((s, i) => (
                   <div key={i} className="col-6 col-xl">
                     <div className="stat-card">
@@ -1611,11 +1613,12 @@ export default function AttendancePage() {
                             </td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
-                            <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                            <td style={{ fontSize: 13, fontWeight: (row.permission?.requestId || row.permission?.startTime) ? 700 : 400, color: (row.permission?.requestId || row.permission?.startTime) ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${(row.permission?.requestId || row.permission?.startTime) ? ' / 8h' : ''}` : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
-                                {row.shortHours && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {row.shortHours && !(row.permission?.requestId || row.permission?.startTime) && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {(row.permission?.requestId || row.permission?.startTime) && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission{row.permission?.applied ? '' : row.permission?.isMidDay ? ' (Mid-day)' : ''}</span>}
                                 {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
                                 {row.leaveOverride?.status === 'pending' && (
@@ -1668,15 +1671,32 @@ export default function AttendancePage() {
                           ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
                         ].map(([label, val]) => (
                           <div key={label} className="col-6 col-md-3">
-                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}</div>
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}{label === 'Hours' ? ' (target 8h)' : ''}</div>
                             <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
                           </div>
                         ))}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+                        8-hour target is informational only — short hours never create payroll deduction (day-based payroll).
                       </div>
                       {todayRecord?.earlyLogin && (
                         <span className="badge bg-info ms-2" style={{ fontSize: 11 }}>
                           <i className="bi bi-clock-history me-1" />Early Logged In
                         </span>
+                      )}
+                      {todayRecord?.permission?.startTime && (
+                        <div style={{ marginTop: 12, padding: '10px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, fontSize: 13, color: '#1d4ed8' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <i className="bi bi-patch-check" />
+                            <span><strong>Permission Approved:</strong> <Time value={todayRecord.permission.startTime} fallback={todayRecord.permission.startTime} /> – <Time value={todayRecord.permission.endTime} fallback={todayRecord.permission.endTime} />{(() => { const g = todayRecord.permission.grantedDuration ?? todayRecord.permission.duration; return g ? ` (Granted ${g} min)` : ''; })()}{todayRecord.permission.usedDuration != null ? ` · Used ${todayRecord.permission.usedDuration} min` : ''}{todayRecord.permission.refundedDuration ? ` · Refunded ${todayRecord.permission.refundedDuration} min` : ''}{todayRecord.permission.isMidDay ? ' · Mid-day (late judged by shift)' : todayRecord.permission.applied ? ' · Applied' : todayRecord.clockIn ? ' · Outside window' : ''}</span>
+                          </div>
+                          {todayRecord?.permission?.actualClockIn && (
+                            <div style={{ fontSize: 12, color: '#1e40af', marginTop: 4, marginLeft: 22 }}>Actual clock-in: <Time value={todayRecord.permission.actualClockIn} fallback={todayRecord.permission.actualClockIn} />{todayRecord.permission.effectiveClockIn ? <> · Effective: <Time value={todayRecord.permission.effectiveClockIn} fallback={todayRecord.permission.effectiveClockIn} /></> : null}</div>
+                          )}
+                          {todayRecord?.note && (
+                            <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 4, marginLeft: 22 }}>{todayRecord.note}</div>
+                          )}
+                        </div>
                       )}
                       {clockedIn && !clockedOut && shiftConfig?.endTime && (
                         <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
@@ -2619,7 +2639,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
   const absent = records.filter(r => r.status === 'absent').length;
   const leave = records.filter(r => r.status === 'leave').length;
   const late = records.filter(r => r.status === 'late').length;
-  const shortHours = records.filter(r => r.shortHours).length;
+  const shortHours = records.filter(r => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length;
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>;
@@ -2677,7 +2697,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
                     <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
                     <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
-                    <td style={{ fontSize: 13 }}>{row.hoursWorked ? formatMins(row.hoursWorked) : '—'}</td>
+                    <td style={{ fontSize: 13, fontWeight: (row.permission?.requestId || row.permission?.startTime) ? 700 : 400, color: (row.permission?.requestId || row.permission?.startTime) ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${(row.permission?.requestId || row.permission?.startTime) ? ' / 8h' : ''}` : '—'}</td>
                     <td style={{ fontSize: 13, maxWidth: 160 }}>
                       {isAdmin && (row.status === 'absent' || row.status === 'late') ? (
                         <input className="form-control form-control-sm" style={{ fontSize: 11 }}
@@ -2691,7 +2711,8 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {row.leaveOverride?.status === 'pending' && (
                         <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
                       )}
-                      {row.shortHours && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
+                      {row.shortHours && !(row.permission?.requestId || row.permission?.startTime) && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
+                      {(row.permission?.requestId || row.permission?.startTime) && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission</span>}
                       {row.approvedHalfDayLeave && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">

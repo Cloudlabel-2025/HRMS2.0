@@ -9,7 +9,8 @@ import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift } from '@/lib/shift-utils';
-import { getShiftConfig, determineStatus, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { matchBreakRule } from '@/lib/attendance-breaks';
 import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
@@ -147,10 +148,16 @@ export async function GET(req) {
     }
 
     // Recompute lateFlag/status based on actual shift start time
-    // so that records created by previous buggy clock logic get corrected
+    // so that records created by previous buggy clock logic get corrected.
+    // Future-records-only guard: never overwrite explicit leave/holiday
+    // decisions (rejected overrides). Permission rows are recomputed with
+    // the permission window (actual clockIn is preserved, never faked),
+    // and shortHours is suppressed on permission days.
     for (const rec of raw) {
       if (!rec.clockIn) continue;
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
+      if (['leave', 'holiday'].includes(rec.status)) continue;
+      if (rec.leaveOverride?.status === 'rejected') continue;
       const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
       const cfg = getShiftConfig(shiftDoc, config);
 
@@ -170,6 +177,7 @@ export async function GET(req) {
         }
       }
       const [h, m] = rec.clockIn.split(':').map(Number);
+      const shiftStartMins = shiftHour * 60 + shiftMin;
       let minutesSinceShiftStart = shiftFound ? (h - shiftHour) * 60 + (m - shiftMin) : 0;
       if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
@@ -178,19 +186,32 @@ export async function GET(req) {
         rec.status = 'present';
         rec.lateFlag = false;
       } else if (shiftFound) {
-        const result = determineStatus(minutesSinceShiftStart, cfg);
+        const result = resolveDayStatus({
+          clockIn: rec.clockIn,
+          permission: rec.permission?.endTime ? { startTime: rec.permission?.startTime, endTime: rec.permission?.endTime } : null,
+          approvedHalfDayLeave: !!rec.approvedHalfDayLeave,
+          nonWorkingDayType: rec.nonWorkingDayType || 'none',
+          leaveOverrideStatus: rec.leaveOverride?.status || 'none',
+          minutesSinceShiftStart,
+          shiftStartMins,
+          cfg,
+        });
         rec.status = result.status;
         rec.lateFlag = result.lateFlag;
       }
+      // Permission day: highlight real hours but never mark shortHours.
+      if (rec.permission?.requestId || rec.permission?.startTime) {
+        rec.shortHours = false;
+      }
     }
 
-    // Persist corrected status/lateFlag for all recalculated records
+    // Persist corrected status/lateFlag/shortHours for all recalculated records
     const bulkOps = raw
       .filter(rec => rec.clockIn && rec._id)
       .map(rec => ({
         updateOne: {
           filter: { _id: rec._id },
-          update: { $set: { status: rec.status, lateFlag: rec.lateFlag } }
+          update: { $set: { status: rec.status, lateFlag: rec.lateFlag, shortHours: !!rec.shortHours } }
         }
       }));
 

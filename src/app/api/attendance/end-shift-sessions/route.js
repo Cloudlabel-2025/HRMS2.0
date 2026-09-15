@@ -8,6 +8,7 @@ import { getTzTime } from '@/lib/timezone';
 import { getShiftEndMinutes } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
+import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
 
 export async function POST(req) {
@@ -59,13 +60,16 @@ export async function POST(req) {
       const clockOutTime = String(foh).padStart(2, '0') + ':' + String(fom).padStart(2, '0');
 
       const finalMinutes = Math.max(0, finalMins - clockInMins);
-      const deduction = record.breakDeduction || 0;
-      const { baseHours, hoursWorked, payableHours, shortHours } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
-      const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
-
       const updatedBreaks = (record.breaks || []).map(b =>
         b.start && !b.end ? { ...b, end: clockOutTime } : b
       );
+      // Recompute from actual break records — never trust stored deduction.
+      const deduction = calculateBreakDeduction(updatedBreaks, shiftCfg.breaks);
+      const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
+      const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
+      const shortHours = hasPermission ? false : rawShortHours;
+      const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
+
       const finalized = finalizeDayWork(record.workProgress, clockOutTime, record.date);
 
       const result = await Attendance.findOneAndUpdate(
@@ -78,7 +82,7 @@ export async function POST(req) {
             hoursWorked,
             payableHours,
             shortHours,
-            baseHoursWorked: record.baseHoursWorked ?? baseHours,
+            baseHoursWorked: baseHours,
             breakDeduction: deduction,
             breaks: updatedBreaks,
             workProgress: finalized,

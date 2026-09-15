@@ -175,6 +175,26 @@ export async function POST(req) {
       return fail(`Cannot apply leave from ${fmtDate(from)} to ${fmtDate(to)} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${fmtDate(holidayOverlap.date)}.`, 400);
     }
 
+    // A day can hold either a leave or a permission, never both.
+    try {
+      const { SelfServiceRequest } = await import('@/lib/models/index');
+      const orClauses = [{ identityId: user.identityId }, { profileId: user.profileId }].filter(
+        c => Object.values(c)[0]
+      );
+      if (orClauses.length > 0) {
+        const permConflict = await SelfServiceRequest.findOne({
+          $or: orClauses,
+          requestType: 'permission',
+          status: { $in: ['pending', 'approved'] },
+          'payload.date': { $gte: from, $lte: to },
+        }).lean();
+        if (permConflict) {
+          auditLog('Leave Apply Failed', 'Leave', user._id, `Permission already registered for ${permConflict.payload?.date}`, 'low', ip, null, user._id);
+          return fail(`You already have a permission request for ${permConflict.payload?.date}. A day can hold either a leave or a permission, not both.`, 409);
+        }
+      }
+    } catch (e) { console.error('Leave-permission conflict check failed:', e?.message || e); }
+
     // ── Employer Flow (auto-approved; no policy/balance/workflow) ──
     if (isEmployer(user.role)) {
       const leaveDays = halfDay ? 0.5 : days;
