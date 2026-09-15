@@ -87,6 +87,10 @@ export async function PUT(req) {
       if (!isPeer || review.peerReviews.some(peer => peer.userId.toString() === user._id.toString())) return fail('Peer score is not available', 403);
       review.peerReviews.push({ userId: user._id, score: Number(body.score), comment: body.comment?.trim() || '' });
       review.peerScore = +(review.peerReviews.reduce((sum, peer) => sum + peer.score, 0) / review.peerReviews.length).toFixed(2);
+      try {
+        const { default: PerformanceInvite } = await import('@/lib/models/PerformanceInvite');
+        await PerformanceInvite.updateOne({ reviewId: review._id, peerId: user._id }, { $set: { status: 'submitted' } });
+      } catch { /* non-fatal */ }
     } else if (body.action === 'manager') {
       const requiredPeers = teamIds.filter(id => id !== review.userId._id.toString()).length;
       if (!isManager || review.selfScore == null || review.peerReviews.length < requiredPeers) return fail('Self and all peer scores must be submitted before manager completion', 400);

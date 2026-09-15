@@ -1,7 +1,8 @@
 import { requirePortalAuth, auditLog } from '@/lib/middleware';
 import { connectDB } from '@/lib/db';
 import TokenBlacklist from '@/lib/models/TokenBlacklist';
-import { getTokenFromRequest, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
+import RefreshToken from '@/lib/models/RefreshToken';
+import { getTokenFromRequest, getRefreshTokenFromRequest, verifyToken, fail, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 import { NextResponse } from 'next/server';
 
 /**
@@ -28,6 +29,18 @@ export async function POST(req) {
         reason: 'logout',
         ip,
       });
+      // Revoke the refresh family so a stolen refresh cannot outlive logout.
+      const refresh = getRefreshTokenFromRequest(req);
+      if (refresh) {
+        const decoded = verifyToken(refresh);
+        if (decoded?.jti) {
+          await RefreshToken.updateOne({ jti: decoded.jti }, { $set: { revoked: true } });
+        } else {
+          await TokenBlacklist.create({ token: refresh, userId: user._id, reason: 'logout', ip }).catch(() => {});
+        }
+      } else {
+        await RefreshToken.updateMany({ userId: user._id, revoked: false }, { $set: { revoked: true } });
+      }
       await auditLog('Logout', 'Auth', user._id, `User ${user.name} logged out`, 'low', ip, null, user._id);
     }
 

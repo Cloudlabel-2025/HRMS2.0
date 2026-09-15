@@ -15,8 +15,10 @@ export function signToken(payload) {
   return jwt.sign(payload, getJwtSecret(), { expiresIn: EXPIRES });
 }
 
-export function signRefreshToken(payload) {
-  return jwt.sign({ ...payload, tokenType: 'refresh' }, getJwtSecret(), { expiresIn: REFRESH_EXPIRES });
+export function signRefreshToken(payload, jti) {
+  const body = { ...payload, tokenType: 'refresh' };
+  if (jti) body.jti = jti;
+  return jwt.sign(body, getJwtSecret(), { expiresIn: REFRESH_EXPIRES });
 }
 
 export function verifyToken(token) {

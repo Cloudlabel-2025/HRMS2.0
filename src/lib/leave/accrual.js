@@ -73,11 +73,12 @@ export function calculatePeriodAllowance(typeConfig, balanceEntry, cycleStart, c
 
   const { index: currIndex, code: currCode } = getRelativePeriod(typeConfig.usagePeriod, cycleStart, currentDate);
 
-  // Get map of period usages
+  // Get map of period usages (tolerate legacy `periodCode` field)
   const usageMap = {};
   if (balanceEntry.periodUsage && Array.isArray(balanceEntry.periodUsage)) {
     for (const pu of balanceEntry.periodUsage) {
-      usageMap[pu.period] = pu.used;
+      const key = pu.period || pu.periodCode;
+      if (key) usageMap[key] = Number(pu.used || 0);
     }
   }
 
@@ -135,10 +136,12 @@ export function recordPeriodUsage(balanceEntry, usagePeriod, cycleStart, date, d
     balanceEntry.periodUsage = [];
   }
 
-  let entry = balanceEntry.periodUsage.find(pu => pu.period === code);
+  let entry = balanceEntry.periodUsage.find(pu => (pu.period || pu.periodCode) === code);
   if (!entry) {
     entry = { period: code, used: 0, cap: 0 };
     balanceEntry.periodUsage.push(entry);
+  } else if (!entry.period) {
+    entry.period = code;
   }
 
   entry.used += days;

@@ -183,7 +183,7 @@ export async function GET(req) {
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
 
       if (rec.approvedHalfDayLeave) {
-        rec.status = 'present';
+        rec.status = 'half_day';
         rec.lateFlag = false;
       } else if (shiftFound) {
         const result = resolveDayStatus({

@@ -257,8 +257,8 @@ export default function LeavePage() {
               else if (unit === 'quarterly') periodCode = `Q${Math.floor(monthsDiff / 3)}`;
               else if (unit === 'half_yearly') periodCode = `H${Math.floor(monthsDiff / 6)}`;
 
-              const periodUsageEntry = b.periodUsage?.find(p => p.periodCode === periodCode);
-              const periodUsed = periodUsageEntry ? (periodUsageEntry.used + periodUsageEntry.pending) : 0;
+              const periodUsageEntry = b.periodUsage?.find(p => (p.period || p.periodCode) === periodCode);
+              const periodUsed = periodUsageEntry ? Number(periodUsageEntry.used || 0) : 0;
               const periodLeft = Math.max(0, cfg.maxUsagePerPeriod - periodUsed);
               periodText = `${periodLeft} left of ${cfg.maxUsagePerPeriod} this ${unit.replace('_', '-')}`;
             }

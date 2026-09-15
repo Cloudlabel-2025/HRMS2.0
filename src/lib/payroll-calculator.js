@@ -193,6 +193,8 @@ export function calculatePayroll({
     workingDays,
     salaryPerDay,
     lopDays,
+    effectiveLopDays,
+    graceDaysApplied: Math.min(Number(lopDays) || 0, graceDays),
     lossOfPayDeduction,
     legacy,
   };

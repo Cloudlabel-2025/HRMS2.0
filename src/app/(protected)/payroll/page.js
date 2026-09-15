@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import PayrollAlertModal from '@/components/PayrollAlertModal';
 
 const MONTHS = Array.from({ length: 6 }, (_, i) => {
   const now = new Date();
@@ -36,6 +37,7 @@ export default function PayrollPage() {
   const [showRuleModal, setShowRuleModal] = useState(false);
   const [ruleForm, setRuleForm] = useState({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true } });
   const [savingRule, setSavingRule] = useState(false);
+  const [alert, setAlert] = useState(null); // { mode: 'missing'|'finalize'|'result', missing, result }
   const pageSize = 10;
 
   useEffect(() => {
@@ -46,10 +48,11 @@ export default function PayrollPage() {
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
 
-  const approvePayroll = async (action) => {
-    if (action === 'finalize' && !cycleReady) {
-      if (!confirm('The current payroll cycle has not ended yet. Finalizing now will lock salary payouts mid-cycle. Are you sure you want to finalize anyway?')) return;
-    }
+  const logAlertCancel = (details) => {
+    api.post('/api/audit/action', { action: 'Payroll Alert Dismissed', module: 'Payroll', details, severity: 'medium' }).catch(() => {});
+  };
+
+  const doApprove = async (action) => {
     try {
       const res = await api.post('/api/payroll/approve', { month, action });
       showToast(`Payroll ${action}d — ${res.updated} records updated`);
@@ -57,6 +60,35 @@ export default function PayrollPage() {
     } catch (e) {
       showToast(e.message, 'error');
     }
+  };
+
+  const approvePayroll = async (action) => {
+    if (action === 'finalize' && !cycleReady) {
+      setAlert({ mode: 'finalize' });
+      return;
+    }
+    doApprove(action);
+  };
+
+  const confirmAlert = async () => {
+    if (!alert) return;
+    if (alert.mode === 'finalize') {
+      setAlert(null);
+      doApprove('finalize');
+    } else if (alert.mode === 'missing') {
+      setAlert(null);
+      doRun();
+    }
+  };
+
+  const closeAlert = () => {
+    if (!alert) return;
+    if (alert.mode !== 'result') {
+      logAlertCancel(alert.mode === 'finalize'
+        ? `Admin cancelled mid-cycle finalize for ${month}`
+        : `Admin cancelled payroll run with ${alert.missing?.length || 0} missing structures for ${month}`);
+    }
+    setAlert(null);
   };
 
   const load = async () => {
@@ -81,24 +113,37 @@ export default function PayrollPage() {
 
   useEffect(() => { if (user) load(); }, [user, month]);
 
-  const runPayroll = async () => {
-    // Warn if any active employees have no salary structure
-    const activeEmps = employees.filter(e => e.status === 'active');
-    const structuredIds = new Set(structures.map(s => s.userId?._id || s.userId));
-    const missing = activeEmps.filter(e => !structuredIds.has(e.userId));
-    if (missing.length > 0) {
-      if (!confirm(`${missing.length} active employee(s) have no salary structure and will be skipped:\n${missing.slice(0, 5).map(e => e.name).join(', ')}${missing.length > 5 ? '...' : ''}\n\nContinue?`)) return;
-    }
+  const doRun = async () => {
     setRunning(true);
     try {
       const res = await api.post('/api/payroll/run', { month });
-      showToast(res.isMidCycle ? `Draft preview generated for ${res.processed} employees` : `Payroll processed for ${res.processed} employees`);
+      const empById = new Map(employees.map(e => [String(e.userId || e._id), e]));
+      const enriched = {
+        ...res,
+        skipped: (res.skipped || []).map(s => {
+          const emp = empById.get(String(s.userId));
+          return { ...s, name: emp?.name || String(s.userId), department: emp?.department || '' };
+        }),
+      };
+      setAlert({ mode: 'result', result: enriched });
       load();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
       setRunning(false);
     }
+  };
+
+  const runPayroll = async () => {
+    // Missing salary structures surface in the dedicated modal, not confirm().
+    const activeEmps = employees.filter(e => e.status === 'active');
+    const structuredIds = new Set(structures.map(s => s.userId?._id || s.userId));
+    const missing = activeEmps.filter(e => !structuredIds.has(e.userId));
+    if (missing.length > 0) {
+      setAlert({ mode: 'missing', missing: missing.map(e => ({ userId: String(e.userId || e._id), name: e.name, department: e.department })) });
+      return;
+    }
+    doRun();
   };
 
   const printPayslip = (slip, empName) => {
@@ -117,7 +162,7 @@ export default function PayrollPage() {
         <div class='row'><span style='color:#64748b'>Employee</span><span style='font-weight:600'>${empName}</span></div>
         <div class='row'><span style='color:#64748b'>Pay Period</span><span style='font-weight:600'>${slip.cycleLabel || slip.month}</span></div>
         <div class='row'><span style='color:#64748b'>Days Present</span><span>${slip.presentDays ?? '—'}</span></div>
-        <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.lopDays || 0}</span></div>
+        <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.effectiveLopDays ?? slip.lopDays ?? 0}${(slip.graceDaysApplied > 0) ? ` (${slip.lopDays || 0} raw, ${slip.graceDaysApplied} grace)` : ''}${(slip.retroLopDays > 0) ? ` + ${slip.retroLopDays} retro` : ''}</span></div>
       </div>
       <div style='display:flex;gap:12px'>
         <div class='box' style='flex:1'>
@@ -196,10 +241,29 @@ export default function PayrollPage() {
 
   const mySlip = !isAdmin && payrolls.length > 0 ? payrolls[0] : null;
   const totalNet = payrolls.reduce((s, p) => s + (p.netPay || 0), 0);
+  const cycleEndLabel = useMemo(() => {
+    const [y, m] = month.split('-').map(Number);
+    const endRaw = settings.payrollEndDay;
+    const endDay = endRaw ? (Number(endRaw) || Number(String(endRaw).split('-')[2]) || 25) : 25;
+    const label = payrolls.find(p => p.month === month)?.cycleLabel || '';
+    return { endDay, label };
+  }, [month, settings.payrollEndDay, payrolls]);
 
   return (
     <AppShell title="Payroll">
       {toast && <div className="toast-container-custom"><div className={`toast-custom ${toast.type}`}><i className={`bi ${toast.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle'} me-2`} />{toast.msg}</div></div>}
+      <PayrollAlertModal
+        open={!!alert}
+        mode={alert?.mode || 'missing'}
+        month={month}
+        cycleLabel={cycleEndLabel.label}
+        payrollEndDay={`${month}-${String(cycleEndLabel.endDay).padStart(2, '0')}`}
+        missing={alert?.missing || []}
+        result={alert?.result || null}
+        confirming={running}
+        onConfirm={confirmAlert}
+        onClose={closeAlert}
+      />
 
       <div className="page-header">
         <div><h4>Payroll Management</h4><p>Salary processing, payslips, and statutory deductions</p></div>

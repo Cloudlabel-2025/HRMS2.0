@@ -12,7 +12,7 @@ function toMins(timeStr) {
  *
  * Priority:
  *  1. rejected leaveOverride / explicit holiday -> 'holiday' | 'leave'
- *  2. approved half-day leave -> 'present' (no late)
+ *  2. approved half-day leave -> 'half_day' (0.5 presence, no late)
  *  3. approved late-arrival permission window (covers shift start),
  *     strict end-inclusive (grace 0):
  *     actualMins <= permEndMins -> 'present' (permissionApplied: true)
@@ -50,7 +50,9 @@ export function resolveDayStatus({
     };
   }
   if (approvedHalfDayLeave) {
-    return { status: 'present', lateFlag: false, permissionApplied: false, isMidDayPermission: false };
+    // Half-day leave + clock-in is a half working day (0.5 presence in
+    // payroll when lopConfig.countHalfDay is true), never late.
+    return { status: 'half_day', lateFlag: false, permissionApplied: false, isMidDayPermission: false };
   }
   if (permission?.endTime && clockIn) {
     const nowMins = toMins(clockIn);
@@ -80,4 +82,22 @@ export function resolveDayStatus({
   }
   const result = determineStatus(minutesSinceShiftStart, cfg);
   return { ...result, permissionApplied: false, isMidDayPermission: false };
+}
+
+/**
+ * Single payroll day classifier shared by payroll/run and absence marking.
+ * Priority: approved half-day (0.5) > clocked present/late (1, half_day 0.5)
+ * > approved paid leave (overlap handled by caller) > permission/shortHours
+ * informational (never LOP) > absent/missing (0, LOP via gap).
+ *
+ * @param {Object} rec - Attendance record (lean or doc)
+ * @param {Object} lopConfig - { countHalfDay }
+ * @returns {number} presence credit 0 | 0.5 | 1
+ */
+export function classifyPresence(rec, lopConfig = {}) {
+  if (!rec?.clockIn) return 0;
+  if (rec.approvedHalfDayLeave) return 0.5;
+  if (rec.status === 'half_day') return lopConfig.countHalfDay === false ? 1 : 0.5;
+  if (['present', 'late'].includes(rec.status)) return 1;
+  return 0;
 }

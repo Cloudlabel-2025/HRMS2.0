@@ -1,4 +1,4 @@
-import { getGlobalConfig, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
 import { SelfServiceRequest } from '@/lib/models/index';
 
 export const DEFAULT_PERMISSION_ALLOWANCE_MINS = 120;
@@ -64,8 +64,9 @@ export function computePermissionUsage({ actualClockIn, permStart, permEnd, gran
 
 export async function getCycleRangeForDate(dateStr, config) {
   const cfg = config || await getGlobalConfig();
-  const startDay = Number(cfg.payrollStartDay || 26);
-  const endDay = Number(cfg.payrollEndDay || 25);
+  // Settings stores full dates (e.g. "2026-07-26"); parse to day numbers.
+  const startDay = getPayrollDay(cfg.payrollStartDay, 26);
+  const endDay = getPayrollDay(cfg.payrollEndDay, 25);
   const { year, month } = getCycleMonth(dateStr, startDay);
   return getCycleRange(startDay, endDay, year, month);
 }

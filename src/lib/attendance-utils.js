@@ -94,7 +94,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
   record.shortHours = hasPermission ? false : rawShortHours;
   if (record.approvedHalfDayLeave) {
-    record.status = 'present';
+    record.status = 'half_day';
     record.lateFlag = false;
   } else if (!['leave', 'holiday'].includes(record.status)) {
     record.status = record.lateFlag ? 'late' : 'present';

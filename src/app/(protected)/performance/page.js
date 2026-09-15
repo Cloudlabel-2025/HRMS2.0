@@ -101,6 +101,12 @@ export default function PerformancePage() {
   const [submissionScore, setSubmissionScore] = useState('');
   const [submissionComment, setSubmissionComment] = useState('');
   const [submissionStatus, setSubmissionStatus] = useState('completed');
+  const [showInvite, setShowInvite] = useState(null);
+  const [invitePeers, setInvitePeers] = useState([]);
+  const [inviteSaving, setInviteSaving] = useState(false);
+  const [analyticsUserId, setAnalyticsUserId] = useState('');
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [goalDecision, setGoalDecision] = useState(null);
   const [goalDecisionComment, setGoalDecisionComment] = useState('');
   const [saving, setSaving] = useState(false);
@@ -127,6 +133,37 @@ export default function PerformancePage() {
   }, [tab, departmentFilter, searchQuery]);
 
   const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
+
+  const openInvite = (review) => {
+    const team = (review.projectId?.team || []).map(String);
+    const submitted = (review.peerReviews || []).map(p => String(p.userId?._id || p.userId));
+    const eligible = team.filter(id => id !== String(review.userId?._id || review.userId) && !submitted.includes(id));
+    setInvitePeers([]);
+    setShowInvite({ review, eligible });
+  };
+
+  const submitInvite = async () => {
+    if (!showInvite || invitePeers.length === 0) return showToast('Select at least 1 peer (max 3)', 'error');
+    if (invitePeers.length > 3) return showToast('Max 3 peers per review', 'error');
+    setInviteSaving(true);
+    try {
+      await api.post('/api/performance/invites', { reviewId: showInvite.review._id, peerIds: invitePeers });
+      showToast(`Invited ${invitePeers.length} peer(s)`);
+      setShowInvite(null); setInvitePeers([]);
+      load();
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setInviteSaving(false); }
+  };
+
+  const loadAnalytics = async (uid) => {
+    if (!uid) { setAnalyticsData(null); return; }
+    setAnalyticsLoading(true);
+    try {
+      const data = await api.get('/api/performance/analytics?userId=' + uid);
+      setAnalyticsData(data);
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setAnalyticsLoading(false); }
+  };
   const isAdmin = ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user?.role);
   const canSetGoals = ['super_admin', 'admin_full'].includes(user?.role);
   const canValidateGoals = ['super_admin', 'admin_full'].includes(user?.role);
@@ -536,7 +573,7 @@ export default function PerformancePage() {
                         <td>{r.managerScore ? <StarRating value={r.managerScore} /> : '—'}</td>
                         <td>{r.overall ? <><div style={{ fontWeight: 800, fontSize: 16, color: RATING_COLOR(r.overall) }}>{r.overall}</div><div style={{ fontSize: 10, color: '#94a3b8' }}>{RATING_LABEL(r.overall)}</div></> : '—'}</td>
                         <td><span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color }}>{STATUS_STYLE[r.status]?.label}</span></td>
-                        <td><div style={{ display: 'flex', gap: 4 }}><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setShowFeedback(r)}><i className="bi bi-eye me-1" />View</button>{r.canSubmitSelf && <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'self' }); }}>Self score</button>}{r.canSubmitPeer && <button className="btn btn-sm btn-outline-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'peer' }); }}>Peer score</button>}{r.canComplete && <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setSubmissionStatus('completed'); setReviewSubmission({ ...r, action: 'manager' }); }}>Complete</button>}</div></td>
+                        <td><div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => setShowFeedback(r)}><i className="bi bi-eye me-1" />View</button>{isAdmin && ['pending', 'in_review'].includes(r.status) && <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openInvite(r)}><i className="bi bi-person-plus me-1" />Invite</button>}{r.canSubmitSelf && <button className="btn btn-sm btn-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'self' }); }}>Self score</button>}{r.canSubmitPeer && <button className="btn btn-sm btn-outline-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setReviewSubmission({ ...r, action: 'peer' }); }}>Peer score</button>}{r.canComplete && <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setSubmissionScore(''); setSubmissionComment(''); setSubmissionStatus('completed'); setReviewSubmission({ ...r, action: 'manager' }); }}>Complete</button>}</div></td>
                       </tr>
                     ))}
                   </tbody>
@@ -556,6 +593,50 @@ export default function PerformancePage() {
 
           {tab === 'analytics' && isAdmin && (
             <div className="row g-3">
+              <div className="col-12">
+                <div className="card p-3">
+                  <div className="section-title mb-3">360° Review Analytics (Self / Peer / Manager)</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                    <select className="form-select" style={{ maxWidth: 280 }} value={analyticsUserId} onChange={e => { setAnalyticsUserId(e.target.value); loadAnalytics(e.target.value); }}>
+                      <option value="">Select employee…</option>
+                      {employees.map(emp => <option key={emp._id || emp.userId} value={emp._id || emp.userId}>{emp.name}</option>)}
+                    </select>
+                    {analyticsLoading && <span className="spinner-border spinner-border-sm text-primary" style={{ marginTop: 8 }} />}
+                  </div>
+                  {analyticsData && (
+                    <>
+                      <div className="row g-3 mb-3">
+                        {[['Reviews', analyticsData.overall?.count ?? 0, '#3b82f6'], ['Avg Self', analyticsData.overall?.avgSelf ?? '—', '#8b5cf6'], ['Avg Peer', analyticsData.overall?.avgPeer ?? '—', '#06b6d4'], ['Avg Manager', analyticsData.overall?.avgManager ?? '—', '#f59e0b'], ['Avg Overall', analyticsData.overall?.avgOverall ?? '—', '#10b981']].map(([label, value, color]) => (
+                          <div key={label} className="col-6 col-xl">
+                            <div className="stat-card" style={{ textAlign: 'center' }}>
+                              <div style={{ fontSize: 26, fontWeight: 800, color }}>{value}</div>
+                              <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>{label}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="table-responsive">
+                        <table className="table mb-0">
+                          <thead><tr><th>Cycle</th><th>Reviews</th><th>Self</th><th>Peer</th><th>Manager</th><th>Overall</th></tr></thead>
+                          <tbody>
+                            {(analyticsData.cycles || []).map(c => (
+                              <tr key={c.cycle}>
+                                <td style={{ fontWeight: 600 }}>{c.cycle}</td>
+                                <td>{c.count}</td>
+                                <td>{c.avgSelf ?? '—'}</td>
+                                <td>{c.avgPeer ?? '—'}</td>
+                                <td>{c.avgManager ?? '—'}</td>
+                                <td style={{ fontWeight: 800, color: RATING_COLOR(c.avgOverall || 0) }}>{c.avgOverall ?? '—'}</td>
+                              </tr>
+                            ))}
+                            {(analyticsData.cycles || []).length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: '#94a3b8' }}>No completed reviews</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
               {[
                 { label: 'Excellent (4.5+)', count: filteredReviews.filter(r => r.overall >= 4.5).length, color: '#10b981' },
                 { label: 'Good (3.5–4.4)', count: filteredReviews.filter(r => r.overall >= 3.5 && r.overall < 4.5).length, color: '#3b82f6' },
@@ -616,6 +697,34 @@ export default function PerformancePage() {
 
       {reviewSubmission && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{reviewSubmission.action === 'self' ? 'Self Score' : reviewSubmission.action === 'peer' ? 'Peer Score' : 'Manager Review'}</h5><button className="btn-close" onClick={() => setReviewSubmission(null)} /></div><div className="modal-body"><div className="row g-3"><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Score out of 5</label><select className="form-select" value={submissionScore} onChange={e => setSubmissionScore(e.target.value)}><option value="">Select score</option>{[0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5].map(value => <option key={value} value={value}>{value}</option>)}</select></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>{reviewSubmission.action === 'manager' ? 'Manager comments' : 'Comments'}</label><textarea className="form-control" rows="3" value={submissionComment} onChange={e => setSubmissionComment(e.target.value)} /></div>{reviewSubmission.action === 'manager' && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Final status</label><select className="form-select" value={submissionStatus} onChange={e => setSubmissionStatus(e.target.value)}><option value="completed">Completed</option><option value="improvement_plan">Improvement plan</option></select></div>}</div></div><div className="modal-footer"><button className="btn btn-outline-secondary" onClick={() => setReviewSubmission(null)}>Cancel</button><button className="btn btn-primary" disabled={saving} onClick={submitReviewScore}>{saving ? 'Saving...' : 'Submit'}</button></div></div></div>
+        </div>
+      )}
+
+      {showInvite && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header"><h5 className="modal-title">Invite Peers — {showInvite.review.userId?.name} ({showInvite.review.cycle})</h5><button className="btn-close" onClick={() => setShowInvite(null)} /></div>
+              <div className="modal-body">
+                <p style={{ fontSize: 12, color: '#64748b' }}>Select up to 3 peers from the project team. Invited peers get a notification and can submit feedback.</p>
+                {showInvite.eligible.length === 0 && <div className="alert alert-info py-2" style={{ fontSize: 12 }}>No eligible peers — all team members already submitted or were invited.</div>}
+                {showInvite.eligible.map(id => {
+                  const emp = employees.find(e => String(e._id || e.userId) === String(id));
+                  const checked = invitePeers.includes(id);
+                  return (
+                    <div key={id} className="form-check" style={{ marginBottom: 6 }}>
+                      <input className="form-check-input" type="checkbox" id={`peer-${id}`} checked={checked} onChange={() => setInvitePeers(p => checked ? p.filter(x => x !== id) : [...p, id].slice(0, 3))} />
+                      <label className="form-check-label" htmlFor={`peer-${id}`} style={{ fontSize: 13 }}>{emp?.name || id}</label>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setShowInvite(null)}>Cancel</button>
+                <button className="btn btn-primary" onClick={submitInvite} disabled={inviteSaving || invitePeers.length === 0}>{inviteSaving ? 'Inviting…' : `Invite ${invitePeers.length} peer(s)`}</button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

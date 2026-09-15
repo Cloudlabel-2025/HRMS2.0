@@ -36,9 +36,24 @@ export async function POST(req) {
     const { action } = validation.data; // 'in' | 'out'
     const geo = body.geo;
     let deductionBreakdown;
-    // Trust the user's system time when present; fall back to the configured tz.
+    const ip = req.headers.get('x-forwarded-for') || '';
+    // Server time is authoritative. Client time is accepted only within 5m
+    // drift (offline tolerance); larger skew falls back to server time and
+    // is audited to prevent late-evasion via spoofed wall clocks.
+    const serverNow = await getTzTime();
+    let now = serverNow;
     const clientNow = body.clientTime ? new Date(body.clientTime) : null;
-    const now = clientNow && !isNaN(clientNow.getTime()) ? await toTzLocal(clientNow) : await getTzTime();
+    if (clientNow && !isNaN(clientNow.getTime())) {
+      try {
+        const clientLocal = await toTzLocal(clientNow);
+        const driftMs = Math.abs(clientLocal.getTime() - serverNow.getTime());
+        if (driftMs <= 5 * 60 * 1000) {
+          now = clientLocal;
+        } else {
+          auditLog('Clock Time Skew', 'Attendance', user._id, `Client time drift ${Math.round(driftMs / 60000)}m rejected; server time used`, 'medium', ip, null, user._id);
+        }
+      } catch { now = serverNow; }
+    }
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
     // Lazy fallback: apply any due scheduled shift changes for this user before
@@ -81,8 +96,6 @@ export async function POST(req) {
         });
       } catch (e) { /* ignore */ }
     };
-
-    const ip = req.headers.get('x-forwarded-for') || '';
 
     if (action === 'in') {
       const openRecords = await Attendance.find({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
@@ -258,10 +271,11 @@ export async function POST(req) {
         if (isMidDayPermission) permissionApplied = false;
       }
 
-      // Approved half-day leave plus a clock-in is a full payable attendance day:
-      // Present + half-day leave, with no late/absence consequence.
+      // Approved half-day leave plus a clock-in is a half working day:
+      // half_day status (0.5 presence in payroll) + half-day leave credit,
+      // with no late/absence consequence.
       if (onLeave?.halfDay) {
-        status = 'present';
+        status = 'half_day';
         lateFlag = false;
       }
 
@@ -435,7 +449,7 @@ export async function POST(req) {
         })),
       };
       let status = outRecord.status;
-      if (outRecord.approvedHalfDayLeave) status = 'present';
+      if (outRecord.approvedHalfDayLeave) status = 'half_day';
 
       const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut, outRecord.date);
       record = await Attendance.findOneAndUpdate(

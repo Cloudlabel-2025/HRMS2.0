@@ -1,4 +1,5 @@
 import { SystemConfig, Holiday } from '@/lib/models/index';
+import { getPayrollDayNumber, isPayrollCycleSaturdayOff, countSaturdaysFromCycleStart } from '@/lib/saturday-cycle';
 
 export async function getGlobalConfig() {
   const doc = await SystemConfig.findOne({ key: 'global_config' }).lean();
@@ -32,9 +33,62 @@ export function isWorkingDay(dateStr, config, holidays) {
 
   if (holidays?.some(h => h.date === dateStr)) return false;
 
-  // Saturdays are working days unless Super Admin marked that specific date as
-  // a Calendar holiday. This supports any alternate-Saturday arrangement.
+  // Saturday policy is authoritative (Settings → General → Saturday Working,
+  // changeable at any time, default 'alternate').
+  // 'all': every Saturday working unless explicit Holiday.
+  // 'none': no Saturday working.
+  // 'alternate' (default): 1st & 3rd Saturdays counted from the PAYROLL
+  // CYCLE START are holidays — same rule the calendar highlights. Automatic,
+  // no Holiday doc or generator run required (explicit Holiday docs still win).
+  if (dayOfWeek === 6) {
+    const mode = String(config?.saturdayWorking ?? 'alternate').toLowerCase();
+    if (mode === 'none') return false;
+    if (mode === 'alternate' && isPayrollCycleSaturdayOff(dateStr, config)) return false;
+  }
+
   return true;
+}
+
+/**
+ * Single-source working-date set for a cycle. Leave, attendance and payroll
+ * must all use this (or isWorkingDay directly) so Saturday/holiday handling
+ * agrees and phantom LOP disappears.
+ */
+export function buildWorkingDateSet(fromDate, toDate, config = {}, holidays = []) {
+  const set = new Set();
+  for (let cursor = new Date(`${fromDate}T00:00:00`), end = new Date(`${toDate}T00:00:00`); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
+    if (isWorkingDay(date, config, holidays)) set.add(date);
+  }
+  return set;
+}
+
+/**
+ * Count working days in a leave span using the SAME calendar as payroll.
+ * Respects policy.countWeekends/countHolidays: when policy excludes weekends,
+ * non-working Saturdays/Sundays are skipped; when it includes them, only
+ * Sundays + holidays are skipped via isWorkingDay (Saturdays per policy mode).
+ */
+export function countWorkingDaysInRange(fromStr, toStr, config = {}, holidays = [], { countWeekends = false, countHolidays = false } = {}) {
+  const holidayDates = new Set((holidays || []).map(h => (typeof h === 'string' ? h : h.date)));
+  let days = 0;
+  for (let d = new Date(`${fromStr}T00:00:00`), last = new Date(`${toStr}T00:00:00`); d <= last; d.setDate(d.getDate() + 1)) {
+    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const dow = d.getDay();
+    const isWeekendDay = dow === 0 || dow === 6;
+    if (isWeekendDay && !countWeekends) continue;
+    if (holidayDates.has(dateStr) && !countHolidays) continue;
+    // When weekends are counted, still exclude Sundays/holidays via isWorkingDay
+    // so payroll and leave agree; Saturdays follow saturdayWorking mode.
+    if (countWeekends && !isWorkingDay(dateStr, config, holidays)) {
+      // Sunday or holiday: skip only if policy excludes holidays/weekends detail.
+      // If policy explicitly counts weekends+holidays, include everything.
+      if (!countHolidays && holidayDates.has(dateStr)) continue;
+      if (dow === 0) continue;
+    }
+    days += 1;
+  }
+  return days;
 }
 
 export async function getWorkingDayCalendar(fromDate, toDate, config = {}) {
@@ -78,7 +132,7 @@ export function getCycleLabel(year, month, payrollStartDay, payrollEndDay) {
   return `${names[prevMonth]} ${payrollStartDay} – ${names[month]} ${payrollEndDay}, ${year}`;
 }
 
-export function getCycleCalendarStats(fromDate, toDate) {
+export function getCycleCalendarStats(fromDate, toDate, config = {}) {
   let totalDays = 0;
   let sundays = 0;
   let alternateSaturdays = 0;
@@ -92,14 +146,11 @@ export function getCycleCalendarStats(fromDate, toDate) {
     if (dayOfWeek === 0) {
       sundays++;
     } else if (dayOfWeek === 6) {
-      const year = d.getFullYear();
-      const month = d.getMonth();
-      const day = d.getDate();
-      let count = 0;
-      for (let i = 1; i <= day; i++) {
-        if (new Date(year, month, i).getDay() === 6) count++;
-      }
-      if (count === 2 || count === 4) alternateSaturdays++;
+      // Cycle-aware: 1st & 3rd Saturdays of the payroll cycle (not calendar
+      // month) — same rule as isWorkingDay/calendar/generate-saturdays.
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const n = countSaturdaysFromCycleStart(dateStr, config?.payrollStartDay ?? 26);
+      if (n === 1 || n === 3) alternateSaturdays++;
     }
   }
 

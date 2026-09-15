@@ -6,6 +6,8 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 
+import { countSaturdaysFromCycleStart } from '@/lib/saturday-cycle';
+
 const MONTHS     = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 
@@ -19,20 +21,13 @@ const TYPE_COLORS = {
 };
 
 function isHolidaySaturday(year, month, day, payrollStartDay) {
+  // Single source: 1st & 3rd Saturdays counted from the PAYROLL CYCLE START
+  // (same helper as payroll isWorkingDay + generate-saturdays). Default
+  // calendar behaviour preserved; follows Settings → payrollStartDay.
   const d = new Date(year, month, day);
   if (d.getDay() !== 6) return false;
-  let cy, cm;
-  if (day >= payrollStartDay) {
-    cy = year; cm = month;
-  } else {
-    const prev = new Date(year, month - 1, 1);
-    cy = prev.getFullYear(); cm = prev.getMonth();
-  }
-  const cycleStart = new Date(cy, cm, payrollStartDay);
-  let satCount = 0;
-  for (let dt = new Date(cycleStart); dt <= d; dt.setDate(dt.getDate() + 1)) {
-    if (dt.getDay() === 6) satCount++;
-  }
+  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const satCount = countSaturdaysFromCycleStart(dateStr, payrollStartDay ?? 26);
   return satCount === 1 || satCount === 3;
 }
 

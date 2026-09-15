@@ -46,12 +46,17 @@ const PayrollSchema = new mongoose.Schema({
   // Attendance
   presentDays:{ type: Number },
   lopDays:    { type: Number, default: 0 },
+  effectiveLopDays: { type: Number, default: 0 },
+  graceDaysApplied: { type: Number, default: 0 },
+  retroLopDays: { type: Number, default: 0 },
   workingDays:{ type: Number, default: 0 },
+  fullCycleWorkingDays: { type: Number, default: 0 },
   salaryPerDay:{ type: Number, default: 0 },
   holidayDates:[{ type: String }],
 
   // meta
   cycleLabel:{ type: String },
+  runId: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
   status:     { type: String, enum: ['pending','draft','approved','finalized'], default: 'pending' },
   processedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   processedAt:{ type: Date, default: null },

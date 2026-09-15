@@ -87,15 +87,18 @@ export async function POST(req) {
       const existing = await UserLeaveBalance.findOne({ userId: u._id, cycleStart });
       if (existing) continue;
 
+      // Immediate first-installment credit (matches getOrCreateBalance):
+      // quarterly 6/yr -> 1.5, monthly 12/yr -> 1.0, half-yearly -> /2.
+      const firstInstallment = (annual) => Number((annual / 4).toFixed(2));
       await UserLeaveBalance.create({
         userId: u._id,
         policyId: leavePolicy._id,
         cycleStart,
         cycleEnd,
         balances: [
-          { typeCode: 'SL', allocated: 0, used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
-          { typeCode: 'CL', allocated: 0, used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
-          { typeCode: 'EL', allocated: 0, used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
+          { typeCode: 'SL', allocated: firstInstallment(6), used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
+          { typeCode: 'CL', allocated: firstInstallment(6), used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
+          { typeCode: 'EL', allocated: firstInstallment(12), used: 0, pending: 0, carriedForward: 0, periodUsage: [] },
         ],
       });
       balancesCreated++;

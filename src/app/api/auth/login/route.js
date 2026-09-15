@@ -12,24 +12,66 @@ import { LoginSchema, validateRequest } from '@/lib/validation';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 
-const rateLimit = new Map();
+import { randomUUID } from 'crypto';
+import RateLimit from '@/lib/models/RateLimit';
+import RefreshToken from '@/lib/models/RefreshToken';
+
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX = 5;
+
+function clientIp(req) {
+  const fwd = req.headers.get('x-forwarded-for') || '';
+  const first = fwd.split(',')[0].trim();
+  return first || 'unknown';
+}
+
+async function checkRateLimit(key) {
+  const now = new Date();
+  const rec = await RateLimit.findOne({ key });
+  if (!rec || rec.resetAt <= now) {
+    await RateLimit.findOneAndUpdate(
+      { key },
+      { $set: { count: 0, resetAt: new Date(Date.now() + LOGIN_WINDOW_MS) } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    return { count: 0, resetAt: new Date(Date.now() + LOGIN_WINDOW_MS) };
+  }
+  return rec;
+}
+
+async function bumpRateLimit(key) {
+  const now = new Date();
+  const rec = await RateLimit.findOne({ key });
+  if (!rec || rec.resetAt <= now) {
+    await RateLimit.findOneAndUpdate(
+      { key },
+      { $set: { count: 1, resetAt: new Date(Date.now() + LOGIN_WINDOW_MS) } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+    return;
+  }
+  await RateLimit.updateOne({ key }, { $inc: { count: 1 } });
+}
+
+async function clearRateLimit(key) {
+  await RateLimit.deleteOne({ key }).catch(() => {});
+}
 
 export async function POST(req) {
   try {
-    const ip = req.headers.get('x-forwarded-for') || 'unknown';
+    const ip = clientIp(req);
+    await dbConnect();
+    const rawBody = await req.json().catch(() => null);
+    if (!rawBody) return fail('Invalid request', 400);
+    const emailHint = String(rawBody?.email || '').toLowerCase();
+    const rlKey = `${ip}:${emailHint || 'unknown'}`;
+    const window = await checkRateLimit(rlKey);
     const now = Date.now();
-    const limit = rateLimit.get(ip) || { count: 0, resetTime: now + 15 * 60 * 1000 };
-    
-    if (now > limit.resetTime) {
-      limit.count = 0;
-      limit.resetTime = now + 15 * 60 * 1000;
-    }
-    
-    if (limit.count >= 3) {
-      const mins = Math.ceil((limit.resetTime - now) / 60000);
-      
+
+    if (window.count >= LOGIN_MAX) {
+      const mins = Math.max(1, Math.ceil((new Date(window.resetAt).getTime() - now) / 60000));
+
       // Log suspicious activity
-      await dbConnect();
       await AuditLog.create({
         action: 'Login Rate Limit Exceeded',
         module: 'Auth',
@@ -37,52 +79,25 @@ export async function POST(req) {
         severity: 'medium',
         ip,
       });
-      
-      return fail(`Too many login attempts from this IP. Try again in ${mins} minute(s).`, 429);
+
+      return fail(`Too many login attempts. Try again in ${mins} minute(s).`, 429);
     }
 
-    const body = await req.json();
-    
+    const body = rawBody;
+
     // Validate request schema
     const validation = validateRequest(LoginSchema, body);
     if (!validation.valid) {
+      await bumpRateLimit(rlKey);
       return fail('Invalid request: ' + validation.error, 400);
     }
 
     const { email, password } = validation.data;
 
-    await dbConnect();
-
-    // Auto-provision or update dev admin account if kavin.dev01@gmail.com logs in with Admin@123
-    if (email.toLowerCase() === 'kavin.dev01@gmail.com' && password === 'Admin@123') {
-      let devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
-      if (!devAdmin) {
-        devAdmin = await User.create({
-          name: 'Kavin (Dev Admin)',
-          email: 'kavin.dev01@gmail.com',
-          password: 'Admin@123',
-          role: 'super_admin',
-          status: 'active',
-          isFirstLogin: false,
-        });
-        devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
-      } else {
-        devAdmin.password = 'Admin@123';
-        devAdmin.status = 'active';
-        devAdmin.role = 'super_admin';
-        devAdmin.isFirstLogin = false;
-        devAdmin.lockUntil = null;
-        devAdmin.loginAttempts = 0;
-        await devAdmin.save();
-        devAdmin = await User.findOne({ email: 'kavin.dev01@gmail.com' }).select('+password +loginAttempts +lockUntil');
-      }
-    }
-
     const user = await User.findOne({ email }).select('+password +loginAttempts +lockUntil');
-    
+
     const handleFailure = async (msg, status = 401, severity = 'low', targetId = null) => {
-      limit.count++;
-      rateLimit.set(ip, limit);
+      await bumpRateLimit(rlKey);
       await AuditLog.create({
         action: 'Login Failed',
         module: 'Auth',
@@ -106,8 +121,7 @@ export async function POST(req) {
     if (!valid) {
       await user.incrementLoginAttempts();
       const remaining = 5 - user.loginAttempts;
-      limit.count++;
-      rateLimit.set(ip, limit);
+      await bumpRateLimit(rlKey);
       await AuditLog.create({
         action: 'Login Failed - Invalid Password',
         module: 'Auth',
@@ -136,12 +150,13 @@ export async function POST(req) {
         user.status = 'alumni';
         await user.save();
       }
-      limit.count = 0;
-      rateLimit.set(ip, limit);
+      await clearRateLimit(rlKey);
       await user.resetLoginAttempts();
 
       const token = signToken({ id: user._id, role: user.role, portalAccess: 'alumni' });
-      const refreshToken = signRefreshToken({ id: user._id, role: user.role, portalAccess: 'alumni' });
+      const alumniJti = randomUUID();
+      const refreshToken = signRefreshToken({ id: user._id, role: user.role, portalAccess: 'alumni' }, alumniJti);
+      await RefreshToken.create({ jti: alumniJti, userId: user._id, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), ip });
       await AuditLog.create({
         action: 'Alumni Login Success',
         module: 'Auth',
@@ -238,8 +253,7 @@ export async function POST(req) {
     }
 
     // Successful login — reset attempts
-    limit.count = 0;
-    rateLimit.set(ip, limit);
+    await clearRateLimit(rlKey);
     await user.resetLoginAttempts();
 
     // Record first login timestamp
@@ -266,7 +280,9 @@ export async function POST(req) {
     }
 
     const token        = signToken({ id: user._id, role: user.role });
-    const refreshToken = signRefreshToken({ id: user._id, role: user.role });
+    const jti = randomUUID();
+    const refreshToken = signRefreshToken({ id: user._id, role: user.role }, jti);
+    await RefreshToken.create({ jti, userId: user._id, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), ip });
 
     // Audit log success
     await AuditLog.create({

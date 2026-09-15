@@ -23,7 +23,7 @@ const UserLeaveBalanceSchema = new mongoose.Schema({
   cycleEnd:   { type: Date, required: true },
   balances:   [BalanceEntrySchema],
   lastAccrualMonth: { type: Number, default: -1 }, // month index (0-11) of last accrual run
-}, { timestamps: true });
+}, { timestamps: true, optimisticConcurrency: true });
 
 UserLeaveBalanceSchema.index({ userId: 1, cycleStart: -1 });
 

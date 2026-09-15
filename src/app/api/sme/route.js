@@ -1,8 +1,48 @@
 import { connectDB } from '@/lib/db';
 import { SME } from '@/lib/models/index';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { z } from 'zod';
+
+const SME_CREATE_FIELDS = ['name', 'email', 'phone', 'dob', 'pan', 'expertise', 'departments', 'accountDetails', 'rate', 'contractStart', 'contractEnd'];
+const SME_UPDATE_FIELDS = ['name', 'phone', 'dob', 'pan', 'expertise', 'departments', 'accountDetails', 'rate', 'contractStart', 'contractEnd', 'status'];
+
+const SmeCreateSchema = z.object({
+  name: z.string().min(1).max(120),
+  email: z.string().email().max(160),
+  password: z.string().min(4).max(128).optional(),
+  phone: z.string().max(20).optional(),
+  dob: z.string().max(20).optional().nullable(),
+  pan: z.string().max(20).optional(),
+  expertise: z.array(z.string().max(80)).max(30).optional(),
+  departments: z.array(z.string().max(80)).max(30).optional(),
+  accountDetails: z.record(z.any()).optional(),
+  rate: z.object({ amount: z.coerce.number().min(0).max(100000000), type: z.string().max(20).optional() }).passthrough().optional(),
+  contractStart: z.string().max(20).optional().nullable(),
+  contractEnd: z.string().max(20).optional().nullable(),
+}).strict();
+
+const SmeUpdateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(120).optional(),
+  phone: z.string().max(20).optional(),
+  dob: z.string().max(20).optional().nullable(),
+  pan: z.string().max(20).optional(),
+  expertise: z.array(z.string().max(80)).max(30).optional(),
+  departments: z.array(z.string().max(80)).max(30).optional(),
+  accountDetails: z.record(z.any()).optional(),
+  rate: z.object({ amount: z.coerce.number().min(0).max(100000000), type: z.string().max(20).optional() }).passthrough().optional(),
+  contractStart: z.string().max(20).optional().nullable(),
+  contractEnd: z.string().max(20).optional().nullable(),
+  status: z.enum(['active', 'inactive']).optional(),
+}).strict();
+
+function pick(obj, keys) {
+  const out = {};
+  for (const k of keys) if (obj[k] !== undefined) out[k] = obj[k];
+  return out;
+}
 
 export async function GET(req) {
   try {
@@ -25,7 +65,9 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
-    const { name, email, password, phone, dob, pan, expertise, departments, accountDetails, rate, contractStart, contractEnd } = body;
+    const parsed = SmeCreateSchema.safeParse(body);
+    if (!parsed.success) return fail('Validation failed: ' + parsed.error.issues.map(i => i.message).join(', '), 400);
+    const { name, email, password, phone, dob, pan, expertise, departments, accountDetails, rate, contractStart, contractEnd } = parsed.data;
 
     if (!name || !email) return fail('Name and email are required', 400);
 
@@ -74,7 +116,10 @@ export async function PUT(req) {
     await connectDB();
 
     const body = await req.json();
-    const { id, ...updateData } = body;
+    const parsed = SmeUpdateSchema.safeParse(body);
+    if (!parsed.success) return fail('Validation failed: ' + parsed.error.issues.map(i => i.message).join(', '), 400);
+    const { id } = parsed.data;
+    const updateData = pick(parsed.data, SME_UPDATE_FIELDS);
     if (!id) return fail('SME ID required', 400);
 
     const sme = await SME.findByIdAndUpdate(id, updateData, { new: true });
@@ -83,6 +128,7 @@ export async function PUT(req) {
     if (updateData.name && sme.userId) {
       await User.findByIdAndUpdate(sme.userId, { name: updateData.name });
     }
+    await auditLog('SME Update', 'SME', user._id, `Updated SME ${sme.email || id}`, 'medium', req.headers.get('x-forwarded-for') || '', null, sme.userId || null);
 
     return ok({ sme });
   } catch (e) {

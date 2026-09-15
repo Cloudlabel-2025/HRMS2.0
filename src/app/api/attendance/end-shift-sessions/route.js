@@ -68,7 +68,7 @@ export async function POST(req) {
       const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
       const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
       const shortHours = hasPermission ? false : rawShortHours;
-      const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag ? 'late' : 'present');
+      const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag ? 'late' : 'present');
 
       const finalized = finalizeDayWork(record.workProgress, clockOutTime, record.date);
 

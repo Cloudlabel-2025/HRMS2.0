@@ -5,7 +5,7 @@ import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
-import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { getGlobalConfig, countWorkingDaysInRange } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
 import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
 import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
@@ -166,13 +166,10 @@ export async function POST(req) {
       return fail(`You already have a ${overlap.status} leave from ${fmtDate(overlap.from)} to ${fmtDate(overlap.to)} that overlaps with the requested dates.`, 400);
     }
 
-    // Check holiday overlap
-    const holidayOverlap = await Holiday.findOne({
-      date: { $gte: from, $lte: to },
-    });
-    if (holidayOverlap) {
-      auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlaps with holiday "${holidayOverlap.name}" on ${holidayOverlap.date}`, 'low', ip, null, user._id);
-      return fail(`Cannot apply leave from ${fmtDate(from)} to ${fmtDate(to)} — "${holidayOverlap.name}" (${holidayOverlap.type}) falls on ${fmtDate(holidayOverlap.date)}.`, 400);
+    // Holidays are excluded per-day when policy.countHolidays is false
+    // (handled in the days calc below); never reject the whole range.
+    if (halfDay && from !== to) {
+      return fail('Half-day leave must be a single day (from and to must match).', 400);
     }
 
     // A day can hold either a leave or a permission, never both.
@@ -193,7 +190,10 @@ export async function POST(req) {
           return fail(`You already have a permission request for ${permConflict.payload?.date}. A day can hold either a leave or a permission, not both.`, 409);
         }
       }
-    } catch (e) { console.error('Leave-permission conflict check failed:', e?.message || e); }
+    } catch (e) {
+      await auditLog('Leave Conflict Check Failed', 'Leave', user._id, `Permission-conflict check failed for ${from} to ${to}: ${e?.message || e}`, 'high', ip, null, user._id);
+      return fail('Could not verify permission conflict. Please retry.', 500);
+    }
 
     // ── Employer Flow (auto-approved; no policy/balance/workflow) ──
     if (isEmployer(user.role)) {
@@ -343,38 +343,32 @@ export async function POST(req) {
       }
     }
 
-    // Calculate days excluding weekends/holidays if configured
+    // Calculate days using the SINGLE working calendar shared with payroll.
+    // Policy flags decide weekend/holiday inclusion; Saturdays follow the
+    // global saturdayWorking mode so leave and payroll agree (no phantom LOP).
     fromDate = new Date(from);
     toDate = new Date(to);
-    
+
     const holidayDocs = await Holiday.find({
-      date: { 
-        $gte: fromDate.toISOString().split('T')[0], 
-        $lte: toDate.toISOString().split('T')[0] 
+      date: {
+        $gte: `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}-${String(fromDate.getDate()).padStart(2, '0')}`,
+        $lte: `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, '0')}-${String(toDate.getDate()).padStart(2, '0')}`
       }
     });
-    const holidayDates = new Set(holidayDocs.map(h => {
-      const d = new Date(h.date);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    }));
+    const leaveConfig = await getGlobalConfig();
+    const fromStr = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}-${String(fromDate.getDate()).padStart(2, '0')}`;
+    const toStr = `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, '0')}-${String(toDate.getDate()).padStart(2, '0')}`;
 
-    days = 0;
-    for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
-      const dayOfWeek = d.getDay(); // 0 is Sunday, 6 is Saturday
-      const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    days = countWorkingDaysInRange(fromStr, toStr, leaveConfig, holidayDocs, {
+      countWeekends: !!policy.countWeekends,
+      countHolidays: !!policy.countHolidays,
+    });
 
-      // Check weekends
-      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-      if (isWeekend && !policy.countWeekends) {
-        continue;
-      }
-
-      // Check holidays
-      if (holidayDates.has(dateStr) && !policy.countHolidays) {
-        continue;
-      }
-
-      days += 1;
+    // Sandwich rule: weekends/holidays sandwiched inside the span count as
+    // leave days even when the policy excludes them.
+    if (typeConfig?.sandwichRule ?? policy.sandwichRule) {
+      const calDays = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+      if (calDays > days && days > 0) days = calDays;
     }
 
     if (halfDay) {
@@ -415,12 +409,13 @@ export async function POST(req) {
       }
     }
 
-    // Check min gap between leaves
+    // Check min gap between leaves (most recent PAST approved leave of same type)
     if (typeConfig.minGapDays > 0) {
       const recentLeave = await Leave.findOne({
         userId: user._id,
+        typeCode,
         status: 'approved',
-        to: { $gte: from },
+        to: { $lt: from },
       }).sort({ to: -1 });
       if (recentLeave) {
         const gap = Math.ceil((new Date(from) - new Date(recentLeave.to)) / (1000 * 60 * 60 * 24)) - 1;
@@ -475,6 +470,12 @@ export async function POST(req) {
       actionType: step.actionType || 'approve',
     })) : [];
 
+    // Retro flag: backdated leave overlapping a finalized payroll adjusts
+    // via RETRO_LOP_ADJ in the next run instead of the current cycle.
+    const todayLocal = new Date();
+    const todayLocalStr = `${todayLocal.getFullYear()}-${String(todayLocal.getMonth() + 1).padStart(2, '0')}-${String(todayLocal.getDate()).padStart(2, '0')}`;
+    const isRetroactive = fromStr < todayLocalStr;
+
     // Create leave record
     const leave = await Leave.create({
       userId: user._id,
@@ -492,6 +493,7 @@ export async function POST(req) {
       policyId: policy._id,
       workflowApprovals,
       status: 'pending',
+      isRetroactive,
 
       // Also set legacy fields for backward compat
       adminApproval: 'pending',
@@ -499,9 +501,15 @@ export async function POST(req) {
       tlApproval: 'pending',
     });
 
-    // Update pending balance
+    // Update pending balance (versioned; concurrent POSTs get 409 not double-pending)
     balanceEntry.pending += paidDays;
-    await balance.save();
+    try {
+      await balance.save();
+    } catch (e) {
+      await Leave.deleteOne({ _id: leave._id }).catch(() => {});
+      if (e?.name === 'VersionError') return fail('Leave balance changed concurrently. Please retry.', 409);
+      throw e;
+    }
 
     // Notify the first step approvers
     const firstStep = Array.isArray(activeWorkflow) ? activeWorkflow[0] : null;

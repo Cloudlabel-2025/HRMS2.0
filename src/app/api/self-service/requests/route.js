@@ -8,7 +8,7 @@ import { ok, fail } from '@/lib/jwt';
 import { CORE_HR_ADMIN_ROLES } from '@/lib/core/constants';
 import { CreateSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
-import { getGlobalConfig, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
 import { getPermissionAllowanceMins, getPermissionUsageForCycle } from '@/lib/permission-allowance';
 
 function normalizePayload(requestType, payload) {
@@ -184,11 +184,16 @@ export async function POST(req) {
           auditLog('Self-Service Request Failed', 'SelfService', user._id, `Leave already registered for ${date}`, 'low', ip, null, user._id);
           return fail(`You already have a ${leaveConflict.status} leave covering ${date}. A day can hold either a leave or a permission, not both.`, 409);
         }
-      } catch (e) { console.error('Permission-leave conflict check failed:', e?.message || e); }
+      } catch (e) {
+        await auditLog('Self-Service Conflict Check Failed', 'SelfService', user._id, `Leave-conflict check failed for ${date}: ${e?.message || e}`, 'high', ip, null, user._id);
+        return fail('Could not verify leave conflict. Please retry.', 500);
+      }
 
       const config = await getGlobalConfig();
-      const startDay = config.payrollStartDay || 26;
-      const endDay = config.payrollEndDay || 25;
+      // Settings stores full dates (e.g. "2026-07-26"); parse to day numbers
+      // so cycle ranges are real dates, not concatenations like "2026-08-2026-07-26".
+      const startDay = getPayrollDay(config.payrollStartDay, 26);
+      const endDay = getPayrollDay(config.payrollEndDay, 25);
       const { year, month } = getCycleMonth(date, startDay);
       const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
 

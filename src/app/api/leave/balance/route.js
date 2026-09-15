@@ -25,15 +25,23 @@ export async function resolvePolicyForUser(userDoc) {
   const userDepartment = userDoc.department || '';
   console.log('[LEAVE DEBUG] User department:', JSON.stringify(userDepartment), '| employmentType:', JSON.stringify(employmentType));
 
-  // Try role-specific policy first
+  // Try role-specific policy first (empty array/null/missing = all roles;
+  // empty-string department/employmentType never matches a policy entry).
+  const roleOr = [{ applicableRoles: { $size: 0 } }, { applicableRoles: userDoc.role }, { applicableRoles: { $exists: false } }, { applicableRoles: null }];
+  const deptOr = userDepartment
+    ? [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: userDepartment }, { applicableDepartments: { $exists: false } }, { applicableDepartments: null }]
+    : [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: { $exists: false } }, { applicableDepartments: null }];
+  const empOr = employmentType
+    ? [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }, { applicableEmploymentTypes: { $exists: false } }, { applicableEmploymentTypes: null }]
+    : [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: { $exists: false } }, { applicableEmploymentTypes: null }];
   const rolePolicy = await LeavePolicy.findOne({
     $and: [
       { status: 'active' },
-      { $or: [{ applicableRoles: { $size: 0 } }, { applicableRoles: userDoc.role }] },
+      { $or: roleOr },
       { $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }] },
       { effectiveFrom: { $lte: now } },
-      { $or: [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: userDepartment }] },
-      { $or: [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }] },
+      { $or: deptOr },
+      { $or: empOr },
     ],
   }).sort({ createdAt: -1 });
 
@@ -65,8 +73,8 @@ export async function resolvePolicyForUser(userDoc) {
       { isDefault: true },
       { $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }] },
       { effectiveFrom: { $lte: now } },
-      { $or: [{ applicableDepartments: { $size: 0 } }, { applicableDepartments: userDepartment }] },
-      { $or: [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }] },
+      { $or: deptOr },
+      { $or: empOr },
     ],
   }).sort({ createdAt: -1 });
 

@@ -119,14 +119,14 @@ async function applyApprovedRequest(request, reviewer) {
   if (request.requestType === 'permission') {
     // Re-check monthly allowance at approval time (creation already checked).
     try {
-      const { getGlobalConfig, getCycleMonth, getCycleRange } = await import('@/lib/payroll-cycle');
+      const { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } = await import('@/lib/payroll-cycle');
       const { getPermissionAllowanceMins, getPermissionUsageForCycle } = await import('@/lib/permission-allowance');
       const cfg = await getGlobalConfig();
       const permDate = request.payload?.date;
       const granted = Number(request.payload?.duration || 0) || 0;
       if (permDate && granted > 0) {
-        const startDay = cfg.payrollStartDay || 26;
-        const endDay = cfg.payrollEndDay || 25;
+        const startDay = getPayrollDay(cfg.payrollStartDay, 26);
+        const endDay = getPayrollDay(cfg.payrollEndDay, 25);
         const { year, month } = getCycleMonth(permDate, startDay);
         const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
         const usage = await getPermissionUsageForCycle(request.profileId, fromDate, toDate);

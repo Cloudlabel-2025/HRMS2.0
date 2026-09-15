@@ -327,11 +327,11 @@ export const CreateLeaveSchema = z.object({
   (data) => new Date(data.to) >= new Date(data.from),
   { message: 'End date must be after start date', path: ['to'] }
 ).refine(
-  (data) => toDateStr(new Date(data.from)) >= toDateStr(new Date()),
-  { message: 'Leave date cannot be in the past', path: ['from'] }
-).refine(
   data => !data.halfDay || (data.halfDay && data.halfDayType),
   { message: 'Please select first half or second half when applying for half-day leave', path: ['halfDayType'] }
+).refine(
+  data => !data.halfDay || (toDateStr(new Date(data.from)) === toDateStr(new Date(data.to))),
+  { message: 'Half-day leave must be a single day', path: ['to'] }
 );
 
 // ────────────────────────────────────────────────────────────────────────────
