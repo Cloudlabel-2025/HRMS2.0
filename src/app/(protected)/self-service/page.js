@@ -56,8 +56,7 @@ export default function SelfServicePage() {
 
   const validate = () => {
     const errs = {};
-    if (!form.reason || form.reason.length < 10) errs.reason = 'Reason must be at least 10 characters';
-    else if (!/^[a-zA-Z0-9 ]+$/.test(form.reason)) errs.reason = 'Reason can only contain letters and numbers';
+    if (!form.reason || form.reason.trim().length < 10) errs.reason = 'Reason must be at least 10 characters';
     if (form.requestType === 'profile_update') {
       if (!form.personalPhone) errs.personalPhone = 'Personal phone is required';
       else if (!/^\d{10}$/.test(form.personalPhone)) errs.personalPhone = 'Personal phone must be exactly 10 digits';
@@ -328,7 +327,7 @@ export default function SelfServicePage() {
               </div>
               <div className="col-md-8">
                 <label className="form-label">Reason <span style={{color:'#ef4444'}}>*</span></label>
-                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z0-9 ]/g, ''); setForm(prev => ({ ...prev, reason: v })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
+                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} maxLength={1000} onChange={e => { setForm(prev => ({ ...prev, reason: e.target.value })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
                 {formErrors.reason && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.reason}</div>}
               </div>
 

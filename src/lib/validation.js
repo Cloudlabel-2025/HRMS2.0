@@ -299,7 +299,7 @@ export const CreateLifecycleHistorySchema = z.object({
 
 export const CreateSelfServiceRequestSchema = z.object({
   requestType: z.enum(SELF_SERVICE_REQUEST_TYPES),
-  reason: z.string().min(10).max(1000),
+  reason: z.string().trim().min(10).max(1000),
   payload: z.object({}).passthrough(),
 }).strict();
 
