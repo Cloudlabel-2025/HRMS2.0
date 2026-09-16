@@ -1386,6 +1386,15 @@ body {
   }
 }
 
+/* Bulk leave import */
+.bulk-head-row > .btn { flex-shrink: 0; }
+@media (max-width: 767.98px) {
+  .bulk-head-row > * { width: 100%; }
+  .bulk-head-row .btn { width: 100%; }
+  .bulk-file-row > * { width: 100%; }
+  .bulk-file-row .btn { width: 100%; }
+}
+
 .assign-select:disabled {
   background-color: #f1f5f9;
   color: #94a3b8;

@@ -207,6 +207,65 @@ export async function getOrCreateBalance(userId, policy) {
   return balance;
 }
 
+/** Get or create a user's balance for a specific cycle year (bulk import / history) */
+export async function getOrCreateBalanceForYear(userId, policy, year) {
+  await dbConnect();
+  const y = Number(year) || new Date().getFullYear();
+  const cycleStart = new Date(y, 0, 1);
+  const cycleEnd = new Date(y, 11, 31);
+
+  const now = new Date();
+  if (y === now.getFullYear()) {
+    return getOrCreateBalance(userId, policy);
+  }
+
+  const user = await User.findById(userId).select('role');
+  if (!user || isEmployer(user.role)) return null;
+
+  const { buildEmployeeContext } = require('@/lib/leave/eligibility');
+  const employeeContext = await buildEmployeeContext(userId);
+
+  let balance = await UserLeaveBalance.findOne({ userId, cycleStart });
+  if (!balance) {
+    const balances = [];
+    for (const config of policy.leaveTypeConfigs || []) {
+      if (!config.code || !config.enabled) continue;
+      if (!isEligibleForType(config, employeeContext)) continue;
+      balances.push({
+        typeCode: config.code,
+        allocated: config.annualAllocation || 0,
+        used: 0,
+        pending: 0,
+        carriedForward: 0,
+        expiryDate: null,
+        periodUsage: [],
+      });
+    }
+    balance = await UserLeaveBalance.create({ userId, policyId: policy._id, cycleStart, cycleEnd, balances });
+    return balance;
+  }
+
+  const existingCodes = new Set(balance.balances.map(b => b.typeCode));
+  let changed = false;
+  for (const config of policy.leaveTypeConfigs || []) {
+    if (!config.code || !config.enabled) continue;
+    if (!existingCodes.has(config.code)) {
+      balance.balances.push({
+        typeCode: config.code,
+        allocated: config.annualAllocation || 0,
+        used: 0, pending: 0, carriedForward: 0, expiryDate: null, periodUsage: [],
+      });
+      changed = true;
+    }
+  }
+  if (String(balance.policyId) !== String(policy._id)) {
+    balance.policyId = policy._id;
+    changed = true;
+  }
+  if (changed) await balance.save();
+  return balance;
+}
+
 export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);

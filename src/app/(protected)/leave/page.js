@@ -214,11 +214,18 @@ export default function LeavePage() {
 
       <div className="page-header">
         <div><h4>Leave Management</h4><p>Apply, track, and approve leave requests</p></div>
-        {!isSuperAdmin && (
-          <button className="btn btn-primary" onClick={() => setShowModal(true)}>
-            <i className="bi bi-plus-lg me-2" />Apply Leave
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isAdmin && (
+            <button className="btn btn-outline-primary" onClick={() => { window.location.href = '/leave/bulk'; }}>
+              <i className="bi bi-upload me-2" />Bulk Import
+            </button>
+          )}
+          {!isSuperAdmin && (
+            <button className="btn btn-primary" onClick={() => setShowModal(true)}>
+              <i className="bi bi-plus-lg me-2" />Apply Leave
+            </button>
+          )}
+        </div>
       </div>
 
       {isSuperAdmin && tab === 'my' && selectedEmployee && (
