@@ -92,8 +92,9 @@ export default function MonitoringPage() {
       }
 
       const empMap = {};
-      for (const emp of employees) {
-        const uid = emp.userId?.toString();
+      const empList = Array.isArray(employees) ? employees : [];
+      for (const emp of empList) {
+        const uid = emp.userId?.toString() || emp._id?.toString();
         if (!uid) continue;
 
         // Determine this employee's shift-aware today
@@ -316,7 +317,13 @@ export default function MonitoringPage() {
               </div>
 
               {filtered.length === 0 && (
-                <div className="empty-state"><i className="bi bi-people" /><h6>{filterStatus || filterDept || searchTerm ? 'No employees match current filters' : 'No employees found'}</h6></div>
+                <div className="empty-state">
+                  <i className="bi bi-people" />
+                  <h6>{filterStatus || filterDept || searchTerm ? 'No employees match current filters' : team.length === 0 ? 'No employees found — checked Employee collection, fallback to active Users. If still 0, no active non-super_admin users exist.' : 'No employees found'}</h6>
+                  {!filterStatus && !filterDept && !searchTerm && team.length === 0 && (
+                    <p style={{ fontSize: 11, color: '#94a3b8' }}>Checked Employee collection, fallback to active Users. Verify Atlas: db.employees.countDocuments vs db.users.countDocuments({'{'}status:'active'{'}'}).</p>
+                  )}
+                </div>
               )}
 
               <div className="row g-2">
