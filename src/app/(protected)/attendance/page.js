@@ -63,6 +63,10 @@ export default function AttendancePage() {
   const [confirmClockOut, setConfirmClockOut] = useState(false);
   const clockBusyRef = useRef(false);
   const [loading, setLoading]           = useState(true);
+  const [refreshingToday, setRefreshingToday] = useState(false);
+  const [refreshingTeam, setRefreshingTeam] = useState(false);
+  const [regLoading, setRegLoading] = useState(false);
+  const [showPendingPermissions, setShowPendingPermissions] = useState(false);
   const [toastQueue, setToastQueue] = useState([]);
   const [regRequests, setRegRequests]   = useState([]);
   const [showRegModal, setShowRegModal] = useState(false);
@@ -346,7 +350,8 @@ export default function AttendancePage() {
   const [showAllEmployees, setShowAllEmployees] = useState(false);
   const [downloadLoading, setDownloadLoading] = useState(false);
 
-  const loadTodayRecord = async () => {
+  const loadTodayRecord = async (quiet = false) => {
+    if (quiet) setRefreshingToday(true);
     try {
       const [todayRecs, openRecs] = await Promise.all([
         api.get('/api/attendance?date=' + today + '&scope=my'),
@@ -366,9 +371,11 @@ export default function AttendancePage() {
       setTodayRecord(todayRec);
       setStaleOpenSession(openRec && openRec.date !== today ? openRec : null);
     } catch { setTodayRecord(null); setStaleOpenSession(null); }
+    finally { if (quiet) setRefreshingToday(false); }
   };
 
-  const loadTeamToday = async () => {
+  const loadTeamToday = async (quiet = false) => {
+    if (quiet) setRefreshingTeam(true);
     try {
       const now = new Date();
       const calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
@@ -403,6 +410,7 @@ export default function AttendancePage() {
       }
       setTeamToday(Object.values(merged));
     } catch { setTeamToday([]); }
+    finally { if (quiet) setRefreshingTeam(false); }
   };
 
   const loadEmployees = async () => {
@@ -411,8 +419,10 @@ export default function AttendancePage() {
   };
 
   const loadRegRequests = async (scope) => {
+    setRegLoading(true);
     try { const r = await api.get('/api/attendance/regularize?scope=' + scope); setRegRequests(Array.isArray(r) ? r : []); }
     catch { setRegRequests([]); }
+    finally { setRegLoading(false); }
   };
 
   const loadProgressRecord = async (uid) => {
@@ -451,7 +461,7 @@ export default function AttendancePage() {
     let teamTimer = null;
     const debounceTeam = () => {
       if (teamTimer) clearTimeout(teamTimer);
-      teamTimer = setTimeout(() => latestHandlers.current.loadTeamToday(), 1000);
+      teamTimer = setTimeout(() => latestHandlers.current.loadTeamToday(true), 1000);
     };
     const connect = () => {
       es = new EventSource('/api/attendance/events');
@@ -466,7 +476,7 @@ export default function AttendancePage() {
             // clock-out happened in another tab.
             pinRef.current = { date: evt.date, until: Date.now() + 10 * 60 * 1000 };
           }
-          h.loadTodayRecord();
+          h.loadTodayRecord(true);
         }
         if (h.isAdmin && String(evt.userId) === String(h.selectedProgressUserId)) {
           h.loadProgressRecord(h.selectedProgressUserId);
@@ -1578,19 +1588,40 @@ export default function AttendancePage() {
                   </div>
                 ))}
               </div>
+              {(teamToday.some(r => r._permissionStatus === 'pending' || r.pendingPermission)) && !showPendingPermissions && (
+                <div className="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2" style={{ fontSize: 12 }}>
+                  <span>{teamToday.filter(r => r._permissionStatus === 'pending' || r.pendingPermission).length} employee(s) with pending permission hidden — shown as Late + Pending when enabled.</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, cursor: 'pointer', margin: 0 }}>
+                    <input type="checkbox" checked={showPendingPermissions} onChange={e => { setShowPendingPermissions(e.target.checked); setTodayPage(1); }} />
+                    Show Late + Pending
+                  </label>
+                </div>
+              )}
+              {showPendingPermissions && teamToday.some(r => r._permissionStatus === 'pending' || r.pendingPermission) && (
+                <div className="mb-2">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={showPendingPermissions} onChange={e => { setShowPendingPermissions(e.target.checked); setTodayPage(1); }} />
+                    Hide pending permissions
+                  </label>
+                </div>
+              )}
               <div className="card">
                 <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
                   <i className="bi bi-people" style={{ color: '#3b82f6', fontSize: 15 }} />
                   <span style={{ fontWeight: 750, fontSize: 14.5 }}>Today's Attendance — {formatDate(today)}</span>
+                  {refreshingTeam && <span className="spinner-border spinner-border-sm text-primary" role="status" aria-label="Refreshing today's attendance" />}
                   <span className="badge" style={{ background: '#eff6ff', color: '#2563eb', fontSize: 11, marginLeft: 'auto' }}>{teamToday.length} employees</span>
                 </div>
                 <div className="table-responsive">
                   <table className="table mb-0">
                     <thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock In</th><th>Clock Out</th><th>Hours</th><th>Flag</th></tr></thead>
                     <tbody>
-                      {teamToday.slice((todayPage - 1) * pageSize, todayPage * pageSize).map(row => {
-                        const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
-                        const hasClockOut = !!row.clockOut;
+                      {(showPendingPermissions ? teamToday : teamToday.filter(r => !(r._permissionStatus === 'pending' || r.pendingPermission))).slice((todayPage - 1) * pageSize, todayPage * pageSize).map(row => {
+                        const isApprovedPerm = !!(row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved';
+                        const isPendingPerm = !isApprovedPerm && (!!row.pendingPermission || row._permissionStatus === 'pending');
+                        const displayStatus = isApprovedPerm ? 'present' : row.status;
+                        const s = STATUS_STYLE[displayStatus] || STATUS_STYLE.present;
+                        const hasClockOut = !!row.clockOut && !isApprovedPerm;
                         return (
                           <tr key={row._id}>
                             <td>
@@ -1613,12 +1644,13 @@ export default function AttendancePage() {
                             </td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
-                            <td style={{ fontSize: 13, fontWeight: (row.permission?.requestId || row.permission?.startTime) ? 700 : 400, color: (row.permission?.requestId || row.permission?.startTime) ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${(row.permission?.requestId || row.permission?.startTime) ? ' / 8h' : ''}` : '—'}</td>
+                            <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {row.lateFlag && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
-                                {row.shortHours && !(row.permission?.requestId || row.permission?.startTime) && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
-                                {(row.permission?.requestId || row.permission?.startTime) && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission{row.permission?.applied ? '' : row.permission?.isMidDay ? ' (Mid-day)' : ''}</span>}
+                                {(row.lateFlag || isPendingPerm) && !isApprovedPerm && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
+                                {row.shortHours && !isApprovedPerm && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {isApprovedPerm && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission · Approved</span>}
+                                {isPendingPerm && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Permission · Pending{row.pendingPermission?.startTime ? ` (${row.pendingPermission.startTime}-${row.pendingPermission.endTime})` : ''}</span>}
                                 {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
                                 {row.leaveOverride?.status === 'pending' && (
@@ -1644,12 +1676,12 @@ export default function AttendancePage() {
                     </tbody>
                   </table>
                 </div>
-                {teamToday.length > 0 && (
+                {(showPendingPermissions ? teamToday : teamToday.filter(r => !(r._permissionStatus === 'pending' || r.pendingPermission))).length > 0 && (
                   <Pagination
                     currentPage={todayPage}
-                    totalPages={Math.ceil(teamToday.length / pageSize)}
+                    totalPages={Math.ceil((showPendingPermissions ? teamToday : teamToday.filter(r => !(r._permissionStatus === 'pending' || r.pendingPermission))).length / pageSize)}
                     onPageChange={setTodayPage}
-                    totalItems={teamToday.length}
+                    totalItems={(showPendingPermissions ? teamToday : teamToday.filter(r => !(r._permissionStatus === 'pending' || r.pendingPermission))).length}
                     pageSize={pageSize}
                   />
                 )}
@@ -1662,10 +1694,10 @@ export default function AttendancePage() {
                 <div className="card p-3 p-md-4">
                   {todayRecord ? (
                     <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}{refreshingToday && <span className="spinner-border spinner-border-sm text-primary ms-2" role="status" aria-label="Refreshing" />}</div>
                       <div className="row g-3">
                         {[
-                          ['Status',    <span key="st" className="badge" style={{ background: STATUS_STYLE[todayRecord.status]?.bg, color: STATUS_STYLE[todayRecord.status]?.color }}>{STATUS_STYLE[todayRecord.status]?.label || todayRecord.status}</span>],
+                          ['Status',    (() => { const isAp = !!((todayRecord.permission?.requestId || todayRecord.permission?.startTime) || todayRecord._permissionStatus === 'approved'); const st = isAp ? 'present' : todayRecord.status; return <span key="st" className="badge" style={{ background: STATUS_STYLE[st]?.bg, color: STATUS_STYLE[st]?.color }}>{STATUS_STYLE[st]?.label || st}</span>; })()],
                           ['Clock In',  formatTime(todayRecord.clockIn)  || '—'],
                           ['Clock Out', formatTime(todayRecord.clockOut) || '—'],
                           ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
@@ -1721,7 +1753,12 @@ export default function AttendancePage() {
                           </div>
                         </div>
                       )}
-                      {todayRecord.lateFlag && (
+                      {(todayRecord.pendingPermission || todayRecord._permissionStatus === 'pending') && (
+                        <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
+                          <i className="bi bi-hourglass-split me-2" />Permission requested for today{todayRecord.pendingPermission?.startTime ? ` (${todayRecord.pendingPermission.startTime}–${todayRecord.pendingPermission.endTime})` : ''} — pending approval, still marked Late.
+                        </div>
+                      )}
+                      {todayRecord.lateFlag && todayRecord._permissionStatus !== 'approved' && (
                         <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
                           <i className="bi bi-exclamation-triangle me-2" />Late login detected
                         </div>
@@ -2030,7 +2067,9 @@ export default function AttendancePage() {
               <i className="bi bi-clock-history me-1" />History
             </Link>
           </div>
-          {regRequests.length === 0 ? (
+          {regLoading ? (
+            <div className="card"><div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" role="status" aria-label="Loading regularization requests" /><div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Loading requests…</div></div></div>
+          ) : regRequests.length === 0 ? (
             <div className="card"><div className="empty-state"><i className="bi bi-clock-history" /><p>No regularization requests</p></div></div>
           ) : (
             <>
@@ -2689,7 +2728,10 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
             <tbody>
               {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
                 const d = new Date(row.date + 'T00:00:00');
-                const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+                const isApprovedPerm = !!((row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved');
+                const isPendingPerm = !isApprovedPerm && (!!row.pendingPermission || row._permissionStatus === 'pending');
+                const displayStatus = isApprovedPerm ? 'present' : row.status;
+                const s = STATUS_STYLE[displayStatus] || STATUS_STYLE.present;
                 return (
                   <tr key={row._id}>
                     <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
@@ -2697,7 +2739,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
                     <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
                     <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
-                    <td style={{ fontSize: 13, fontWeight: (row.permission?.requestId || row.permission?.startTime) ? 700 : 400, color: (row.permission?.requestId || row.permission?.startTime) ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${(row.permission?.requestId || row.permission?.startTime) ? ' / 8h' : ''}` : '—'}</td>
+                    <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
                     <td style={{ fontSize: 13, maxWidth: 160 }}>
                       {isAdmin && (row.status === 'absent' || row.status === 'late') ? (
                         <input className="form-control form-control-sm" style={{ fontSize: 11 }}
@@ -2711,8 +2753,9 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {row.leaveOverride?.status === 'pending' && (
                         <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
                       )}
-                      {row.shortHours && !(row.permission?.requestId || row.permission?.startTime) && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
-                      {(row.permission?.requestId || row.permission?.startTime) && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission</span>}
+                      {isPendingPerm && <span className="badge ms-1" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
+                      {row.shortHours && !isApprovedPerm && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
+                      {isApprovedPerm && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                       {row.approvedHalfDayLeave && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">
@@ -2739,7 +2782,10 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
       <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
         {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
           const d = new Date(row.date + 'T00:00:00');
-          const s = STATUS_STYLE[row.status] || STATUS_STYLE.present;
+          const isApprovedPermM = !!((row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved');
+          const isPendingPermM = !isApprovedPermM && (!!row.pendingPermission || row._permissionStatus === 'pending');
+          const displayStatusM = isApprovedPermM ? 'present' : row.status;
+          const s = STATUS_STYLE[displayStatusM] || STATUS_STYLE.present;
           return (
             <div key={row._id} className="card p-3">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
@@ -2749,6 +2795,12 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                 </div>
                 <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
               </div>
+              {(isApprovedPermM || isPendingPermM) && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
+                  {isApprovedPermM && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
+                  {isPendingPermM && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
+                </div>
+              )}
               <div className="row g-2">
                 {[['Clock In', formatTime(row.clockIn)], ['Clock Out', formatTime(row.clockOut)], ['Hours', row.hoursWorked ? formatMins(row.hoursWorked) : null]].map(([lbl, val]) => (
                   <div key={lbl} className="col-4">

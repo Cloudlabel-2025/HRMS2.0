@@ -78,9 +78,27 @@ export async function GET(req) {
     const monitoredEmployees = await Employee.find(employeeFilter).select('userId name department').lean();
     const monitoredIds = monitoredEmployees.map(employee => employee.userId);
     const [attendanceRecords, approvedLeaves] = await Promise.all([
-      Attendance.find({ userId: { $in: monitoredIds }, date: today }).select('userId status clockIn lateFlag').lean(),
+      Attendance.find({ userId: { $in: monitoredIds }, date: today }).select('userId status clockIn lateFlag permission pendingPermission').lean(),
       Leave.find({ userId: { $in: monitoredIds }, status: 'approved', from: { $lte: today }, to: { $gte: today } }).select('userId').lean(),
     ]);
+    let pendingByUser = new Map();
+    try {
+      const { SelfServiceRequest } = await import('@/lib/models/index');
+      const User = (await import('@/lib/models/User')).default;
+      const pendings = await SelfServiceRequest.find({ requestType: 'permission', status: 'pending', 'payload.date': today }).select('identityId profileId payload').lean();
+      if (pendings.length) {
+        const pUsers = await User.find({ $or: [{ identityId: { $in: pendings.map(p => p.identityId) } }, { profileId: { $in: pendings.map(p => p.profileId) } }] }).select('_id identityId profileId').lean();
+        const uMap = new Map();
+        for (const u of pUsers) {
+          if (u.identityId) uMap.set('id:' + String(u.identityId), String(u._id));
+          if (u.profileId) uMap.set('pf:' + String(u.profileId), String(u._id));
+        }
+        for (const p of pendings) {
+          const uid = uMap.get('id:' + String(p.identityId)) || uMap.get('pf:' + String(p.profileId));
+          if (uid) pendingByUser.set(uid, p);
+        }
+      }
+    } catch { /* non-fatal */ }
     const attendanceByUser = new Map(attendanceRecords.map(record => [record.userId.toString(), record]));
     const leaveUserIds = new Set(approvedLeaves.map(leave => leave.userId.toString()));
     const counts = { present: 0, late: 0, absent: 0, leave: 0 };
@@ -88,10 +106,16 @@ export async function GET(req) {
     for (const employee of monitoredEmployees) {
       const id = employee.userId.toString();
       const record = attendanceByUser.get(id);
-      const status = leaveUserIds.has(id) ? 'leave' : (record?.status === 'late' || record?.lateFlag ? 'late' : record?.status === 'present' ? 'present' : 'absent');
+      const hasApproved = !!((record?.permission?.requestId || record?.permission?.startTime));
+      const hasPending = !hasApproved && (!!(record?.pendingPermission) || pendingByUser.has(id));
+      let status;
+      if (leaveUserIds.has(id)) status = 'leave';
+      else if (hasApproved) status = 'present';
+      else status = (record?.status === 'late' || record?.lateFlag ? 'late' : record?.status === 'present' ? 'present' : 'absent');
       counts[status]++;
-      if (status === 'late') alerts.push({ name: employee.name, department: employee.department, status: 'Late', time: record?.clockIn || '' });
-      if (status === 'absent') alerts.push({ name: employee.name, department: employee.department, status: 'Absent', time: '' });
+      if (status === 'late') alerts.push({ name: employee.name, department: employee.department, status: hasPending ? 'Late + Permission pending' : 'Late', time: record?.clockIn || '', permission: hasPending ? 'pending' : null });
+      if (status === 'present' && hasApproved) alerts.push({ name: employee.name, department: employee.department, status: 'Present + Permission', time: record?.clockIn || '', permission: 'approved' });
+      else if (status === 'absent') alerts.push({ name: employee.name, department: employee.department, status: 'Absent', time: '' });
     }
     monitoring = { counts, alerts: alerts.slice(0, 5) };
 
