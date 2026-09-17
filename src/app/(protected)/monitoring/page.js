@@ -48,6 +48,7 @@ export default function MonitoringPage() {
   const [patternFlags, setPatternFlags] = useState([]);
 
   const isSuperAdmin = user?.role === 'super_admin';
+  const isFullMonitoring = ['super_admin', 'admin_full'].includes(user?.role);
 
   const fetchData = async (quiet = false) => {
     if (quiet) setRefreshing(true); else setLoading(true);
@@ -65,10 +66,11 @@ export default function MonitoringPage() {
       const allShifts = Array.isArray(shiftData) ? shiftData : [];
 
       let employees = [];
-      if (isSuperAdmin) {
+      if (isFullMonitoring) {
         employees = await api.get('/api/employees');
       } else {
-        employees = await api.get(`/api/employees?department=${user.department}`);
+        const d = String(user?.department || '').trim();
+        employees = await api.get(d ? `/api/employees?department=${encodeURIComponent(d)}` : '/api/employees');
       }
 
       const [attendanceToday, attendanceYest, leaves] = await Promise.all([

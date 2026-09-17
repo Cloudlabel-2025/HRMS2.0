@@ -29,8 +29,11 @@ export async function GET(req) {
     if (!['super_admin', 'admin_full', 'recruiter'].includes(user.role)) {
       const accessibleDepts = await getAccessibleDepartments(user);
       query.department = { $in: accessibleDepts };
-    } else if (dept) {
-      query.department = dept;
+    } else {
+      const deptParam = String(dept || '').trim();
+      if (deptParam && deptParam.toLowerCase() !== 'undefined' && deptParam.toLowerCase() !== 'null') {
+        query.department = deptParam;
+      }
     }
 
     if (role)   query.role = role;
