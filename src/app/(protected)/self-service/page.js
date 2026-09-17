@@ -57,6 +57,7 @@ export default function SelfServicePage() {
   const validate = () => {
     const errs = {};
     if (!form.reason || form.reason.trim().length < 10) errs.reason = 'Reason must be at least 10 characters';
+    else if (form.requestType === 'permission' && form.reason.trim().length > 300) errs.reason = 'Reason must be 300 characters or less for permission requests';
     if (form.requestType === 'profile_update') {
       if (!form.personalPhone) errs.personalPhone = 'Personal phone is required';
       else if (!/^\d{10}$/.test(form.personalPhone)) errs.personalPhone = 'Personal phone must be exactly 10 digits';
@@ -327,7 +328,8 @@ export default function SelfServicePage() {
               </div>
               <div className="col-md-8">
                 <label className="form-label">Reason <span style={{color:'#ef4444'}}>*</span></label>
-                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} maxLength={1000} onChange={e => { setForm(prev => ({ ...prev, reason: e.target.value })); clearError('reason'); }} placeholder="Explain why you are submitting this request" />
+                <input className={`form-control${formErrors.reason ? ' is-invalid' : ''}`} value={form.reason} maxLength={form.requestType === 'permission' ? 300 : 1000} onChange={e => { setForm(prev => ({ ...prev, reason: e.target.value })); clearError('reason'); }} placeholder={form.requestType === 'permission' ? 'Explain why you need permission (min 10 chars, max 300)' : 'Explain why you are submitting this request'} />
+                {form.requestType === 'permission' && <div style={{ fontSize: 11, color: form.reason.length > 280 ? '#ef4444' : '#94a3b8', textAlign: 'right', marginTop: 2 }}>{form.reason.length}/300</div>}
                 {formErrors.reason && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.reason}</div>}
               </div>
 

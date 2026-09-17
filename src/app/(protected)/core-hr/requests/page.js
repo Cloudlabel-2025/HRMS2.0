@@ -308,7 +308,7 @@ export default function CoreHrRequestsPage() {
 
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>REASON</div>
-                <p style={{ fontSize: 13, margin: 0 }}>{selected.reason}</p>
+                <p style={{ fontSize: 13, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 120, overflowY: 'auto' }}>{selected.reason}</p>
               </div>
 
               <div className="mb-3">

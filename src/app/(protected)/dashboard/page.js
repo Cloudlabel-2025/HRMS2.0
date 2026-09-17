@@ -536,7 +536,8 @@ export default function DashboardPage() {
 
               <div className="mb-3">
                 <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Reason <span style={{color:'#ef4444'}}>*</span></label>
-                <textarea className="form-control" rows="3" placeholder="Please explain why you need permission (min 10 chars)" value={permissionForm.reason} onChange={e => { const v = e.target.value.replace(/[^a-zA-Z0-9 ]/g, ''); setPermissionForm(prev => ({ ...prev, reason: v })); }}></textarea>
+                <textarea className="form-control" rows="3" placeholder="Please explain why you need permission (min 10 chars, max 300)" value={permissionForm.reason} maxLength={300} onChange={e => setPermissionForm(prev => ({ ...prev, reason: e.target.value }))} style={{ whiteSpace: 'pre-wrap' }}></textarea>
+                <div style={{ fontSize: 11, color: permissionForm.reason.length > 280 ? '#ef4444' : '#94a3b8', textAlign: 'right', marginTop: 4 }}>{permissionForm.reason.length}/300</div>
               </div>
             </div>
             <div className="card-footer bg-light border-0 px-4 py-3 d-flex justify-content-end gap-2">

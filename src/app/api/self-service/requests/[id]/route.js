@@ -40,6 +40,9 @@ export async function PUT(req, { params }) {
 
     const body = await req.json();
     const { reviewNote: _reviewNote, ...rest } = body;
+    if (rest.reason != null && request.requestType === 'permission' && String(rest.reason).trim().length > 300) {
+      return fail('Reason must be 300 characters or less for permission requests', 400);
+    }
     request.reason = rest.reason || request.reason;
     if (rest.payload) request.payload = rest.payload;
     await request.save();

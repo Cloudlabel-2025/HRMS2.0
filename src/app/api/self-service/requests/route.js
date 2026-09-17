@@ -100,6 +100,10 @@ export async function POST(req) {
       return fail('Super administrators cannot submit permission requests', 403);
     }
 
+    if (body.requestType === 'permission' && String(body.reason || '').trim().length > 300) {
+      return fail('Reason must be 300 characters or less for permission requests', 400);
+    }
+
     const identityId = user.identityId;
     if (!identityId) {
       auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Identity link not found', 'low', ip, null, user._id);
@@ -245,10 +249,12 @@ export async function POST(req) {
     // Notify all HR admins
     const hrAdmins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id');
     const typeLabel = body.requestType.replace(/_/g, ' ');
+    const reasonPreview = String(body.reason || '');
+    const truncatedReason = reasonPreview.length > 200 ? reasonPreview.slice(0, 200) + '…' : reasonPreview;
     await notify(
       hrAdmins.map(a => a._id),
       `New Self-Service Request — ${typeLabel}`,
-      `${identity.legalName} has submitted a ${typeLabel} request. Reason: ${body.reason}`,
+      `${identity.legalName} has submitted a ${typeLabel} request. Reason: ${truncatedReason}`,
       'self_service',
       request._id
     );
