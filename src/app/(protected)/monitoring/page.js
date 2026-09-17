@@ -39,6 +39,7 @@ export default function MonitoringPage() {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showPendingPermissions, setShowPendingPermissions] = useState(false);
   const [filterStatus, setFilterStatus] = useState('');
   const [filterDept, setFilterDept] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -115,6 +116,9 @@ export default function MonitoringPage() {
         let onBreak = false;
         let activeBreakType = '';
         let autoLoggedOut = false;
+        let permissionStatus = null;
+        let pendingPermission = null;
+        let approvedPermission = null;
 
         const breakLabels = {};
         for (const b of (matchedShift?.breaks || [])) {
@@ -124,10 +128,23 @@ export default function MonitoringPage() {
         if (isOnLeave) {
           status = 'leave';
         } else if (attRecord) {
-          status = attRecord.status || 'present';
+          const hasApproved = !!((attRecord.permission?.requestId || attRecord.permission?.startTime) || attRecord._permissionStatus === 'approved');
+          const hasPending = !hasApproved && (!!attRecord.pendingPermission || attRecord._permissionStatus === 'pending');
+          if (hasApproved) {
+            status = 'present';
+            lateFlag = false;
+            permissionStatus = 'approved';
+            approvedPermission = attRecord.permission || null;
+          } else {
+            status = attRecord.status || 'present';
+            lateFlag = attRecord.lateFlag === true;
+            if (hasPending) {
+              permissionStatus = 'pending';
+              pendingPermission = attRecord.pendingPermission || null;
+            }
+          }
           clockIn = attRecord.clockIn || '—';
           clockOut = attRecord.clockOut || '—';
-          lateFlag = attRecord.lateFlag === true;
           autoLoggedOut = attRecord.autoLoggedOut === true;
           breaks = Array.isArray(attRecord.breaks) ? attRecord.breaks : [];
           workProgress = Array.isArray(attRecord.workProgress) ? attRecord.workProgress : [];
@@ -162,7 +179,10 @@ export default function MonitoringPage() {
           activeBreakType,
           breakLabels,
           autoLoggedOut,
-          isLoggedOut: hasClockOut,
+          isLoggedOut: hasClockOut && permissionStatus !== 'approved',
+          permissionStatus,
+          pendingPermission,
+          approvedPermission,
         };
       }
 
@@ -170,7 +190,9 @@ export default function MonitoringPage() {
 
       const alertList = [];
       for (const emp of teamArr) {
-        if (emp.lateFlag) alertList.push({ type: 'late', icon: 'bi-clock', color: '#f59e0b', text: `${emp.name} logged in late (${formatTime(emp.clockIn)})`, time: emp.clockIn });
+        if (emp.lateFlag && emp.permissionStatus !== 'approved') alertList.push({ type: 'late', icon: 'bi-clock', color: '#f59e0b', text: `${emp.name} logged in late (${formatTime(emp.clockIn)})${emp.permissionStatus === 'pending' ? ' · Permission pending' : ''}`, time: emp.clockIn });
+        if (emp.permissionStatus === 'pending') alertList.push({ type: 'permission_pending', icon: 'bi-hourglass-split', color: '#92400e', text: `${emp.name} has a pending permission request`, time: emp.pendingPermission?.startTime ? `${emp.pendingPermission.startTime}–${emp.pendingPermission.endTime}` : '' });
+        if (emp.permissionStatus === 'approved') alertList.push({ type: 'permission_approved', icon: 'bi-patch-check', color: '#1d4ed8', text: `${emp.name} present with approved permission`, time: emp.clockIn });
         if (emp.autoLoggedOut) alertList.push({ type: 'auto_logout', icon: 'bi-clock-history', color: '#f59e0b', text: `${emp.name} was auto-logged out at ${formatTime(emp.clockOut)}`, time: emp.clockOut });
       }
 
@@ -194,11 +216,13 @@ export default function MonitoringPage() {
 
   const depts = departments;
   const normalizedSearch = searchTerm.trim().toLowerCase();
-  const filtered = team.filter(e =>
+  const pendingHiddenCount = team.filter(e => e.permissionStatus === 'pending').length;
+  const baseFiltered = team.filter(e =>
     (!filterStatus || e.status === filterStatus) &&
     (!filterDept   || e.dept === filterDept) &&
     (!normalizedSearch || [e.name, e.employeeNumber, e.dept, e.designation].some(value => String(value || '').toLowerCase().includes(normalizedSearch)))
   );
+  const filtered = showPendingPermissions ? baseFiltered : baseFiltered.filter(e => e.permissionStatus !== 'pending');
 
   const counts = {
     present: team.filter(e => e.status === 'present').length,
@@ -246,23 +270,45 @@ export default function MonitoringPage() {
         <div className="row g-2">{patternFlags.map((flag, index) => <div key={`${flag.employee?.userId || flag.employee?._id}-${flag.type}-${index}`} className="col-md-6 col-xl-4"><div style={{ background: '#fff', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}>{flag.employee?.name}</div><div style={{ fontSize: 11.5, color: '#d97706', fontWeight: 700, marginTop: 3 }}>{flag.type}</div><div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>{flag.evidence}</div><div style={{ fontSize: 10.5, color: '#a16207', marginTop: 6 }}>{flag.reviewState}</div></div></div>)}</div>
       </div>}
 
-      {(loading && !refreshing) ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" /></div> : (
-        <div className="row g-3">
+      {!showPendingPermissions && pendingHiddenCount > 0 && !loading && (
+        <div className="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2" style={{ fontSize: 12 }}>
+          <span>{pendingHiddenCount} employee(s) with pending permission hidden — shown as Late + Pending when enabled.</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, cursor: 'pointer', margin: 0 }}>
+            <input type="checkbox" checked={showPendingPermissions} onChange={e => setShowPendingPermissions(e.target.checked)} />
+            Show Late + Pending
+          </label>
+        </div>
+      )}
+      {showPendingPermissions && pendingHiddenCount > 0 && !loading && (
+        <div className="mb-2">
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            <input type="checkbox" checked={showPendingPermissions} onChange={e => setShowPendingPermissions(e.target.checked)} />
+            Hide pending permissions
+          </label>
+        </div>
+      )}
+      {(loading && !refreshing) ? <div style={{ textAlign: 'center', padding: 60 }}><div className="spinner-border text-primary" role="status" aria-label="Loading monitoring" /><div style={{ fontSize: 12, color: '#64748b', marginTop: 8 }}>Loading team status…</div></div> : (
+        <div className="row g-3" style={{ position: 'relative', opacity: refreshing ? 0.7 : 1, pointerEvents: refreshing ? 'none' : 'auto' }}>
+          {refreshing && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 24, zIndex: 5 }}>
+              <span className="spinner-border text-primary" role="status" aria-label="Refreshing monitoring" />
+            </div>
+          )}
           <div className="col-lg-8">
             <div className="card p-3">
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <div className="section-title" style={{ margin: 0 }}>Team Status</div>
+                <div className="section-title" style={{ margin: 0 }}>Team Status{refreshing && <span className="spinner-border spinner-border-sm text-primary ms-2" role="status" aria-label="Refreshing" />}</div>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                   <div style={{ position: 'relative', minWidth: 200, flex: '1 1 200px' }}>
                     <i className="bi bi-search" style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#94a3b8', fontSize: 12 }} />
-                    <input className="form-control" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search employees" style={{ paddingLeft: 30, fontSize: 12 }} aria-label="Search employees" />
+                    <input className="form-control" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search employees" style={{ paddingLeft: 30, fontSize: 12 }} aria-label="Search employees" disabled={refreshing} />
                   </div>
-                  <select className="form-select" style={{ width: 160, fontSize: 12 }} value={filterDept} onChange={e => setFilterDept(e.target.value)}>
+                  <select className="form-select" style={{ width: 160, fontSize: 12 }} value={filterDept} onChange={e => setFilterDept(e.target.value)} disabled={refreshing}>
                     <option value="">All Departments</option>
                     {depts.map(d => <option key={d}>{d}</option>)}
                   </select>
-                  <button className="btn btn-outline-secondary btn-sm" onClick={() => fetchData(true)} disabled={refreshing} style={{ fontSize: 12 }}>
-                    <i className={`bi ${refreshing ? 'bi-arrow-repeat' : 'bi-arrow-clockwise'}`} /> Refresh
+                  <button className="btn btn-outline-secondary btn-sm" onClick={() => fetchData(true)} disabled={refreshing || loading} style={{ fontSize: 12 }}>
+                    {refreshing ? <span className="spinner-border spinner-border-sm me-1" role="status" aria-label="Refreshing" /> : <i className="bi bi-arrow-clockwise" />} Refresh
                   </button>
                 </div>
               </div>
@@ -330,6 +376,16 @@ export default function MonitoringPage() {
                                 <i className="bi bi-clock-history me-1" />Auto Logged Out
                               </span>
                             )}
+                            {emp.permissionStatus === 'approved' && (
+                              <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>
+                                <i className="bi bi-patch-check me-1" />Permission · Approved
+                              </span>
+                            )}
+                            {emp.permissionStatus === 'pending' && (
+                              <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>
+                                <i className="bi bi-hourglass-split me-1" />Permission · Pending
+                              </span>
+                            )}
                             {emp.onBreak && activeBreakStyle && (
                               <span className="badge" style={{ background: activeBreakStyle.bg, color: activeBreakStyle.color, fontSize: 10 }}>
                                 <i className={`bi ${activeBreakStyle.icon} me-1`} />{emp.breakLabels?.[emp.activeBreakType] || emp.activeBreakType || 'On Break'}
@@ -344,9 +400,9 @@ export default function MonitoringPage() {
                           ))}
                           <span><i className="bi bi-box-arrow-right me-1" />Logout: {formatTime(emp.clockOut)}</span>
                         </div>
-                        {emp.lateFlag && (
+                        {emp.lateFlag && emp.permissionStatus !== 'approved' && (
                           <div style={{ marginTop: 8, fontSize: 11, color: '#d97706', display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <i className="bi bi-exclamation-triangle" />Late login flagged
+                            <i className="bi bi-exclamation-triangle" />Late login flagged{emp.permissionStatus === 'pending' ? ' · Permission pending' : ''}
                           </div>
                         )}
                         {isSuperAdmin && (

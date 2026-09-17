@@ -229,13 +229,21 @@ export default function DashboardPage() {
           </div>
           {stats?.monitoring ? <>
             <div style={{ fontSize: 12, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.45, marginBottom: 7 }}>Today&apos;s exceptions</div>
-            {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => (
+            {stats.monitoring.alerts.length === 0 ? <div style={{ padding: '13px 0', color: '#10b981', fontSize: 13, fontWeight: 600 }}><i className="bi bi-check-circle-fill" style={{ marginRight: 7 }} />No late or absent employees today.</div> : stats.monitoring.alerts.map((alert, i) => {
+              const isPermApproved = alert.permission === 'approved' || alert.status === 'Present + Permission';
+              const isPermPending = alert.permission === 'pending' || String(alert.status || '').includes('Permission pending');
+              const isLate = String(alert.status || '').startsWith('Late');
+              const bg = isPermApproved ? '#eff6ff' : isLate ? '#fef3c7' : '#fee2e2';
+              const fg = isPermApproved ? '#1d4ed8' : isLate ? '#b45309' : '#b91c1c';
+              const icon = isPermApproved ? 'bi-patch-check' : isLate ? 'bi-clock-history' : 'bi-person-x';
+              return (
               <div key={`${alert.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderTop: '1px solid #f1f5f9' }}>
-                <div style={{ width: 28, height: 28, borderRadius: 8, background: alert.status === 'Late' ? '#fef3c7' : '#fee2e2', color: alert.status === 'Late' ? '#b45309' : '#b91c1c', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${alert.status === 'Late' ? 'bi-clock-history' : 'bi-person-x'}`} /></div>
-                <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}</div></div>
-                <span style={{ color: alert.status === 'Late' ? '#b45309' : '#b91c1c', fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: bg, color: fg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={`bi ${icon}`} /></div>
+                <div style={{ minWidth: 0, flex: 1 }}><div style={{ color: '#334155', fontSize: 13, fontWeight: 650 }}>{alert.name}</div><div style={{ color: '#94a3b8', fontSize: 11.5 }}>{alert.department || 'No department'}{isPermPending ? ' · Permission pending' : isPermApproved ? ' · Permission approved' : ''}</div></div>
+                <span style={{ color: fg, fontSize: 11.5, fontWeight: 700 }}>{alert.status}</span>
               </div>
-            ))}
+              );
+            })}
           </> : <div className="empty-state"><i className="bi bi-shield-lock" /><p>Monitoring information is available to authorised managers.</p></div>}
         </>
       ) : (

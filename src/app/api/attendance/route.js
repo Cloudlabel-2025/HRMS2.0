@@ -200,9 +200,81 @@ export async function GET(req) {
         rec.lateFlag = result.lateFlag;
       }
       // Permission day: highlight real hours but never mark shortHours.
+      // Per product decision: ANY approved permission forces Present (even mid-day).
       if (rec.permission?.requestId || rec.permission?.startTime) {
+        rec.status = 'present';
+        rec.lateFlag = false;
         rec.shortHours = false;
+        rec._permissionStatus = 'approved';
       }
+    }
+
+    // Join pending permission requests so superadmin can see Late + Pending.
+    // Pending lives in self_service_requests, not on the Attendance doc.
+    try {
+      const { SelfServiceRequest } = await import('@/lib/models/index');
+      const dates = [...new Set(raw.map(r => r.date).filter(Boolean))];
+      if (dates.length > 0) {
+        const pendings = await SelfServiceRequest.find({
+          requestType: 'permission',
+          status: 'pending',
+          'payload.date': { $in: dates },
+        }).select('identityId profileId payload reason createdAt').lean();
+        if (pendings.length > 0) {
+          const identityIds = [...new Set(pendings.map(p => String(p.identityId)).filter(Boolean))];
+          const profileIds = [...new Set(pendings.map(p => String(p.profileId)).filter(Boolean))];
+          const orConds = [];
+          if (identityIds.length) orConds.push({ identityId: { $in: identityIds } });
+          if (profileIds.length) orConds.push({ profileId: { $in: profileIds } });
+          let userMap = new Map();
+          if (orConds.length) {
+            const pUsers = await User.find({ $or: orConds }).select('_id identityId profileId').lean();
+            for (const u of pUsers) {
+              if (u.identityId) userMap.set('id:' + String(u.identityId), String(u._id));
+              if (u.profileId) userMap.set('pf:' + String(u.profileId), String(u._id));
+            }
+          }
+          const pendingByUserDate = new Map();
+          for (const p of pendings) {
+            const uid = userMap.get('id:' + String(p.identityId)) || userMap.get('pf:' + String(p.profileId)) || null;
+            if (!uid) continue;
+            const d = p.payload?.date;
+            if (!d) continue;
+            const key = uid + '|' + d;
+            if (!pendingByUserDate.has(key)) {
+              pendingByUserDate.set(key, {
+                date: d,
+                startTime: p.payload?.startTime || '',
+                endTime: p.payload?.endTime || '',
+                duration: Number(p.payload?.duration || 0) || 0,
+                status: 'pending',
+                requestId: String(p._id),
+                reason: p.reason || '',
+              });
+            }
+          }
+          for (const rec of raw) {
+            const uid = rec.userId?._id?.toString() || String(rec.userId || '');
+            const key = uid + '|' + rec.date;
+            const hasApproved = !!(rec.permission?.requestId || rec.permission?.startTime);
+            if (hasApproved) {
+              rec._permissionStatus = 'approved';
+            } else if (pendingByUserDate.has(key)) {
+              rec.pendingPermission = pendingByUserDate.get(key);
+              rec._permissionStatus = 'pending';
+            } else {
+              rec._permissionStatus = rec._permissionStatus || null;
+            }
+          }
+        } else {
+          for (const rec of raw) {
+            const hasApproved = !!(rec.permission?.requestId || rec.permission?.startTime);
+            rec._permissionStatus = hasApproved ? 'approved' : (rec._permissionStatus || null);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Pending permission join failed:', e?.message || e);
     }
 
     // Persist corrected status/lateFlag/shortHours for all recalculated records
