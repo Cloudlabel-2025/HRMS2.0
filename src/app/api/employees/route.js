@@ -45,7 +45,42 @@ export async function GET(req) {
       { designation: { $regex: search, $options: 'i' } },
     ];
 
-    const employees = await Employee.find(query).sort({ department: 1, createdAt: -1 });
+    let employees = await Employee.find(query).sort({ department: 1, createdAt: -1 });
+
+    // Fallback: when Employee collection is empty (prod legacy / User-only data),
+    // synthesize read-only rows from User for full-access roles so Monitoring never shows empty.
+    // No DB write — __fallback flag marks synthetic rows.
+    let isFallback = false;
+    if (employees.length === 0 && ['super_admin', 'admin_full'].includes(user.role) && !role) {
+      const userQuery = { status: status || 'active', role: { $ne: 'super_admin' } };
+      if (query.department) userQuery.department = query.department;
+      if (search) {
+        userQuery.$or = [
+          { name: { $regex: search, $options: 'i' } },
+          { email: { $regex: search, $options: 'i' } },
+          { department: { $regex: search, $options: 'i' } },
+          { designation: { $regex: search, $options: 'i' } },
+        ];
+      }
+      const users = await User.find(userQuery).select('name email department designation role shift shiftId').lean();
+      employees = users.map(u => ({
+        _id: u._id,
+        userId: u._id,
+        name: u.name,
+        email: u.email,
+        department: u.department,
+        designation: u.designation,
+        role: u.role,
+        status: 'active',
+        shift: u.shift,
+        shiftId: u.shiftId,
+        employeeNumber: '',
+        employmentStatus: '',
+        __fallback: true,
+        toObject() { const { toObject: _t, ...rest } = this; return { ...rest }; },
+      }));
+      isFallback = true;
+    }
 
     // Enrich with Core HR data (employeeNumber + employmentStatus)
     const userIds = employees.map(e => e.userId?.toString()).filter(Boolean);
@@ -60,12 +95,13 @@ export async function GET(req) {
     }
 
     const enriched = employees.map(emp => {
-      const obj = emp.toObject();
+      const obj = typeof emp.toObject === 'function' ? emp.toObject() : { ...emp };
       const coreProfile = userProfileMap[emp.userId?.toString()];
       if (coreProfile) {
         obj.employeeNumber    = coreProfile.employeeNumber || '';
         obj.employmentStatus  = coreProfile.employmentStatus || '';
       }
+      if (isFallback) obj.__fallback = true;
       return obj;
     });
 
