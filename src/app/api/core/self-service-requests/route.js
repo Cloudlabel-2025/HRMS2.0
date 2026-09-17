@@ -221,6 +221,49 @@ export async function GET(req) {
       .populate('reviewerUserId', 'name')
       .sort({ createdAt: -1 })
       .limit(100);
+
+    // Annotate pending permission requests with approval feasibility so the
+    // HR UI can hide/disable requests that would fail the allowance re-check.
+    if (status === 'pending') {
+      try {
+        const { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } = await import('@/lib/payroll-cycle');
+        const { getPermissionAllowanceMins, getPermissionUsageForCycle } = await import('@/lib/permission-allowance');
+        const cfg = await getGlobalConfig();
+        const allowance = getPermissionAllowanceMins(cfg);
+        const startDay = getPayrollDay(cfg.payrollStartDay, 26);
+        const endDay = getPayrollDay(cfg.payrollEndDay, 25);
+        for (const r of requests) {
+          if (r.requestType !== 'permission' || r.status !== 'pending') continue;
+          const obj = r.toObject ? r.toObject() : r;
+          try {
+            const permDate = r.payload?.date;
+            if (!permDate || !/^\d{4}-\d{2}-\d{2}$/.test(String(permDate))) {
+              obj._canApprove = true;
+              obj._exceedReason = '';
+            } else {
+              const { year, month } = getCycleMonth(String(permDate), startDay);
+              const { fromDate, toDate } = getCycleRange(startDay, endDay, year, month);
+              const usage = await getPermissionUsageForCycle(r.profileId?._id || r.profileId, fromDate, toDate);
+              const remaining = Math.max(0, allowance - usage.totalUsed);
+              obj._canApprove = usage.totalUsed <= allowance;
+              obj._remaining = remaining;
+              obj._allowance = allowance;
+              obj._cycleRange = { fromDate, toDate };
+              obj._exceedReason = obj._canApprove
+                ? ''
+                : `Permission allowance exceeded for cycle ${fromDate} to ${toDate}. ${remaining} mins remaining of ${allowance} mins.`;
+            }
+          } catch {
+            obj._canApprove = true;
+            obj._exceedReason = '';
+          }
+          const idx = requests.indexOf(r);
+          if (idx >= 0) requests[idx] = obj;
+        }
+      } catch (e) {
+        console.error('canApprove annotation failed:', e?.message || e);
+      }
+    }
     return ok({ requests });
   } catch (e) {
     return fail(e.message, e.statusCode || 500);

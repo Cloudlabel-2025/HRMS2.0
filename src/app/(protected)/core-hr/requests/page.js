@@ -23,6 +23,26 @@ const STATUS_STYLE = {
   cancelled: { bg: '#f1f5f9', color: '#64748b' },
 };
 
+function ordinal(n) {
+  const num = Number(n) || 0;
+  const v = num % 100;
+  if (v >= 11 && v <= 13) return `${num}th`;
+  switch (num % 10) {
+    case 1: return `${num}st`;
+    case 2: return `${num}nd`;
+    case 3: return `${num}rd`;
+    default: return `${num}th`;
+  }
+}
+
+function cleanCycleRange(payload) {
+  const f = payload?.cycleRange?.fromDate;
+  const t = payload?.cycleRange?.toDate;
+  const ok = (d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && d.length === 10;
+  if (ok(f) && ok(t)) return { fromDate: f, toDate: t };
+  return null;
+}
+
 function PayloadView({ requestType, payload, formatTime }) {
   if (!payload) return <p className="text-muted small">No payload data.</p>;
 
@@ -114,11 +134,14 @@ function PayloadView({ requestType, payload, formatTime }) {
             </div>
           ))}
         </div>
-        {payload.isThirdOrMore && (
-          <div className="alert alert-warning py-2 px-3 mt-3 mb-0" style={{ fontSize: 13, borderLeft: '4px solid #f59e0b', color: '#854d0e', backgroundColor: '#fef9c3', borderColor: '#fef08a' }}>
-            <strong>⚠️ Warning:</strong> This is the employee's <strong>{payload.permissionCountInCycle}th</strong> permission request in this payroll cycle ({payload.cycleRange?.fromDate} to {payload.cycleRange?.toDate}). Monthly allowance is 120 mins with no carry-forward; approval checks remaining balance.
-          </div>
-        )}
+        {payload.isThirdOrMore && (() => {
+          const range = cleanCycleRange(payload);
+          return (
+            <div className="alert alert-warning py-2 px-3 mt-3 mb-0" style={{ fontSize: 13, borderLeft: '4px solid #f59e0b', color: '#854d0e', backgroundColor: '#fef9c3', borderColor: '#fef08a' }}>
+              <strong>⚠️ Warning:</strong> This is the employee&apos;s <strong>{ordinal(payload.permissionCountInCycle)}</strong> permission request{range ? <> in this payroll cycle ({range.fromDate} to {range.toDate})</> : <> in this payroll cycle</>}. Monthly allowance is 120 mins with no carry-forward; approval checks remaining balance.
+            </div>
+          );
+        })()}
       </div>
     );
   }
@@ -139,7 +162,15 @@ export default function CoreHrRequestsPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
   const [page, setPage] = useState(1);
+  const [showUnapprovable, setShowUnapprovable] = useState(false);
   const pageSize = 10;
+
+  const hiddenCount = filterStatus === 'pending'
+    ? requests.filter(r => r.requestType === 'permission' && r._canApprove === false).length
+    : 0;
+  const visibleRequests = filterStatus === 'pending' && !showUnapprovable
+    ? requests.filter(r => !(r.requestType === 'permission' && r._canApprove === false))
+    : requests;
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -206,7 +237,7 @@ export default function CoreHrRequestsPage() {
       </div>
 
       {/* Status filter tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
+      <div style={{ display: 'flex', gap: 4, marginBottom: 12, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'fit-content' }}>
         {['pending', 'approved', 'rejected'].map(s => (
           <button key={s} onClick={() => handleFilter(s)}
             style={{ padding: '7px 18px', borderRadius: 8, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', textTransform: 'capitalize',
@@ -217,6 +248,15 @@ export default function CoreHrRequestsPage() {
           </button>
         ))}
       </div>
+      {filterStatus === 'pending' && hiddenCount > 0 && (
+        <div className="alert alert-warning py-2 px-3 mb-3 d-flex align-items-center justify-content-between flex-wrap gap-2" style={{ fontSize: 12 }}>
+          <span>{hiddenCount} pending permission request{hiddenCount > 1 ? 's' : ''} hidden — allowance exceeded and cannot be approved.</span>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, cursor: 'pointer', margin: 0 }}>
+            <input type="checkbox" checked={showUnapprovable} onChange={e => { setShowUnapprovable(e.target.checked); setPage(1); }} />
+            Show unapprovable
+          </label>
+        </div>
+      )}
 
       <div className="row g-3">
         {/* Request list */}
@@ -224,7 +264,7 @@ export default function CoreHrRequestsPage() {
           <div className="card">
             {loading ? (
               <div className="text-center py-5"><div className="spinner-border text-primary" /></div>
-            ) : requests.length === 0 ? (
+            ) : visibleRequests.length === 0 ? (
               <div className="empty-state py-5">
                 <i className="bi bi-inbox" />
                 <h6>No {filterStatus} requests</h6>
@@ -232,7 +272,7 @@ export default function CoreHrRequestsPage() {
             ) : (
               <>
                 <div className="list-group list-group-flush">
-                  {requests.slice((page - 1) * pageSize, page * pageSize).map(req => (
+                  {visibleRequests.slice((page - 1) * pageSize, page * pageSize).map(req => (
                   <button key={req._id} type="button"
                     onClick={() => { setSelected(req); setReviewNote(''); setReviewNoticeDays(req.payload?.noticePeriodDays || 0); setReviewLastWorkingDate(String(req.payload?.lastWorkingDate || '').slice(0, 10)); }}
                     className="list-group-item list-group-item-action"
@@ -253,6 +293,11 @@ export default function CoreHrRequestsPage() {
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {req.reason}
                     </div>
+                    {req.requestType === 'permission' && req._canApprove === false && (
+                      <div style={{ marginTop: 6 }}>
+                        <span className="badge" style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 10.5 }}>Allowance exceeded — cannot approve</span>
+                      </div>
+                    )}
                     {req.status !== 'pending' && (
                       <div style={{ fontSize: 11, color: '#64748b', marginTop: 4, fontStyle: 'italic' }}>
                         {req.status === 'approved' ? 'Approved' : 'Rejected'} by {req.reviewerUserId?.name || 'HR'}
@@ -261,13 +306,13 @@ export default function CoreHrRequestsPage() {
                   </button>
                 ))}
               </div>
-              {requests.length > 0 && (
+              {visibleRequests.length > 0 && (
                 <div className="p-3 border-top">
                   <Pagination
                     currentPage={page}
-                    totalPages={Math.ceil(requests.length / pageSize)}
+                    totalPages={Math.ceil(visibleRequests.length / pageSize)}
                     onPageChange={setPage}
-                    totalItems={requests.length}
+                    totalItems={visibleRequests.length}
                     pageSize={pageSize}
                   />
                 </div>
@@ -308,8 +353,13 @@ export default function CoreHrRequestsPage() {
 
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 4 }}>REASON</div>
-                <p style={{ fontSize: 13, margin: 0 }}>{selected.reason}</p>
+                <p style={{ fontSize: 13, margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 120, overflowY: 'auto' }}>{selected.reason}</p>
               </div>
+              {selected.requestType === 'permission' && selected._canApprove === false && (
+                <div className="alert alert-danger py-2 px-3 mb-3" style={{ fontSize: 12 }}>
+                  Cannot approve — {selected._exceedReason || 'permission allowance exceeded for this cycle.'} You can still reject this request.
+                </div>
+              )}
 
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>REQUESTED CHANGES</div>
@@ -358,7 +408,7 @@ export default function CoreHrRequestsPage() {
                     />
                   </div>
                   <div className="d-flex gap-2">
-                    <button className="btn btn-success" onClick={() => review('approved')} disabled={saving || (selected.requestType === 'resignation' && !reviewLastWorkingDate)}>
+                    <button className="btn btn-success" onClick={() => review('approved')} disabled={saving || (selected.requestType === 'resignation' && !reviewLastWorkingDate) || (selected.requestType === 'permission' && selected._canApprove === false)} title={selected.requestType === 'permission' && selected._canApprove === false ? (selected._exceedReason || 'Allowance exceeded') : undefined}>
                       <i className="bi bi-check-circle me-2" />{saving ? 'Processing...' : 'Approve'}
                     </button>
                     <button className="btn btn-outline-danger" onClick={() => review('rejected')} disabled={saving}>
