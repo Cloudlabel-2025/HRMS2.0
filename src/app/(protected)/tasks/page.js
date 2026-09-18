@@ -313,11 +313,65 @@ export default function TasksPage() {
     finally { setSaving(false); }
   };
 
-  const downloadTaskActivity = () => {
+  const downloadEditTaskSheet = async (format = 'excel') => {
     if (!editTask) return;
-    const rows = [['Date', 'Project', 'Task', 'Comment'], ...(editTask.activityLog || []).map(item => [item.date, editTask.projectId?.name || '', editTask.title, item.comment])];
-    const csv = rows.map(row => row.map(value => `"${String(value || '').replace(/"/g, '""')}"`).join(',')).join('\n');
-    const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${editTask.title.replace(/[^a-z0-9]/gi, '-')}-activity.csv`; link.click(); URL.revokeObjectURL(link.href);
+    const projectName = projects.find(p => String(p._id) === String(form.projectId))?.name || editTask.projectId?.name || '';
+    const assignee = assignableByRank.find(e => String(e.userId || e._id) === String(form.assignedTo)) || { name: '' };
+    const assigneeName = assignee.name || editTask.assignedTo?.name || '';
+    const headers = ['S.No', 'Date', 'Task', 'Project', 'Assignee', 'Priority', 'Status', 'Due Date', 'Comment'];
+    const source = (editTask.activityLog?.length ? editTask.activityLog : [{ date: form.due || editTask.due || '', comment: '' }]);
+    const rows = source.map((item, i) => [i + 1, item.date || form.due || '', form.title || editTask.title || '', projectName, assigneeName, form.priority || editTask.priority || '', form.status || editTask.status || '', form.due || editTask.due || '', item.comment || '']);
+    const filename = `${(form.title || editTask.title || 'task').replace(/[^a-z0-9]/gi, '-')}-task`;
+    if (format === 'csv') {
+      const csv = [headers, ...rows].map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+      const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); link.download = `${filename}.csv`; link.click(); URL.revokeObjectURL(link.href); return;
+    }
+    if (format === 'excel') {
+      const { default: ExcelJS } = await import('exceljs');
+      const workbook = new ExcelJS.Workbook(); workbook.creator = 'HRMS'; workbook.created = new Date();
+      const sheet = workbook.addWorksheet('Task Details');
+      const thin = { style: 'thin', color: { argb: 'FFE2E8F0' } };
+      const center = { vertical: 'middle', horizontal: 'center', wrapText: true };
+      sheet.mergeCells(1, 1, 1, headers.length);
+      const t = sheet.getCell('A1'); t.value = `Task — ${form.title || editTask.title || ''}`;
+      t.font = { bold: true, size: 14, color: { argb: 'FFFFFFFF' } };
+      t.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      t.alignment = center; sheet.getRow(1).height = 28;
+      sheet.mergeCells(2, 1, 2, headers.length);
+      const s = sheet.getCell('A2');
+      s.value = `Project: ${projectName || '—'} | Assignee: ${assigneeName || '—'} | Priority: ${form.priority || editTask.priority || '—'} | Status: ${form.status || editTask.status || '—'} | Due: ${form.due || editTask.due || '—'} | Description: ${form.description || editTask.description || '—'}`;
+      s.font = { size: 10, color: { argb: 'FF475569' } };
+      s.alignment = { wrapText: true, vertical: 'middle' }; sheet.getRow(2).height = 32; sheet.getRow(3).height = 8;
+      const hr = sheet.addRow(headers);
+      hr.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+      hr.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
+      hr.alignment = center; hr.height = 22;
+      hr.eachCell(c => { c.border = { top: thin, left: thin, bottom: thin, right: thin }; });
+      rows.forEach(r => {
+        const row = sheet.addRow(r); row.height = 30;
+        row.alignment = { wrapText: true, vertical: 'top' };
+        row.eachCell(c => { c.border = { top: thin, left: thin, bottom: thin, right: thin }; });
+        if (row.number % 2 === 0) row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      });
+      sheet.columns.forEach((col, i) => {
+        const max = Math.max(headers[i].length, ...rows.map(r => String(r[i] ?? '').length));
+        col.width = Math.min(38, Math.max(12, max + 4));
+      });
+      sheet.columns[8].width = 38;
+      sheet.views = [{ showGridLines: false, state: 'frozen', ySplit: 4 }];
+      sheet.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4, column: headers.length } };
+      sheet.pageSetup = { orientation: 'landscape', fitToPage: true, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.3, footer: 0.3 } };
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([await workbook.xlsx.writeBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      link.download = `${filename}.xlsx`; link.click(); URL.revokeObjectURL(link.href); return;
+    }
+    if (format === 'pdf') {
+      const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+      const doc = new jsPDF({ orientation: 'landscape' });
+      doc.setFontSize(14); doc.text(`${form.title || editTask.title || 'Task'} — Task Details`, 14, 16);
+      autoTable(doc, { head: [headers], body: rows, startY: 22, headStyles: { fillColor: [59, 130, 246], textColor: 255, fontSize: 9 }, bodyStyles: { fontSize: 8, cellPadding: 3 }, columnStyles: { 8: { cellWidth: 60 } } });
+      doc.save(`${filename}.pdf`); return;
+    }
   };
 
   const downloadProjectProgress = async (project, projectTasks, format) => {
@@ -811,7 +865,7 @@ export default function TasksPage() {
           <div className="modal-dialog modal-dialog-centered modal-lg" style={{ maxWidth: 940 }}>
             <div className="modal-content">
               <div className="modal-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h5 className="modal-title">{editTask ? 'Edit Task' : 'New Task'}</h5>{editTask && <button className="btn btn-sm btn-outline-secondary" title="Download task comments" onClick={downloadTaskActivity}><i className="bi bi-download" /></button>}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><h5 className="modal-title">{editTask ? 'Edit Task' : 'New Task'}</h5>{editTask && <div className="dropdown" style={{ display: 'inline' }}><button className="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" title="Download task sheet"><i className="bi bi-download" /></button><ul className="dropdown-menu" style={{ minWidth: 150 }}><li><button className="dropdown-item" style={{ fontSize: 12 }} onClick={() => downloadEditTaskSheet('excel')}><i className="bi bi-file-earmark-spreadsheet me-2" />Excel (.xlsx)</button></li><li><button className="dropdown-item" style={{ fontSize: 12 }} onClick={() => downloadEditTaskSheet('csv')}><i className="bi bi-filetype-csv me-2" />CSV</button></li><li><button className="dropdown-item" style={{ fontSize: 12 }} onClick={() => downloadEditTaskSheet('pdf')}><i className="bi bi-file-earmark-pdf me-2" />PDF</button></li></ul></div>}</div>
                 <button className="btn-close" onClick={() => { setShowModal(false); setTaskDocName(''); setTaskDocUrl(''); }} />
               </div>
               <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto', background: '#f8fafc' }}>
@@ -860,7 +914,7 @@ export default function TasksPage() {
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
                     <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} disabled={!canEditForm} />
                   </div>
-                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><div style={{ display: 'flex', gap: 8 }}><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /><button type="button" className="btn btn-outline-primary" onClick={addTaskActivity} disabled={saving} title="Add dated comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} /></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div></>}
+                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} style={{ flex: 1 }} /><button type="button" className="btn btn-sm btn-outline-primary" style={{ padding: '0 8px', height: 28, minWidth: 28, fontSize: 14, lineHeight: 1 }} onClick={addTaskActivity} disabled={saving || !activityComment.trim()} title="Add comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div></>}
                   {editTask && <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: "#2563eb", textTransform: "uppercase", letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: "1px solid #dbeafe" }}><i className="bi bi-paperclip me-2" />Documents</div><div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="Document name" value={taskDocName} onChange={e => setTaskDocName(e.target.value)} /><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="https://..." value={taskDocUrl} onChange={e => setTaskDocUrl(e.target.value)} /><button type="button" className="btn btn-sm btn-outline-primary" onClick={handleAddTaskDoc} disabled={saving} style={{ whiteSpace: "nowrap" }}><i className="bi bi-plus-lg me-1" />Add</button></div><div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, padding: 8, maxHeight: 120, overflowY: "auto" }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: "5px 3px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a><button type="button" className="btn btn-sm" style={{ padding: "0 4px", fontSize: 10, color: "#dc2626", background: "none", border: "none" }} onClick={() => handleDeleteDoc(doc._id)} title="Delete"><i className="bi bi-x-lg" /></button></div>) : <span style={{ color: "#64748b", fontSize: 12 }}>No documents yet.</span>}</div></div>}
                 </div>
               </div>
