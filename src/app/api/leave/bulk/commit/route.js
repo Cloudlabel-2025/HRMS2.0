@@ -9,6 +9,8 @@ import Attendance from '@/lib/models/Attendance';
 import { getGlobalConfig, countWorkingDaysInRange, isWorkingDay } from '@/lib/payroll-cycle';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
+import EmpProfile from '@/lib/models/EmploymentProfile';
+import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 
 /** Fire-and-forget bell — summaries only, never blocks the import result. */
 async function notifyBulkSafe(...args) {
@@ -184,6 +186,10 @@ export async function POST(req) {
         const halfDay = !!d.halfDay;
         let days;
         if (halfDay) {
+          if (from !== to) throw new Error('Half-day leave must be a single day (from = to)');
+          if (!typeConfig.allowHalfDay) throw new Error(`${typeConfig.name} does not support half-day leaves`);
+          if (d.halfDayType === 'first_half' && typeConfig.allowFirstHalf === false) throw new Error('First Half is not enabled for this leave type');
+          if (d.halfDayType === 'second_half' && typeConfig.allowSecondHalf === false) throw new Error('Second Half is not enabled for this leave type');
           days = 0.5;
         } else {
           const holidays = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
@@ -198,10 +204,83 @@ export async function POST(req) {
           if (!(days > 0)) throw new Error('Dates contain only holidays/weekends');
         }
 
+        // ── Dynamic policy gates (mirror single POST, never skippable on commit) ──
+        // Eligibility (gender + dynamic rules) — commit never honors skipEligibility
+        {
+          const { buildEmployeeContext, evaluateEligibility } = await import('@/lib/leave/eligibility');
+          const ctx = await buildEmployeeContext(fullUser._id);
+          if (typeConfig.genderRestriction && typeConfig.genderRestriction !== 'all') {
+            const g = String(ctx.gender || '').toLowerCase();
+            if (['male', 'paternity'].includes(typeConfig.genderRestriction) && g !== 'male') throw new Error('This leave type is only applicable to male employees.');
+            if (['female', 'maternity'].includes(typeConfig.genderRestriction) && g !== 'female') throw new Error('This leave type is only applicable to female employees.');
+          }
+          const elig = evaluateEligibility(typeConfig.eligibilityRules, ctx);
+          if (!elig.eligible) throw new Error(`Eligibility check failed: ${elig.failedRule || 'Not eligible'}`);
+        }
+        // Probation gate
+        if (policy.requireProbationCompletion) {
+          const prof = await EmpProfile.findById(resolved.user.profileId || fullUser.profileId || null).select('employmentStatus').lean().catch(() => null);
+          if (prof && ['onboarding', 'probation'].includes(prof.employmentStatus)) throw new Error('Must complete probation before applying under this policy');
+        }
+        // Advance notice
+        if ((typeConfig.noticePeriodDays || 0) > 0) {
+          const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+          const diffDays = Math.ceil((new Date(`${from}T00:00:00`) - today0) / 86400000);
+          if (diffDays < typeConfig.noticePeriodDays) throw new Error(`Requires ${typeConfig.noticePeriodDays} days advance notice (applied with ${diffDays} day(s))`);
+        }
+        // Supporting documents (bulk rows carry no documents — enforce parity as error)
+        {
+          const needsDocs = !!typeConfig.requiresDocuments || ((typeConfig.requireDocsIfConsecutiveDays || 0) > 0 && days >= typeConfig.requireDocsIfConsecutiveDays);
+          if (needsDocs) throw new Error(`Supporting documents required for ${typeConfig.name} — apply via single leave with documents`);
+        }
+        // Max consecutive
+        if ((typeConfig.maxConsecutiveDays || 0) > 0 && days > typeConfig.maxConsecutiveDays) throw new Error(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${typeConfig.name}`);
+        // Max pending
+        if ((policy.maxPendingApplications || 0) > 0) {
+          const pendingCount = await Leave.countDocuments({ userId: fullUser._id, status: 'pending' });
+          if (pendingCount >= policy.maxPendingApplications) throw new Error(`Already has ${pendingCount} pending application(s). Max ${policy.maxPendingApplications} allowed.`);
+        }
+        // Min gap
+        if ((typeConfig.minGapDays || 0) > 0) {
+          const recent = await Leave.findOne({ userId: fullUser._id, typeCode: d.typeCode, status: 'approved', to: { $lt: from } }).sort({ to: -1 }).select('to').lean();
+          if (recent) {
+            const gap = Math.ceil((new Date(`${from}T00:00:00`) - new Date(`${recent.to}T00:00:00`)) / 86400000) - 1;
+            if (gap < typeConfig.minGapDays) throw new Error(`Minimum ${typeConfig.minGapDays} day(s) gap required between ${typeConfig.name} applications`);
+          }
+        }
+        // Permission-vs-leave mutual exclusion
+        {
+          const { SelfServiceRequest } = await import('@/lib/models/index');
+          const permConflict = await SelfServiceRequest.findOne({
+            profileId: resolved.user.profileId || undefined,
+            requestType: 'permission',
+            status: { $in: ['pending', 'approved'] },
+            'payload.date': { $gte: from, $lte: to },
+          }).lean();
+          if (permConflict) throw new Error(`Overlaps ${permConflict.status} permission request on ${permConflict.payload?.date}`);
+        }
+
         let paidDays = d.paidDays !== null && d.paidDays !== undefined && d.paidDays !== '' ? Number(d.paidDays) : null;
         let unpaidDays = d.unpaidDays !== null && d.unpaidDays !== undefined && d.unpaidDays !== '' ? Number(d.unpaidDays) : null;
-        if (paidDays === null || unpaidDays === null) {
-          if (typeConfig.isPaid) { paidDays = days; unpaidDays = 0; }
+        if (paidDays !== null && unpaidDays !== null) {
+          if (Number.isNaN(paidDays) || Number.isNaN(unpaidDays) || paidDays < 0 || unpaidDays < 0) throw new Error('paidDays/unpaidDays must be numbers >= 0');
+          if (Number((paidDays + unpaidDays).toFixed(2)) !== Number(Number(days).toFixed(2))) throw new Error(`paidDays+unpaidDays (${paidDays + unpaidDays}) must equal days (${days})`);
+        } else if (paidDays === null || unpaidDays === null) {
+          if (typeConfig.isPaid) {
+            // Dynamic split via period + overall caps (mirror single POST)
+            const cycleYear = new Date(`${from}T00:00:00`).getFullYear();
+            const bal = await UserLeaveBalance.findOne({ userId: fullUser._id, cycleStart: new Date(cycleYear, 0, 1) }).lean();
+            if (bal) {
+              const entry = (bal.balances || []).find(b => b.typeCode === d.typeCode);
+              if (entry) {
+                const allowed = calculatePeriodAllowance(typeConfig, entry, bal.cycleStart, new Date(`${from}T00:00:00`));
+                const overall = Math.max(0, (entry.allocated || 0) + (entry.carriedForward || 0) - (entry.used || 0) - (entry.pending || 0));
+                const allowedPaid = Math.min(overall, allowed);
+                paidDays = Math.min(days, allowedPaid);
+                unpaidDays = Number((days - paidDays).toFixed(2));
+              } else { paidDays = days; unpaidDays = 0; }
+            } else { paidDays = days; unpaidDays = 0; }
+          }
           else { paidDays = 0; unpaidDays = days; }
         }
 
@@ -248,8 +327,8 @@ export async function POST(req) {
               if (status === 'approved') {
                 entry.used = Number(entry.used || 0) + Number(paidDays);
                 if (typeConfig.maxUsagePerPeriod > 0) {
-                  const { recordPeriodUsage } = await import('@/lib/leave/accrual');
-                  recordPeriodUsage(entry, typeConfig.usagePeriod, balance.cycleStart, new Date(`${from}T00:00:00`), paidDays);
+                  const { recordPeriodUsageSplit } = await import('@/lib/leave/accrual');
+                  recordPeriodUsageSplit(entry, typeConfig.usagePeriod, balance.cycleStart, from, to, paidDays, { halfDay });
                 }
               } else {
                 entry.pending = Number(entry.pending || 0) + Number(paidDays);

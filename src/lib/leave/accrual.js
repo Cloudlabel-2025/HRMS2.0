@@ -135,7 +135,7 @@ export function calculatePeriodAllowance(typeConfig, balanceEntry, cycleStart, c
  */
 export function recordPeriodUsage(balanceEntry, usagePeriod, cycleStart, date, days) {
   const { code } = getRelativePeriod(usagePeriod, cycleStart, date);
-  
+
   if (!balanceEntry.periodUsage) {
     balanceEntry.periodUsage = [];
   }
@@ -148,5 +148,44 @@ export function recordPeriodUsage(balanceEntry, usagePeriod, cycleStart, date, d
     entry.period = code;
   }
 
-  entry.used += days;
+  entry.used = Number(((entry.used || 0) + Number(days || 0)).toFixed(2));
+}
+
+/**
+ * Split paidDays across each working day in [fromStr, toStr] so cross-month/
+ * cross-quarter leaves charge the correct period bucket (not just `from`).
+ * Returns list of {code, days} for audit. Half-day records 0.5 on `from`.
+ */
+export function recordPeriodUsageSplit(balanceEntry, usagePeriod, cycleStart, fromStr, toStr, paidDays, { halfDay = false } = {}) {
+  const total = Number(paidDays || 0);
+  if (!(total > 0)) return [];
+  if (halfDay) {
+    recordPeriodUsage(balanceEntry, usagePeriod, cycleStart, new Date(`${fromStr}T00:00:00`), total);
+    const { code } = getRelativePeriod(usagePeriod, cycleStart, new Date(`${fromStr}T00:00:00`));
+    return [{ code, days: total }];
+  }
+  // Collect working-date strings in range (inclusive). Fallback to calendar days
+  // if isWorkingDay is unavailable (import cycle) — still splits by period.
+  const dates = [];
+  try {
+    const f = new Date(`${fromStr}T00:00:00`);
+    const t = new Date(`${toStr}T00:00:00`);
+    for (let cur = new Date(f); cur <= t; cur.setDate(cur.getDate() + 1)) {
+      const ds = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+      dates.push(ds);
+    }
+  } catch {
+    dates.push(fromStr);
+  }
+  const perDay = Number((total / Math.max(1, dates.length)).toFixed(2));
+  let assigned = 0;
+  const out = [];
+  dates.forEach((ds, i) => {
+    const amt = i === dates.length - 1 ? Number((total - assigned).toFixed(2)) : perDay;
+    assigned = Number((assigned + amt).toFixed(2));
+    recordPeriodUsage(balanceEntry, usagePeriod, cycleStart, new Date(`${ds}T00:00:00`), amt);
+    const { code } = getRelativePeriod(usagePeriod, cycleStart, new Date(`${ds}T00:00:00`));
+    out.push({ code, days: amt });
+  });
+  return out;
 }

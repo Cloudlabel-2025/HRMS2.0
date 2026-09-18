@@ -18,7 +18,7 @@ const LeaveSchema = new mongoose.Schema({
   policyId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeavePolicy', default: null },
 
   // Overall resolved status
-  status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+  status: { type: String, enum: ['pending', 'approved', 'rejected', 'cancelled'], default: 'pending' },
   // Guards balance movement against repeat approvals in legacy and policy workflows.
   balanceApplied: { type: Boolean, default: false },
 

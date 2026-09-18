@@ -372,6 +372,11 @@ export async function POST(req) {
     }
 
     if (halfDay) {
+      const { isWorkingDay } = await import('@/lib/payroll-cycle');
+      const halfHolidays = await Holiday.find({ date: fromStr }).lean().catch(() => []);
+      if (!isWorkingDay(fromStr, leaveConfig, halfHolidays)) {
+        return fail('Half-day leave cannot be applied on a holiday/weekend', 400);
+      }
       days = 0.5;
     }
 

@@ -133,8 +133,17 @@ export default function LeavePage() {
   }, [tab]);
 
   const handleApply = async () => {
-    if (!form.typeCode || !form.from || !form.to || !form.reason) { showToast('Please fill all fields', 'error'); return; }
-    if (form.halfDay && !form.halfDayType) { showToast('Please select First Half or Second Half for half-day leave', 'error'); return; }
+    const errs = {};
+    if (!form.typeCode) errs.typeCode = 'Leave type is required';
+    if (!form.from) errs.from = 'Start date is required';
+    if (!form.to) errs.to = 'End date is required';
+    if (!form.reason || !form.reason.trim()) errs.reason = 'Reason is required';
+    else if (form.reason.trim().length < 5) errs.reason = 'Reason must be at least 5 characters';
+    else if (form.reason.length > 500) errs.reason = 'Reason must be 500 characters or fewer';
+    if (form.halfDay && !form.halfDayType) errs.halfDayType = 'Please select First Half or Second Half for half-day leave';
+    if (form.from && form.to && form.to < form.from) errs.to = 'End date must be on or after start date';
+    if (Object.keys(errs).length) { setFieldErrs(errs); showToast('Please fix the highlighted fields', 'error'); return; }
+    setFieldErrs({});
     if (form._showTimePicker && (form.customStartTime || form.customEndTime)) {
       if (!form.customStartTime || !form.customEndTime || !TIME_RE.test(form.customStartTime) || !TIME_RE.test(form.customEndTime)) {
         showToast('Custom leave time must be valid HH:MM (24-hour) start and end times', 'error'); return;
@@ -151,7 +160,16 @@ export default function LeavePage() {
       load('my');
       setTab('my');
     } catch (e) {
-      showToast(e.message, 'error');
+      const msg = e.message || 'Failed to submit';
+      // Map server validation (reason/date/halfDay) to inline field errors
+      const m = msg.match(/(reason|from|to|halfDayType|typeCode)[^:]*:\s*(.+)/i);
+      if (m) {
+        const key = m[1].toLowerCase().includes('reason') ? 'reason' : m[1].toLowerCase().includes('halfday') ? 'halfDayType' : m[1];
+        setFieldErrs({ [key]: m[2] });
+      } else if (/reason/i.test(msg)) {
+        setFieldErrs({ reason: msg.replace(/^.*reason[:\s]*/i, '') || msg });
+      }
+      showToast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -623,8 +641,9 @@ export default function LeavePage() {
                   );
                 })()}
                 <div className="mb-3">
-                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason</label>
-                  <textarea className={`form-control ${fieldErrs.reason?'is-invalid':''}`} rows={3} value={form.reason} onChange={e => { setForm(p => ({ ...p, reason: e.target.value })); clearFErr('reason'); }} />
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason <span style={{ color: '#94a3b8', fontWeight: 400 }}>(5–500 chars)</span></label>
+                  <textarea className={`form-control ${fieldErrs.reason?'is-invalid':''}`} rows={3} value={form.reason} maxLength={500} onChange={e => { setForm(p => ({ ...p, reason: e.target.value })); clearFErr('reason'); }} placeholder="Explain why you need leave (min 5 characters)" />
+                  <div style={{ fontSize: 11, color: form.reason.length > 450 ? '#ef4444' : '#94a3b8', textAlign: 'right', marginTop: 2 }}>{form.reason.length}/500</div>
                   {fieldErrs.reason && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.reason}</div>}
                 </div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: '#64748b' }}>
