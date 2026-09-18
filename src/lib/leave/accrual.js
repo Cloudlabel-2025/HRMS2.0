@@ -63,12 +63,15 @@ export function getRelativePeriod(usagePeriod, cycleStart, date) {
 export function calculatePeriodAllowance(typeConfig, balanceEntry, cycleStart, currentDate = new Date()) {
   const overallRemaining = Math.max(
     0,
-    balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending
+    (balanceEntry.allocated || 0) + (balanceEntry.carriedForward || 0) - (balanceEntry.used || 0) - (balanceEntry.pending || 0)
   );
 
-  // If no usage cap per period, return the remaining balance
+  // Unpaid types (LOP): no allocated balance — period cap controls (e.g. 6 per month always)
+  const isUnpaid = typeConfig.isPaid === false;
+
+  // If no usage cap per period, return the remaining balance (or Infinity for unpaid)
   if (!typeConfig.maxUsagePerPeriod || typeConfig.maxUsagePerPeriod <= 0) {
-    return overallRemaining;
+    return isUnpaid ? Number.MAX_SAFE_INTEGER : overallRemaining;
   }
 
   const { index: currIndex, code: currCode } = getRelativePeriod(typeConfig.usagePeriod, cycleStart, currentDate);
@@ -117,7 +120,8 @@ export function calculatePeriodAllowance(typeConfig, balanceEntry, cycleStart, c
     allowed = Math.max(0, typeConfig.maxUsagePerPeriod - currentPeriodUsed);
   }
 
-  // Allowance cannot exceed remaining balance
+  // Allowance cannot exceed remaining balance (except unpaid — cap only)
+  if (isUnpaid) return allowed;
   return Math.min(overallRemaining, allowed);
 }
 

@@ -131,6 +131,28 @@ export async function getOrCreateBalance(userId, policy) {
     for (const config of policy.leaveTypeConfigs || []) {
       if (!config.code || !config.enabled) continue;
       if (!isEligibleForType(config, employeeContext)) continue;
+      // Unpaid types (LOP) never hold an allocated balance — cap controls via maxUsagePerPeriod
+      if (config.isPaid === false) {
+        if (!existingCodes.has(config.code)) {
+          balance.balances.push({
+            typeCode: config.code,
+            allocated: 0,
+            used: 0,
+            pending: 0,
+            carriedForward: 0,
+            expiryDate: null,
+            periodUsage: [],
+          });
+          changed = true;
+        } else {
+          const entry = balance.balances.find(b => b.typeCode === config.code);
+          if (entry && Number(entry.allocated || 0) !== 0) {
+            entry.allocated = 0;
+            changed = true;
+          }
+        }
+        continue;
+      }
 
       if (!existingCodes.has(config.code)) {
         let allocated = 0;
@@ -155,6 +177,7 @@ export async function getOrCreateBalance(userId, policy) {
         // Reconcile: backfill allocations that were never credited (e.g. balances
         // created under a policy whose configs lacked a code). Only touches zero
         // credits so accrued/manually-adjusted amounts are preserved.
+        // Also repairs quarterly drift (e.g. CL 0.38 vs expected 1.5) when no usage yet.
         const entry = balance.balances.find(b => b.typeCode === config.code);
         if (entry && (entry.allocated === 0 || entry.allocated == null)) {
           let allocated = config.annualAllocation || 0;
@@ -164,6 +187,12 @@ export async function getOrCreateBalance(userId, policy) {
           }
           entry.allocated = allocated;
           changed = true;
+        } else if (entry && config.creditSchedule === 'quarterly' && (entry.used || 0) === 0 && (entry.pending || 0) === 0 && (!entry.periodUsage || entry.periodUsage.length === 0)) {
+          const expected = Number(((config.annualAllocation || 0) / 4).toFixed(2));
+          if (Number(entry.allocated || 0) !== expected) {
+            entry.allocated = expected;
+            changed = true;
+          }
         }
       }
     }
@@ -181,9 +210,22 @@ export async function getOrCreateBalance(userId, policy) {
   for (const config of policy.leaveTypeConfigs || []) {
     if (!config.code || !config.enabled) continue;
     if (!isEligibleForType(config, employeeContext)) continue;
+    // Unpaid types never hold allocation
+    if (config.isPaid === false) {
+      balances.push({
+        typeCode: config.code,
+        allocated: 0,
+        used: 0,
+        pending: 0,
+        carriedForward: 0,
+        expiryDate: null,
+        periodUsage: [],
+      });
+      continue;
+    }
 
     let allocated = config.annualAllocation || 0;
-    
+
     // For periodic schedules, the initial allocation starts with the first installment
     if (config.creditSchedule && config.creditSchedule !== 'upfront') {
       const divisor = config.creditSchedule === 'monthly' ? 12 : config.creditSchedule === 'quarterly' ? 4 : 2;
@@ -233,7 +275,7 @@ export async function getOrCreateBalanceForYear(userId, policy, year) {
       if (!isEligibleForType(config, employeeContext)) continue;
       balances.push({
         typeCode: config.code,
-        allocated: config.annualAllocation || 0,
+        allocated: config.isPaid === false ? 0 : config.annualAllocation || 0,
         used: 0,
         pending: 0,
         carriedForward: 0,
@@ -252,10 +294,16 @@ export async function getOrCreateBalanceForYear(userId, policy, year) {
     if (!existingCodes.has(config.code)) {
       balance.balances.push({
         typeCode: config.code,
-        allocated: config.annualAllocation || 0,
+        allocated: config.isPaid === false ? 0 : config.annualAllocation || 0,
         used: 0, pending: 0, carriedForward: 0, expiryDate: null, periodUsage: [],
       });
       changed = true;
+    } else if (config.isPaid === false) {
+      const entry = balance.balances.find(b => b.typeCode === config.code);
+      if (entry && Number(entry.allocated || 0) !== 0) {
+        entry.allocated = 0;
+        changed = true;
+      }
     }
   }
   if (String(balance.policyId) !== String(policy._id)) {
@@ -419,6 +467,14 @@ export async function POST(req) {
       for (const entry of bal.balances) {
         const config = policy.leaveTypeConfigs.find(c => c.code === entry.typeCode);
         if (!config || !config.enabled) continue;
+        // Never accrue unpaid types
+        if (config.isPaid === false) {
+          if (Number(entry.allocated || 0) !== 0) {
+            entry.allocated = 0;
+            updated = true;
+          }
+          continue;
+        }
 
         let creditAmount = 0;
         if (config.creditSchedule === 'monthly') {
