@@ -15,10 +15,13 @@ import {
   coerceBool,
 } from '@/lib/leave/bulk-helpers';
 import { resolvePolicyForUser } from '@/app/api/leave/balance/route';
-import { Leave, Holiday } from '@/lib/models/index';
+import { Leave, Holiday, UserLeaveBalance } from '@/lib/models/index';
+import EmpProfile from '@/lib/models/EmploymentProfile';
 import { getGlobalConfig, countWorkingDaysInRange } from '@/lib/payroll-cycle';
 import { isEmployer } from '@/lib/permissions';
 import { uploadFile } from '@/lib/cloudinary';
+import { auditLog } from '@/lib/middleware';
+import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 
 const BULK_FOLDER = process.env.CLOUDINARY_BULK_FOLDER || 'hrms_bulk_leaves';
 
@@ -32,7 +35,14 @@ export async function POST(req) {
     const form = await req.formData();
     const file = form.get('file');
     const type = String(form.get('type') || 'balance').trim();
-    const skipEligibility = String(form.get('skipEligibility') || '') === '1';
+    let skipEligibility = String(form.get('skipEligibility') || '') === '1';
+    // Gate skipEligibility to super_admin with audit — mirrors single POST which never skips
+    if (skipEligibility && user.role !== 'super_admin') {
+      return fail('Skip eligibility is restricted to super_admin', 403);
+    }
+    if (skipEligibility) {
+      await auditLog('Bulk Leave Validate Skip Eligibility', 'Leave', user._id, 'super_admin bypassed eligibilityRules on bulk validate preview', 'high', req.headers.get('x-forwarded-for') || '', null, null);
+    }
     if (!['balance', 'leaves'].includes(type)) return fail('type must be balance or leaves', 400);
     if (!file || typeof file.arrayBuffer !== 'function') return fail('Excel/CSV file is required', 400);
     if (file.size > BULK_MAX_BYTES) return fail('File must be under 3 MB (split into smaller files)', 400);
@@ -281,6 +291,86 @@ export async function POST(req) {
           } catch { /* non-fatal */ }
         } else if (halfDay && isValidDateStr(from)) {
           computedDays = 0.5;
+        }
+
+        // ── Dynamic policy gates (mirror single POST /api/leave) ──
+        if (policy && typeConfig && isValidDateStr(from) && isValidDateStr(to) && computedDays > 0) {
+          const days = computedDays;
+          // 1. Probation gate
+          try {
+            if (policy.requireProbationCompletion && targetUser) {
+              const prof = targetUser.profileId
+                ? await EmpProfile.findById(targetUser.profileId).select('employmentStatus').lean()
+                : null;
+              if (prof && ['onboarding', 'probation'].includes(prof.employmentStatus)) {
+                errors.push('Must complete probation before applying under this policy');
+              }
+            }
+          } catch { /* non-fatal */ }
+          // 2. Per-half-day granularity
+          if (halfDay) {
+            if (halfDayType === 'first_half' && typeConfig.allowFirstHalf === false) errors.push('First Half is not enabled for this leave type');
+            if (halfDayType === 'second_half' && typeConfig.allowSecondHalf === false) errors.push('Second Half is not enabled for this leave type');
+          }
+          // 3. Advance notice
+          if ((typeConfig.noticePeriodDays || 0) > 0) {
+            const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+            const from0 = new Date(`${from}T00:00:00`);
+            const diffDays = Math.ceil((from0 - today0) / 86400000);
+            if (diffDays < typeConfig.noticePeriodDays) errors.push(`Requires ${typeConfig.noticePeriodDays} days advance notice (applied with ${diffDays} day(s))`);
+          }
+          // 4. Supporting documents
+          const needsDocs = !!typeConfig.requiresDocuments || ((typeConfig.requireDocsIfConsecutiveDays || 0) > 0 && days >= typeConfig.requireDocsIfConsecutiveDays);
+          if (needsDocs) errors.push(`Supporting documents required for ${typeConfig.name}${typeConfig.requireDocsIfConsecutiveDays > 0 ? ` (${typeConfig.requireDocsIfConsecutiveDays}+ days)` : ''} — attach via single apply`);
+          // 5. Max consecutive
+          if ((typeConfig.maxConsecutiveDays || 0) > 0 && days > typeConfig.maxConsecutiveDays) errors.push(`Maximum ${typeConfig.maxConsecutiveDays} consecutive days allowed for ${typeConfig.name}`);
+          // 6. Max pending applications (policy-level)
+          if ((policy.maxPendingApplications || 0) > 0 && targetUser) {
+            try {
+              const pendingCount = await Leave.countDocuments({ userId: targetUser._id, status: 'pending' });
+              if (pendingCount >= policy.maxPendingApplications) errors.push(`Already has ${pendingCount} pending application(s). Max ${policy.maxPendingApplications} allowed.`);
+            } catch { /* non-fatal */ }
+          }
+          // 7. Min gap between same-type approved leaves
+          if ((typeConfig.minGapDays || 0) > 0 && targetUser) {
+            try {
+              const recent = await Leave.findOne({ userId: targetUser._id, typeCode, status: 'approved', to: { $lt: from } }).sort({ to: -1 }).select('to').lean();
+              if (recent) {
+                const gap = Math.ceil((new Date(`${from}T00:00:00`) - new Date(`${recent.to}T00:00:00`)) / 86400000) - 1;
+                if (gap < typeConfig.minGapDays) errors.push(`Minimum ${typeConfig.minGapDays} day(s) gap required between ${typeConfig.name} applications`);
+              }
+            } catch { /* non-fatal */ }
+          }
+          // 8. Period cap + overall availability (paid split preview)
+          if (typeConfig.isPaid && targetUser) {
+            try {
+              const yr = new Date(`${from}T00:00:00`).getFullYear();
+              const bal = await UserLeaveBalance.findOne({ userId: targetUser._id, cycleStart: new Date(yr, 0, 1) }).lean();
+              if (bal) {
+                const entry = (bal.balances || []).find(b => b.typeCode === typeCode);
+                if (entry) {
+                  const allowed = calculatePeriodAllowance(typeConfig, entry, bal.cycleStart, new Date(`${from}T00:00:00`));
+                  const overall = Math.max(0, (entry.allocated || 0) + (entry.carriedForward || 0) - (entry.used || 0) - (entry.pending || 0));
+                  const allowedPaid = Math.min(overall, allowed);
+                  if (days > allowedPaid) {
+                    const unpaid = Number((days - allowedPaid).toFixed(2));
+                    warnings.push(`Only ${allowedPaid} of ${days} day(s) paid under ${policy.name} (period/overall cap); ${unpaid} unpaid (LOP)`);
+                  }
+                }
+              }
+            } catch { /* non-fatal */ }
+          }
+          // 9. Permission-vs-leave mutual exclusion
+          try {
+            const { SelfServiceRequest } = await import('@/lib/models/index');
+            const permConflict = await SelfServiceRequest.findOne({
+              profileId: targetUser.profileId || undefined,
+              requestType: 'permission',
+              status: { $in: ['pending', 'approved'] },
+              'payload.date': { $gte: from, $lte: to },
+            }).lean();
+            if (permConflict) errors.push(`Overlaps ${permConflict.status} permission request on ${permConflict.payload?.date}`);
+          } catch { /* non-fatal */ }
         }
 
         results.push({

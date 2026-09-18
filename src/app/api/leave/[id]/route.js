@@ -145,10 +145,10 @@ export async function PUT(req, { params }) {
         if (heldStep && isAdmin) {
           // Admin override — approve or reject
           approveStep(heldStep, action, user, holdReason);
-          // If re-approving after hold, reset held steps
+          // If re-approving after hold, reset OTHER held steps (keep the overridden one approved)
           if (action === 'approved') {
             workflow.forEach(s => {
-              if (s.action === 'held' || s.action === 'rejected') {
+              if (s !== heldStep && (s.action === 'held' || s.action === 'rejected')) {
                 s.action = 'pending';
                 s.holdReason = '';
               }
@@ -199,10 +199,10 @@ export async function PUT(req, { params }) {
                 entry.pending = Math.max(0, entry.pending - paidDays);
               }
 
-              // Update periodic usage metrics
+              // Update periodic usage metrics — split across working days for cross-period spans
               if (typeConfig && typeConfig.maxUsagePerPeriod > 0) {
-                const { recordPeriodUsage } = require('@/lib/leave/accrual');
-                recordPeriodUsage(entry, typeConfig.usagePeriod, balance.cycleStart, new Date(leave.from), paidDays);
+                const { recordPeriodUsageSplit } = require('@/lib/leave/accrual');
+                recordPeriodUsageSplit(entry, typeConfig.usagePeriod, balance.cycleStart, leave.from, leave.to, paidDays, { halfDay: !!leave.halfDay });
               }
 
               await saveBalanceOrConflict(balance);

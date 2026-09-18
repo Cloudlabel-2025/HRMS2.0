@@ -444,7 +444,7 @@ export default function LeavePoliciesPage() {
                               </div>
                               <div className="col-md-3">
                                 <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Credit Schedule</label>
-                                <select className="form-select form-select-sm" value={cfg.creditSchedule || 'upfront'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], creditSchedule: e.target.value, accrualMode: e.target.value === 'upfront' ? 'upfront' : 'monthly' }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
+                                <select className="form-select form-select-sm" value={cfg.creditSchedule || 'upfront'} onChange={e => { const u = [...policyForm.leaveTypeConfigs]; u[i] = { ...u[i], creditSchedule: e.target.value, accrualMode: e.target.value }; setPolicyForm(p => ({ ...p, leaveTypeConfigs: u })); }}>
                                   <option value="upfront">Upfront (Entire Year)</option>
                                   <option value="monthly">Monthly</option>
                                   <option value="quarterly">Quarterly</option>

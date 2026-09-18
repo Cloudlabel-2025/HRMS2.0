@@ -31,7 +31,7 @@ const LeaveTypeConfigSchema = new mongoose.Schema({
   encashmentRatePercent:{ type: Number, default: 100 },
   probationAllowed:     { type: Boolean, default: true },
   probationAllocation:  { type: Number, default: 0 },
-  accrualMode:          { type: String, enum: ['upfront', 'monthly'], default: 'upfront' },
+  accrualMode:          { type: String, enum: ['upfront', 'monthly', 'quarterly', 'half_yearly'], default: 'upfront' },
   prorateForNewJoiners: { type: Boolean, default: false },
   noticePeriodDays:     { type: Number, default: 0 },
   requireDocsIfConsecutiveDays: { type: Number, default: 0 },

@@ -34,16 +34,37 @@ export async function resolvePolicyForUser(userDoc) {
   const empOr = employmentType
     ? [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: employmentType }, { applicableEmploymentTypes: { $exists: false } }, { applicableEmploymentTypes: null }]
     : [{ applicableEmploymentTypes: { $size: 0 } }, { applicableEmploymentTypes: { $exists: false } }, { applicableEmploymentTypes: null }];
-  const rolePolicy = await LeavePolicy.findOne({
+  const toDateStr = (d) => {
+    try {
+      const dt = new Date(d);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    } catch { return ''; }
+  };
+  const todayStr = toDateStr(now);
+  const candidates = await LeavePolicy.find({
     $and: [
       { status: 'active' },
       { $or: roleOr },
       { $or: [{ effectiveTo: null }, { effectiveTo: { $gte: now } }] },
-      { effectiveFrom: { $lte: now } },
       { $or: deptOr },
       { $or: empOr },
     ],
-  }).sort({ createdAt: -1 });
+  }).sort({ createdAt: -1 }).lean();
+  // Effective-from as YYYY-MM-DD string compare to avoid IST/UTC midnight drift
+  const effective = candidates.filter(p => {
+    if (!p.effectiveFrom) return false;
+    return toDateStr(p.effectiveFrom) <= todayStr;
+  });
+  // Specificity score: role match + dept match + empType match, default is tie-breaker last
+  const scored = effective.map(p => {
+    let score = 0;
+    if (Array.isArray(p.applicableRoles) && p.applicableRoles.includes(userDoc.role)) score += 3;
+    if (userDepartment && Array.isArray(p.applicableDepartments) && p.applicableDepartments.includes(userDepartment)) score += 2;
+    if (employmentType && Array.isArray(p.applicableEmploymentTypes) && p.applicableEmploymentTypes.includes(employmentType)) score += 1;
+    if (p.isDefault) score -= 0.5;
+    return { p, score };
+  }).sort((a, b) => b.score - a.score || new Date(b.p.createdAt) - new Date(a.p.createdAt));
+  const rolePolicy = scored.length ? await LeavePolicy.findById(scored[0].p._id) : null;
 
   if (rolePolicy) {
     console.log('[LEAVE DEBUG] Found role-specific policy:', rolePolicy.name, '| isDefault:', rolePolicy.isDefault);
@@ -452,8 +473,15 @@ export async function POST(req) {
       if (employerIds.includes(bal.userId.toString())) continue;
       if (now < bal.cycleStart || now > bal.cycleEnd) continue;
 
-      // Idempotency: skip if already accrued this month
-      if (bal.lastAccrualMonth === currentMonth) continue;
+      // Idempotency (year-aware): skip if already accrued this YYYY-MM
+      const accrualKey = `${now.getFullYear()}-${String(currentMonth).padStart(2, '0')}`;
+      if (bal.lastAccrualKey === accrualKey) continue;
+      // Legacy fallback: same month number in same year only
+      if (bal.lastAccrualMonth === currentMonth && String(bal.updatedAt || '').slice(0, 4) === String(now.getFullYear())) {
+        bal.lastAccrualKey = accrualKey;
+        await bal.save().catch(() => {});
+        continue;
+      }
 
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
@@ -496,6 +524,7 @@ export async function POST(req) {
       }
       if (updated) {
         bal.lastAccrualMonth = currentMonth;
+        bal.lastAccrualKey = `${now.getFullYear()}-${String(currentMonth).padStart(2, '0')}`;
         await bal.save();
         processed++;
       }
@@ -545,28 +574,42 @@ export async function POST(req) {
       const policy = await LeavePolicy.findById(bal.policyId);
       if (!policy) continue;
 
-      const nextBalances = [];
-      for (const entry of bal.balances) {
-        const config = policy.leaveTypeConfigs.find(
-          c => c.code === entry.typeCode
-        );
-        if (!config || !config.enabled || !config.carryForwardAllowed) continue;
+      // Idempotence: skip if next cycle already exists
+      const existingNext = await UserLeaveBalance.findOne({ userId: bal.userId, cycleStart: nextCycleStart }).select('_id').lean();
+      if (existingNext) continue;
 
-        const unused = Math.max(0, (entry.allocated + entry.carriedForward) - entry.used - entry.pending);
-        const carryOver = Math.min(unused, config.carryForwardMaxDays || Infinity);
+      const nextBalances = [];
+      // Copy ALL enabled types (not just carry-allowed) — non-carry types start fresh
+      for (const config of policy.leaveTypeConfigs || []) {
+        if (!config.code || !config.enabled) continue;
+        const entry = (bal.balances || []).find(b => b.typeCode === config.code);
+        const unused = entry ? Math.max(0, (entry.allocated || 0) + (entry.carriedForward || 0) - (entry.used || 0) - (entry.pending || 0)) : 0;
+        const carryOver = config.carryForwardAllowed ? Math.min(unused, config.carryForwardMaxDays || Infinity) : 0;
 
         let expiryDate = null;
         if (carryOver > 0 && config.carryForwardExpiryMonths > 0) {
-          expiryDate = new Date(nextCycleStart.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000);
+          const d = new Date(nextCycleStart);
+          d.setMonth(d.getMonth() + config.carryForwardExpiryMonths);
+          expiryDate = d;
+        }
+
+        // Quarterly/monthly types start with first installment, not full annual
+        let firstAlloc = config.annualAllocation || 0;
+        if (config.isPaid === false) {
+          firstAlloc = 0;
+        } else if (config.creditSchedule && config.creditSchedule !== 'upfront') {
+          const divisor = config.creditSchedule === 'monthly' ? 12 : config.creditSchedule === 'quarterly' ? 4 : 2;
+          firstAlloc = Number(((config.annualAllocation || 0) / divisor).toFixed(2));
         }
 
         nextBalances.push({
-          typeCode: entry.typeCode,
-          allocated: config.annualAllocation || 0,
+          typeCode: config.code,
+          allocated: firstAlloc,
           used: 0,
           pending: 0,
           carriedForward: carryOver,
           expiryDate,
+          periodUsage: [],
         });
       }
 
