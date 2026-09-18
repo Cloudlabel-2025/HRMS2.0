@@ -35,6 +35,11 @@ export default function LeavePoliciesPage() {
   const [expandedType, setExpandedType] = useState(null);
   const [adjModal, setAdjModal] = useState(null);
   const [seeding, setSeeding] = useState(false);
+  const [seedModal, setSeedModal] = useState({ open: false, confirming: false });
+  const [archiveModal, setArchiveModal] = useState({ open: false, confirming: false, data: { id: null, name: '' } });
+  const [deleteModal, setDeleteModal] = useState({ open: false, confirming: false, data: { id: null, name: '' } });
+  const [accrualModal, setAccrualModal] = useState({ open: false, confirming: false });
+  const [carryModal, setCarryModal] = useState({ open: false, confirming: false });
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -43,17 +48,19 @@ export default function LeavePoliciesPage() {
 
   const isAdmin = ADMIN_ROLES.includes(user?.role);
 
-  const seedPolicy = async () => {
-    if (!confirm('This will create a default leave policy (SL, CL, EL) and initialize balances for all active employees. Continue?')) return;
+  const confirmSeed = async () => {
+    setSeedModal(s => ({ ...s, confirming: true }));
     setSeeding(true);
     try {
       const res = await api.post('/api/seed/leave-policy', {});
       showToast(res?.message || 'Default leave policy seeded successfully');
+      setSeedModal({ open: false, confirming: false });
       await loadPolicies();
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
       setSeeding(false);
+      setSeedModal(s => ({ ...s, confirming: false }));
     }
   };
 
@@ -125,22 +132,50 @@ export default function LeavePoliciesPage() {
     finally { setSaving(false); }
   };
 
-  const archivePolicy = async (id) => {
-    if (!confirm('Archive this policy? It will no longer be applied to new leave requests.')) return;
+  const confirmArchive = async () => {
+    const { id } = archiveModal.data || {};
+    if (!id) return;
+    setArchiveModal(s => ({ ...s, confirming: true }));
     try {
       await api.delete(`/api/settings/leave-policies/${id}`);
       showToast('Policy archived');
+      setArchiveModal({ open: false, confirming: false, data: { id: null, name: '' } });
       loadPolicies();
     } catch (e) { showToast(e.message, 'error'); }
+    finally { setArchiveModal(s => ({ ...s, confirming: false })); }
   };
 
-  const deletePolicy = async (id, name) => {
-    if (!confirm(`Permanently delete "${name}"? This action cannot be undone.`)) return;
+  const confirmDelete = async () => {
+    const { id } = deleteModal.data || {};
+    if (!id) return;
+    setDeleteModal(s => ({ ...s, confirming: true }));
     try {
       await api.delete(`/api/settings/leave-policies/${id}?hard=true`);
       showToast('Policy deleted');
+      setDeleteModal({ open: false, confirming: false, data: { id: null, name: '' } });
       loadPolicies();
     } catch (e) { showToast(e.message, 'error'); }
+    finally { setDeleteModal(s => ({ ...s, confirming: false })); }
+  };
+
+  const confirmAccrual = async () => {
+    setAccrualModal(s => ({ ...s, confirming: true }));
+    try {
+      const res = await api.post('/api/leave/balance', { action: 'monthly-accrual' });
+      showToast(res.message);
+      setAccrualModal({ open: false, confirming: false });
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setAccrualModal(s => ({ ...s, confirming: false })); }
+  };
+
+  const confirmCarry = async () => {
+    setCarryModal(s => ({ ...s, confirming: true }));
+    try {
+      const res = await api.post('/api/leave/balance', { action: 'carry-forward' });
+      showToast(res.message);
+      setCarryModal({ open: false, confirming: false });
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setCarryModal(s => ({ ...s, confirming: false })); }
   };
 
   const openPolicyEditor = (policy = null) => {
@@ -883,7 +918,7 @@ export default function LeavePoliciesPage() {
                 <button className="btn btn-outline-primary btn-sm" onClick={() => openPolicyEditor()}>
                   <i className="bi bi-plus-lg me-1" />Create Manually
                 </button>
-                <button className="btn btn-primary btn-sm" onClick={seedPolicy} disabled={seeding}>
+                <button className="btn btn-primary btn-sm" onClick={() => setSeedModal({ open: true, confirming: false })} disabled={seeding}>
                   {seeding ? <><span className="spinner-border spinner-border-sm me-2" />Seeding...</> : <><i className="bi bi-magic me-1" />Seed Default Policy</>}
                 </button>
               </div>
@@ -918,10 +953,10 @@ export default function LeavePoliciesPage() {
                       <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => openPolicyEditor(p)}>
                         <i className="bi bi-pencil me-1" />Edit
                       </button>
-                      <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => archivePolicy(p._id)} disabled={p.status === 'archived'}>
+                      <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => setArchiveModal({ open: true, confirming: false, data: { id: p._id, name: p.name } })} disabled={p.status === 'archived'}>
                         <i className="bi bi-archive me-1" />Archive
                       </button>
-                      <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => deletePolicy(p._id, p.name)}>
+                      <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => setDeleteModal({ open: true, confirming: false, data: { id: p._id, name: p.name } })}>
                         <i className="bi bi-trash me-1" />Delete
                       </button>
                     </div>
@@ -1016,13 +1051,7 @@ export default function LeavePoliciesPage() {
                     <div style={{ fontSize: 12, color: '#14532d', marginBottom: 12 }}>
                       Run monthly accruals for policies configured to accrue leaves monthly instead of upfront.
                     </div>
-                    <button className="btn btn-success btn-sm" onClick={async () => {
-                      if (!confirm('Run monthly accrual process? This will add monthly prorated days to eligible employees.')) return;
-                      try {
-                        const res = await api.post('/api/leave/balance', { action: 'monthly-accrual' });
-                        showToast(res.message);
-                      } catch (e) { showToast(e.message, 'error'); }
-                    }}>
+                    <button className="btn btn-success btn-sm" onClick={() => setAccrualModal({ open: true, confirming: false })}>
                       <i className="bi bi-play-circle me-1" />Run Monthly Accruals
                     </button>
                   </div>
@@ -1035,13 +1064,7 @@ export default function LeavePoliciesPage() {
                     <div style={{ fontSize: 12, color: '#78350f', marginBottom: 12 }}>
                       Process annual carry forward for ALL employees. Creates next year's balance records with unused days carried over.
                     </div>
-                    <button className="btn btn-warning btn-sm" style={{ color: '#fff' }} onClick={async () => {
-                      if (!confirm('Process carry forward for all employees? This will create next year balance records.')) return;
-                      try {
-                        const res = await api.post('/api/leave/balance', { action: 'carry-forward' });
-                        showToast(res.message);
-                      } catch (e) { showToast(e.message, 'error'); }
-                    }}>
+                    <button className="btn btn-warning btn-sm" style={{ color: '#fff' }} onClick={() => setCarryModal({ open: true, confirming: false })}>
                       <i className="bi bi-forward me-1" />Process Carry Forward
                     </button>
                   </div>
@@ -1081,7 +1104,7 @@ export default function LeavePoliciesPage() {
                   const reason = document.getElementById('adjReason').value.trim();
                   if (!reason) return showToast('Reason is required', 'error');
                   if (days === 0) return showToast('Adjustment cannot be zero', 'error');
-                  
+
                   try {
                     await api.post('/api/leave/balance/adjust', {
                       userId: adjModal.empId,
@@ -1096,6 +1119,111 @@ export default function LeavePoliciesPage() {
                     showToast(e.message, 'error');
                   }
                 }}>Apply Adjustment</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── SEED POLICY MODAL ── */}
+      {seedModal.open && (
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.55)', zIndex: 1060 }} onClick={() => setSeedModal(s => ({ ...s, open: false }))} role="dialog" aria-modal="true">
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+              <div className="modal-header"><h6 className="modal-title" style={{ fontWeight: 700 }}>Seed Default Policy?</h6><button className="btn-close" onClick={() => setSeedModal(s => ({ ...s, open: false }))} /></div>
+              <div className="modal-body" style={{ fontSize: 13, color: '#475569' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#eff6ff', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-magic" /></div>
+                  <span>This will create <strong>SL, CL, EL</strong> policies and initialize balances for all active employees.</span>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ background: '#f8fafc', borderTop: '1px solid #eef2f7' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setSeedModal(s => ({ ...s, open: false }))}>Cancel</button>
+                <button className="btn btn-primary btn-sm" onClick={confirmSeed} disabled={seedModal.confirming}>{seedModal.confirming ? <><span className="spinner-border spinner-border-sm me-1" />Seeding...</> : 'Seed Policy'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ARCHIVE POLICY MODAL ── */}
+      {archiveModal.open && (
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.55)', zIndex: 1060 }} onClick={() => setArchiveModal(s => ({ ...s, open: false }))} role="dialog" aria-modal="true">
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+              <div className="modal-header"><h6 className="modal-title" style={{ fontWeight: 700 }}>Archive &ldquo;{archiveModal.data?.name}&rdquo;?</h6><button className="btn-close" onClick={() => setArchiveModal(s => ({ ...s, open: false }))} /></div>
+              <div className="modal-body" style={{ fontSize: 13, color: '#475569' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-archive" /></div>
+                  <span>&ldquo;{archiveModal.data?.name}&rdquo; will no longer be applied to new leave requests.</span>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ background: '#f8fafc', borderTop: '1px solid #eef2f7' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setArchiveModal(s => ({ ...s, open: false }))}>Cancel</button>
+                <button className="btn btn-warning btn-sm" onClick={confirmArchive} disabled={archiveModal.confirming}>{archiveModal.confirming ? <><span className="spinner-border spinner-border-sm me-1" />Archiving...</> : 'Archive'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── DELETE POLICY MODAL ── */}
+      {deleteModal.open && (
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.55)', zIndex: 1060 }} onClick={() => setDeleteModal(s => ({ ...s, open: false }))} role="dialog" aria-modal="true">
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+              <div className="modal-header"><h6 className="modal-title" style={{ fontWeight: 700 }}>Permanently Delete?</h6><button className="btn-close" onClick={() => setDeleteModal(s => ({ ...s, open: false }))} /></div>
+              <div className="modal-body" style={{ fontSize: 13, color: '#475569' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#fef2f2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-trash" /></div>
+                  <span>Permanently delete &ldquo;{deleteModal.data?.name}&rdquo;? <span style={{ color: '#dc2626', fontWeight: 600 }}>This cannot be undone.</span></span>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ background: '#f8fafc', borderTop: '1px solid #eef2f7' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setDeleteModal(s => ({ ...s, open: false }))}>Cancel</button>
+                <button className="btn btn-danger btn-sm" onClick={confirmDelete} disabled={deleteModal.confirming}>{deleteModal.confirming ? <><span className="spinner-border spinner-border-sm me-1" />Deleting...</> : 'Delete'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MONTHLY ACCRUAL MODAL ── */}
+      {accrualModal.open && (
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.55)', zIndex: 1060 }} onClick={() => setAccrualModal(s => ({ ...s, open: false }))} role="dialog" aria-modal="true">
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+              <div className="modal-header"><h6 className="modal-title" style={{ fontWeight: 700 }}>Run Monthly Accruals?</h6><button className="btn-close" onClick={() => setAccrualModal(s => ({ ...s, open: false }))} /></div>
+              <div className="modal-body" style={{ fontSize: 13, color: '#475569' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#f0fdf4', color: '#16a34a', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-calendar-plus" /></div>
+                  <span>Add monthly prorated days to eligible employees for this month.</span>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ background: '#f8fafc', borderTop: '1px solid #eef2f7' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setAccrualModal(s => ({ ...s, open: false }))}>Cancel</button>
+                <button className="btn btn-success btn-sm" onClick={confirmAccrual} disabled={accrualModal.confirming}>{accrualModal.confirming ? <><span className="spinner-border spinner-border-sm me-1" />Running...</> : 'Run Accrual'}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── CARRY FORWARD MODAL ── */}
+      {carryModal.open && (
+        <div className="modal show d-block" style={{ background: 'rgba(15,23,42,0.55)', zIndex: 1060 }} onClick={() => setCarryModal(s => ({ ...s, open: false }))} role="dialog" aria-modal="true">
+          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 420 }} onClick={e => e.stopPropagation()}>
+            <div className="modal-content" style={{ borderRadius: 16, border: 'none', boxShadow: '0 20px 60px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+              <div className="modal-header"><h6 className="modal-title" style={{ fontWeight: 700, color: '#b45309' }}>Process Carry Forward?</h6><button className="btn-close" onClick={() => setCarryModal(s => ({ ...s, open: false }))} /></div>
+              <div className="modal-body" style={{ fontSize: 13, color: '#475569' }}>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 8, background: '#fef3c7', color: '#d97706', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className="bi bi-arrow-repeat" /></div>
+                  <span>Create next year balance records for <strong>ALL employees</strong>. Annual rollover.</span>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ background: '#f8fafc', borderTop: '1px solid #eef2f7' }}>
+                <button className="btn btn-outline-secondary btn-sm" onClick={() => setCarryModal(s => ({ ...s, open: false }))}>Cancel</button>
+                <button className="btn btn-warning btn-sm" onClick={confirmCarry} disabled={carryModal.confirming}>{carryModal.confirming ? <><span className="spinner-border spinner-border-sm me-1" />Processing...</> : 'Process'}</button>
               </div>
             </div>
           </div>
