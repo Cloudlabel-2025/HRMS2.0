@@ -43,9 +43,22 @@ export async function POST(req) {
     const body = await req.json();
     if (!body.name || !body.description || !body.startDate || !body.endDate || !body.responsibleTo) return fail('Name, description, responsible person, start date, and end date are required', 400);
     if ((body.startDate && body.startDate < '2022-03-01') || (body.endDate && body.endDate < '2022-03-01')) return fail('Start and end dates cannot be before March 2022', 400);
+    {
+      const s = new Date(`${body.startDate}T00:00:00`);
+      const e = new Date(`${body.endDate}T00:00:00`);
+      if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return fail('Invalid start or end date', 400);
+      if (e < s) return fail('End date must be on or after start date', 400);
+    }
     if (body.name.length > 30 || !body.name.trim()) return fail('Project name must be between 1 and 30 characters', 400);
     let team = Array.isArray(body.team) ? body.team.filter(Boolean) : [];
-    const crossDept = await isCrossDeptProject(user, { departments: Array.isArray(body.departments) ? body.departments : [], team });
+    // Resolve team IDs to departments so ID-only payloads cannot bypass cross-dept detection
+    let crossDept = await isCrossDeptProject(user, { departments: Array.isArray(body.departments) ? body.departments : [], team });
+    try {
+      if (team.length) {
+        const teamUsers = await User.find({ _id: { $in: team } }).select('department').lean();
+        if (teamUsers.some(u => u.department && u.department !== user.department)) crossDept = true;
+      }
+    } catch { /* non-fatal */ }
     // Legacy project form selects departments rather than individual team members.
     // Derive a scoped team so existing project creation remains functional.
     if (!team.length && Array.isArray(body.departments) && body.departments.length) {
@@ -54,7 +67,7 @@ export async function POST(req) {
       if (managedIds !== null && !crossDept) memberQuery._id = { $in: managedIds };
       team = (await User.find(memberQuery).select('_id').lean()).map(member => member._id);
     }
-    if (!team.length) return fail('At least one permitted project team member is required', 400);
+    if (!team.length) return fail('At least one permitted project team member is required. Check departments include active members of your team.', 400);
     const assignmentIds = [...new Set([...team.map(memberId => memberId.toString()), body.responsibleTo.toString()])];
     const activeAssignmentCount = await User.countDocuments({
       _id: { $in: assignmentIds },
@@ -77,6 +90,13 @@ export async function POST(req) {
         if (!await canManageUser(user, memberId)) return fail('You can only create projects for your team', 403);
       }
       if (!await canManageUser(user, body.responsibleTo)) return fail('You can only assign responsibility to your team', 403);
+    }
+    // Responsible person role is always validated (not just cross-dept)
+    {
+      const responsible = await User.findById(body.responsibleTo).select('role').lean();
+      if (responsible && ['recruiter', 'sme'].includes(responsible.role)) {
+        return fail('Responsible person cannot be a recruiter or SME', 400);
+      }
     }
     const project = await Project.create({
       name: body.name,

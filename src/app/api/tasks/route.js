@@ -18,7 +18,7 @@ export async function GET(req) {
     const projectId = searchParams.get('projectId');
     const scope     = searchParams.get('scope'); // 'my' | 'all'
 
-    const query = {};
+    const query = { deletedAt: null };
     if (projectId) query.projectId = projectId;
 
     if (scope === 'my' || ['employee', 'intern', 'recruiter'].includes(user.role)) {
@@ -84,9 +84,13 @@ export async function POST(req) {
       return fail('Due date is required', 400);
     }
 
-    // Validate due date is within project's date range
+    // Validate due date is within project's date range (local YYYY-MM-DD, real dates)
     const taskProject = await Project.findById(body.projectId).select('startDate endDate team departments approvalRequired approvalStatus createdBy').lean();
     if (!taskProject) return fail('Project not found', 404);
+    // Block tasks on unapproved cross-dept projects
+    if (taskProject.approvalRequired === true && taskProject.approvalStatus !== 'approved') {
+      return fail('Project is pending approval and cannot accept tasks yet', 403);
+    }
     const managedIds = await getManagedUserIds(user);
     const projectStakeholder = String(taskProject.createdBy) === String(user._id) || (Array.isArray(taskProject.departments) && taskProject.departments.includes(user.department));
     const crossDeptApproved = taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder;
@@ -94,10 +98,17 @@ export async function POST(req) {
       return fail('Access denied', 403);
     }
     if (taskProject) {
-      if (body.due < taskProject.startDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.due || ''))) {
+        return fail('Due date must be YYYY-MM-DD', 400);
+      }
+      const dueD = new Date(`${body.due}T00:00:00`);
+      const startD = new Date(`${taskProject.startDate}T00:00:00`);
+      const endD = new Date(`${taskProject.endDate}T00:00:00`);
+      if (Number.isNaN(dueD.getTime())) return fail('Invalid due date', 400);
+      if (dueD < startD) {
         return fail(`Due date cannot be before project start date (${taskProject.startDate})`, 400);
       }
-      if (body.due > taskProject.endDate) {
+      if (dueD > endD) {
         return fail(`Due date cannot be after project end date (${taskProject.endDate})`, 400);
       }
     }
@@ -109,8 +120,8 @@ export async function POST(req) {
     if (!canAssign && ['team_lead', 'team_admin'].includes(user.role) && taskProject.approvalRequired === true && taskProject.approvalStatus === 'approved' && projectStakeholder) {
       const projectDepts = Array.isArray(taskProject.departments) ? taskProject.departments : [];
       const roleOk = user.role === 'team_lead'
-        ? ['team_admin', 'employee', 'intern'].includes(assignee.role)
-        : ['employee', 'intern'].includes(assignee.role);
+        ? ['team_admin', 'employee', 'intern', 'sme'].includes(assignee.role)
+        : ['employee', 'intern', 'sme'].includes(assignee.role);
       if (roleOk && projectDepts.includes(assignee.department)) canAssign = true;
     }
     if (!canAssign) {
