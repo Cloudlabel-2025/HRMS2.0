@@ -16,7 +16,7 @@ export async function PUT(req, { params }) {
 
     const body = await req.json();
     const task = await Task.findById(id).populate('assignedBy', 'name role');
-    if (!task) return fail('Task not found', 404);
+    if (!task || task.deletedAt) return fail('Task not found', 404);
 
     const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_admin', 'team_lead'];
 
@@ -55,8 +55,12 @@ export async function PUT(req, { params }) {
       if (body.status === 'Completed' && !MANAGER_ROLES.includes(user.role)) {
         return fail('Employees must move tasks to Pending for manager completion', 403);
       }
-      const updated = await Task.findByIdAndUpdate(id, { status: body.status, $push: { statusHistory: { status: body.status, changedAt: new Date(), changedBy: user._id } } }, { new: true })
+      // Optimistic-concurrency: only transition from the status the client saw
+      const expectedFrom = body.expectedFrom;
+      const statusFilter = expectedFrom ? { _id: id, status: expectedFrom } : { _id: id };
+      const updated = await Task.findOneAndUpdate(statusFilter, { status: body.status, $push: { statusHistory: { status: body.status, changedAt: new Date(), changedBy: user._id } } }, { new: true })
         .populate('assignedTo', 'name avatar').populate('projectId', 'name');
+      if (!updated) return fail('Task was updated by someone else. Please refresh and retry.', 409);
       const recipientIds = await getTaskStakeholders(task.assignedTo, user._id);
       if (recipientIds.length) await Notification.insertMany(recipientIds.map(userId => ({ userId, title: body.status === 'Pending' ? 'Task Pending Review' : 'Task Status Updated', message: `${task.title} was moved to ${body.status} by ${user.name}.`, type: 'general', refId: task._id })));
       auditLog('Task Status Updated', 'Tasks', user._id, `Updated task "${task.title}" status to ${body.status}`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
@@ -87,11 +91,23 @@ export async function PUT(req, { params }) {
     if (managedIds !== null && !crossDeptApproved && !taskProject.team.some(memberId => managedIds.some(id => id.toString() === memberId.toString()))) {
       return fail('Access denied', 403);
     }
+    // Block full-update status bypass — same Blocked/Completed rules as status-only
+    if (body.status === 'Blocked' && !MANAGER_ROLES.includes(user.role)) {
+      return fail('Only team leads and admins can block a task', 403);
+    }
+    if (taskProject.approvalRequired === true && taskProject.approvalStatus !== 'approved') {
+      return fail('Project is pending approval and cannot accept task updates yet', 403);
+    }
     if (taskProject) {
-      if (body.due < taskProject.startDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(body.due || ''))) {
+        return fail('Due date must be YYYY-MM-DD', 400);
+      }
+      const dueD = new Date(`${body.due}T00:00:00`);
+      if (Number.isNaN(dueD.getTime())) return fail('Invalid due date', 400);
+      if (dueD < new Date(`${taskProject.startDate}T00:00:00`)) {
         return fail(`Due date cannot be before project start date (${taskProject.startDate})`, 400);
       }
-      if (body.due > taskProject.endDate) {
+      if (dueD > new Date(`${taskProject.endDate}T00:00:00`)) {
         return fail(`Due date cannot be after project end date (${taskProject.endDate})`, 400);
       }
     }
@@ -130,7 +146,7 @@ export async function DELETE(req, { params }) {
     if (!['super_admin','admin_full','team_admin','team_lead'].includes(user.role)) return fail('Access denied', 403);
     await connectDB();
     const task = await Task.findById(id).populate('assignedBy', 'name role');
-    if (!task) return fail('Task not found', 404);
+    if (!task || task.deletedAt) return fail('Task not found', 404);
     if (!canEditTaskDetails(user, task)) return fail('Access denied', 403);
 
     // Verify user belongs to the project team (or cross-dept approved)
@@ -144,7 +160,23 @@ export async function DELETE(req, { params }) {
       }
     }
 
-    await Task.findByIdAndDelete(id);
+    await Task.findByIdAndUpdate(id, { deletedAt: new Date() });
+    try {
+      const { default: ProjectDocument } = await import('@/lib/models/ProjectDocument');
+      await ProjectDocument.deleteMany({ taskId: id });
+    } catch { /* non-fatal cascade */ }
+    const recipientIds = await getTaskStakeholders(task.assignedTo, user._id);
+    if (recipientIds.length) {
+      try {
+        await Notification.insertMany(recipientIds.map(userId => ({
+          userId,
+          title: 'Task Deleted',
+          message: `Task "${task.title}" was deleted by ${user.name}.`,
+          type: 'general',
+          refId: task._id,
+        })));
+      } catch { /* non-fatal */ }
+    }
     auditLog('Task Deleted', 'Tasks', user._id, `Deleted task "${task.title}"`, 'low', req.headers.get('x-forwarded-for') || '', null, task.assignedTo);
     return ok({ deleted: true });
   } catch (e) {

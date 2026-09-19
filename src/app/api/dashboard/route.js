@@ -5,9 +5,12 @@ import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
-import { Announcement, Employee } from '@/lib/models/index';
+import { Announcement, Employee, Shift, SelfServiceRequest } from '@/lib/models/index';
 import { getAccessibleDepartments, getDepartmentUserIds } from '@/lib/rbac';
 import { computeWorkRowDuration } from '@/lib/attendance-constants';
+import { getAttendanceDate } from '@/lib/attendance-date';
+import { deriveAbsenceKind } from '@/lib/absence-status';
+import { getTzTime } from '@/lib/timezone';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -75,53 +78,114 @@ export async function GET(req) {
     const employeeFilter = isAdminRole
       ? { status: 'active', role: { $ne: 'super_admin' } }
       : { [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active', role: { $ne: 'super_admin' } };
-    const monitoredEmployees = await Employee.find(employeeFilter).select('userId name department').lean();
-    const monitoredIds = monitoredEmployees.map(employee => employee.userId);
-    const [attendanceRecords, approvedLeaves] = await Promise.all([
-      Attendance.find({ userId: { $in: monitoredIds }, date: today }).select('userId status clockIn lateFlag permission pendingPermission').lean(),
-      Leave.find({ userId: { $in: monitoredIds }, status: 'approved', from: { $lte: today }, to: { $gte: today } }).select('userId').lean(),
+    const monitoredEmployees = await Employee.find(employeeFilter)
+      .populate('userId', 'shift shiftId identityId profileId')
+      .select('userId name department shift shiftId')
+      .lean();
+    const monitoredIds = monitoredEmployees
+      .map((employee) => employee.userId?._id || employee.userId)
+      .filter(Boolean);
+
+    // Timezone-aware "now" so shift math matches the monitoring page
+    // (client-local) and the clock-in writer (getTzTime). Attendance rows
+    // for both the shift-aware today and yesterday are loaded because a
+    // night-shift employee's "today" may be the previous calendar date.
+    const nowTz = await getTzTime().catch(() => new Date());
+    const tzToday = nowTz.getFullYear() + '-' + String(nowTz.getMonth() + 1).padStart(2, '0') + '-' + String(nowTz.getDate()).padStart(2, '0');
+    const tzYestD = new Date(nowTz); tzYestD.setDate(tzYestD.getDate() - 1);
+    const tzYest = tzYestD.getFullYear() + '-' + String(tzYestD.getMonth() + 1).padStart(2, '0') + '-' + String(tzYestD.getDate()).padStart(2, '0');
+
+    const [attendanceRecords, approvedLeaves, shiftDocs, permDocs] = await Promise.all([
+      Attendance.find({ userId: { $in: monitoredIds }, date: { $in: [tzToday, tzYest] } }).select('userId date status clockIn lateFlag permission pendingPermission approvedHalfDayLeave').lean(),
+      Leave.find({ userId: { $in: monitoredIds }, status: 'approved', from: { $lte: tzToday }, to: { $gte: tzYest } }).select('userId type typeCode from to halfDay').lean(),
+      Shift.find({}).select('name startTime endTime halfDayThreshold lateThreshold').lean().catch(() => []),
+      SelfServiceRequest.find({ requestType: 'permission', status: { $in: ['approved', 'pending'] }, 'payload.date': { $in: [tzToday, tzYest] } }).select('identityId profileId status payload').lean().catch(() => []),
     ]);
-    let pendingByUser = new Map();
-    try {
-      const { SelfServiceRequest } = await import('@/lib/models/index');
-      const User = (await import('@/lib/models/User')).default;
-      const pendings = await SelfServiceRequest.find({ requestType: 'permission', status: 'pending', 'payload.date': today }).select('identityId profileId payload').lean();
-      if (pendings.length) {
-        const pUsers = await User.find({ $or: [{ identityId: { $in: pendings.map(p => p.identityId) } }, { profileId: { $in: pendings.map(p => p.profileId) } }] }).select('_id identityId profileId').lean();
-        const uMap = new Map();
-        for (const u of pUsers) {
-          if (u.identityId) uMap.set('id:' + String(u.identityId), String(u._id));
-          if (u.profileId) uMap.set('pf:' + String(u.profileId), String(u._id));
-        }
-        for (const p of pendings) {
-          const uid = uMap.get('id:' + String(p.identityId)) || uMap.get('pf:' + String(p.profileId));
-          if (uid) pendingByUser.set(uid, p);
+    const shiftById = new Map((shiftDocs || []).map((s) => [String(s._id), s]));
+    const shiftByName = new Map((shiftDocs || []).map((s) => [s.name, s]));
+
+    const attByKey = new Map();
+    for (const record of attendanceRecords || []) attByKey.set(`${String(record.userId)}|${record.date}`, record);
+
+    const leaveByKey = new Map();
+    for (const leave of approvedLeaves || []) {
+      const uid = String(leave.userId);
+      for (const d of [tzYest, tzToday]) {
+        if (leave.from <= d && d <= leave.to && !leaveByKey.has(`${uid}|${d}`)) {
+          leaveByKey.set(`${uid}|${d}`, { type: leave.type, typeCode: leave.typeCode, halfDay: !!leave.halfDay });
         }
       }
-    } catch { /* non-fatal */ }
-    const attendanceByUser = new Map(attendanceRecords.map(record => [record.userId.toString(), record]));
-    const leaveUserIds = new Set(approvedLeaves.map(leave => leave.userId.toString()));
-    const counts = { present: 0, late: 0, absent: 0, leave: 0 };
+    }
+
+    // Map permission requests (identityId/profileId) -> user + date.
+    const permByKey = new Map();
+    for (const p of permDocs || []) {
+      const d = p?.payload?.date;
+      if (!d) continue;
+      let uid = null;
+      for (const e of monitoredEmployees) {
+        const eu = e.userId || {};
+        if ((p.identityId && eu.identityId && String(eu.identityId) === String(p.identityId)) ||
+            (p.profileId && eu.profileId && String(eu.profileId) === String(p.profileId))) {
+          uid = String(eu._id || e.userId);
+          break;
+        }
+      }
+      if (!uid) continue;
+      const key = `${uid}|${d}`;
+      if (!permByKey.has(key)) {
+        permByKey.set(key, { status: p.status, startTime: p?.payload?.startTime || '', endTime: p?.payload?.endTime || '' });
+      }
+    }
+
+    // Same rule as the monitoring page and /api/absence: a missing clock-in
+    // is 'not_arrived' until the employee's halfDayThreshold elapses, then
+    // 'absent'. Permission badge persists on both states.
+    const counts = { present: 0, late: 0, absent: 0, leave: 0, not_arrived: 0 };
     const alerts = [];
     for (const employee of monitoredEmployees) {
-      const id = employee.userId.toString();
-      const record = attendanceByUser.get(id);
-      const hasApproved = !!((record?.permission?.requestId || record?.permission?.startTime));
-      const hasPending = !hasApproved && (!!(record?.pendingPermission) || pendingByUser.has(id));
+      const rawId = employee.userId?._id || employee.userId;
+      if (!rawId) continue;
+      const id = String(rawId);
+      const uDoc = employee.userId || {};
+      const sid = uDoc.shiftId || employee.shiftId;
+      const sname = employee.shift || uDoc.shift;
+      const shiftDoc = (sid && shiftById.get(String(sid))) || (sname && shiftByName.get(sname)) || null;
+      const empToday = getAttendanceDate(nowTz, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+      const record = attByKey.get(`${id}|${empToday}`) || null;
+      const leave = leaveByKey.get(`${id}|${empToday}`) || null;
+      const perm = permByKey.get(`${id}|${empToday}`)
+        || (record?.pendingPermission ? { status: 'pending', startTime: record.pendingPermission.startTime || '', endTime: record.pendingPermission.endTime || '' } : null);
+
+      const derived = deriveAbsenceKind({
+        date: empToday,
+        attendance: record,
+        leave,
+        permission: perm,
+        shiftDoc,
+        fallbackShiftName: sname || '',
+        now: nowTz,
+      });
       let status;
-      if (leaveUserIds.has(id)) status = 'leave';
-      else if (hasApproved) status = 'present';
-      else status = (record?.status === 'late' || record?.lateFlag ? 'late' : record?.status === 'present' ? 'present' : 'absent');
-      counts[status]++;
-      if (status === 'late') alerts.push({ name: employee.name, department: employee.department, status: hasPending ? 'Late + Permission pending' : 'Late', time: record?.clockIn || '', permission: hasPending ? 'pending' : null });
-      if (status === 'present' && hasApproved) alerts.push({ name: employee.name, department: employee.department, status: 'Present + Permission', time: record?.clockIn || '', permission: 'approved' });
-      else if (status === 'absent') alerts.push({ name: employee.name, department: employee.department, status: 'Absent', time: '' });
+      if (derived.kind === 'on_leave') status = 'leave';
+      else if (derived.kind === 'not_arrived') status = 'not_arrived';
+      else if (derived.kind === 'late') status = 'late';
+      else if (derived.kind === 'absent') status = 'absent';
+      else status = 'present'; // present | half_day | on_permission
+      const permBadge = derived.permissionStatus === 'approved' ? 'approved' : derived.permissionStatus === 'pending' ? 'pending' : null;
+      counts[status] = (counts[status] || 0) + 1;
+      if (status === 'late') alerts.push({ name: employee.name, department: employee.department, status: permBadge === 'pending' ? 'Late + Permission pending' : 'Late', time: record?.clockIn || '', permission: permBadge });
+      else if (status === 'present' && permBadge === 'approved') alerts.push({ name: employee.name, department: employee.department, status: 'Present + Permission', time: record?.clockIn || '', permission: 'approved' });
+      // Absent stays red-styled: permission context goes into the text, not
+      // the badge field (which the card uses for blue/amber styling).
+      else if (status === 'absent') alerts.push({ name: employee.name, department: employee.department, status: permBadge ? `Absent · Permission ${permBadge}` : 'Absent', time: '', permission: null });
+      // not_arrived and leave are not exceptions — no alert.
     }
     monitoring = { counts, alerts: alerts.slice(0, 5) };
 
     if (isSuperAdmin) {
       const allRecords = await Attendance.find({ userId: { $in: monitoredIds } }).select('userId date workProgress').sort({ date: -1 }).lean();
-      const empInfo = new Map(monitoredEmployees.map(e => [e.userId.toString(), { name: e.name, department: e.department }]));
+      const empInfo = new Map(monitoredEmployees.map(e => [String(e.userId?._id || e.userId), { name: e.name, department: e.department }]));
 
       const computeOverview = (records) => {
         const byUser = new Map();

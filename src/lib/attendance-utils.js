@@ -1,7 +1,8 @@
-import { calculateHoursWorked, computeWorkRowDuration } from './attendance-constants';
+import { calculateHoursWorked, computeWorkRowDuration, getShiftConfig } from './attendance-constants';
 import { calculateBreakDeduction } from './attendance-breaks';
-import { getShiftEndMinutes } from './shift-utils';
-import { isWorkingDay, getGlobalConfig } from './payroll-cycle';
+import { getShiftEndMinutes, resolveShift } from './shift-utils';
+import { isWorkingDay, getGlobalConfig, parseShiftStartTime } from './payroll-cycle';
+import { getAttendanceDate } from './attendance-date';
 import { Holiday, Employee } from './models/index';
 import User from './models/User';
 import Attendance from './models/Attendance';
@@ -103,13 +104,19 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   return true;
 }
 
-export async function markAbsentEmployees(dateStr) {
+export async function markAbsentEmployees(dateStr, options = {}) {
   await connectDB();
 
   const config = await getGlobalConfig();
   const holidays = await Holiday.find({ date: dateStr }).lean();
 
   if (!isWorkingDay(dateStr, config, holidays)) return 0;
+
+  const now = options.now || await getTzTime();
+  const calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+  // Future dates are never absent — the absence view shows them as blank and
+  // payroll excludes them from LOP (mid-cycle preview).
+  if (dateStr > calToday) return 0;
 
   const employees = await Employee.find({ status: 'active' })
     .populate('userId', 'name teamLeadId teamAdminId role shift shiftId')
@@ -132,6 +139,12 @@ export async function markAbsentEmployees(dateStr) {
   }).select('userId').lean();
   const onLeaveIds = new Set(onLeave.map(l => l.userId.toString()));
 
+  // Batch-load shifts once (no N+1 resolveShift per employee where possible).
+  const { Shift } = await import('./models/index');
+  const allShifts = await Shift.find({}).lean().catch(() => []);
+  const shiftById = new Map((allShifts || []).map(s => [String(s._id), s]));
+  const shiftByName = new Map((allShifts || []).map(s => [s.name, s]));
+
   let count = 0;
 
   for (const emp of activeEmployees) {
@@ -139,6 +152,42 @@ export async function markAbsentEmployees(dateStr) {
     if (!uid) continue;
     if (attendedIds.has(uid)) continue;
     if (onLeaveIds.has(uid)) continue;
+
+    // Threshold gate: a missing clock-in becomes 'absent' ONLY after the
+    // employee's halfDayThreshold has elapsed on their shift-aware today.
+    // Before that the absence view derives 'not_arrived' with no DB row.
+    try {
+      let shiftDoc = null;
+      const sid = emp.userId?.shiftId ? String(emp.userId.shiftId) : (emp.shiftId ? String(emp.shiftId) : null);
+      if (sid && shiftById.has(sid)) shiftDoc = shiftById.get(sid);
+      else {
+        const sname = emp.shift || emp.userId?.shift;
+        if (sname && shiftByName.has(sname)) shiftDoc = shiftByName.get(sname);
+        else if (sid || sname) shiftDoc = await resolveShift({ shiftId: emp.userId?.shiftId || emp.shiftId, shift: emp.shift || emp.userId?.shift }).catch(() => null);
+      }
+      const cfg = getShiftConfig(shiftDoc, config);
+      const userToday = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+      if (dateStr === userToday) {
+        let shiftStartMins = null;
+        if (shiftDoc?.startTime) {
+          const [sh, sm] = String(shiftDoc.startTime).split(':').map(Number);
+          if (!Number.isNaN(sh) && !Number.isNaN(sm)) shiftStartMins = sh * 60 + sm;
+        }
+        if (shiftStartMins === null) {
+          const parsed = parseShiftStartTime(emp.shift || emp.userId?.shift);
+          if (parsed) {
+            const [sh, sm] = parsed.split(':').map(Number);
+            shiftStartMins = sh * 60 + sm;
+          } else {
+            shiftStartMins = 9 * 60;
+          }
+        }
+        let elapsed = now.getHours() * 60 + now.getMinutes() - shiftStartMins;
+        if (elapsed < -720) elapsed += 1440;
+        if (elapsed > 720) elapsed -= 1440;
+        if (elapsed < (cfg.halfDayThreshold ?? 180)) continue; // not arrived yet — no DB write
+      }
+    } catch { /* on any shift-resolution failure, fall through and mark absent for past dates */ }
 
     await Attendance.findOneAndUpdate(
       { userId: uid, date: dateStr },

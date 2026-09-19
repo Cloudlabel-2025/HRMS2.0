@@ -43,9 +43,14 @@ function formatStatusDuration(date) {
   return `${Math.max(1, mins)}m`;
 }
 
+function todayLocalStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function isOverdue(task) {
   if (!task.due || task.status === 'Completed') return false;
-  return task.due < new Date().toISOString().slice(0, 10);
+  return String(task.due).slice(0, 10) < todayLocalStr();
 }
 
 export default function TasksPage() {
@@ -291,15 +296,19 @@ export default function TasksPage() {
     }
   };
 
+  const [movingId, setMovingId] = useState(null);
   const moveTask = async (id, newStatus, confirmed = false) => {
     const task = tasks.find(item => item._id === id);
-    if (!task || task.status === newStatus) return;
+    if (!task || task.status === newStatus || movingId) return;
     if (!confirmed) return setStatusChange({ task, newStatus, action: 'move' });
+    setMovingId(id);
     try {
-      await api.put(`/api/tasks/${id}`, { status: newStatus });
-      setTasks(prev => prev.map(t => t._id === id ? { ...t, status: newStatus } : t));
+      const updated = await api.put(`/api/tasks/${id}`, { status: newStatus, expectedFrom: task.status });
+      setTasks(prev => prev.map(t => t._id === id ? { ...t, status: updated.status || newStatus, statusHistory: updated.statusHistory || t.statusHistory } : t));
     } catch (e) {
       showToast(e.message, 'error');
+    } finally {
+      setMovingId(null);
     }
   };
 
@@ -661,9 +670,9 @@ export default function TasksPage() {
                         </div>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {STATUSES.filter(s => s !== status).filter(s => (s === 'Blocked' || s === 'Completed') ? isAdmin : true).map(s => (
-                            <button key={s} onClick={e => { e.stopPropagation(); moveTask(task._id, s); }}
-                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${STATUS_COLORS[s]}40`, background: STATUS_COLORS[s] + '10', color: STATUS_COLORS[s], cursor: 'pointer', fontWeight: 600 }}>
-                              {s}
+                            <button key={s} onClick={e => { e.stopPropagation(); moveTask(task._id, s); }} disabled={movingId === task._id}
+                              style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, border: `1px solid ${STATUS_COLORS[s]}40`, background: STATUS_COLORS[s] + '10', color: STATUS_COLORS[s], cursor: movingId === task._id ? 'wait' : 'pointer', fontWeight: 600, opacity: movingId === task._id ? 0.6 : 1 }}>
+                              {movingId === task._id ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 10, height: 10 }} />Moving…</> : s}
                             </button>
                           ))}
                         </div>

@@ -51,6 +51,19 @@ export async function POST(req) {
     const body = await req.json();
     if (!body.projectId || !body.name || !body.fileUrl) return fail('projectId, name, and fileUrl are required', 400);
     if (!await canAccessProject(user, body.projectId)) return fail('Access denied', 403);
+    try {
+      const u = new URL(String(body.fileUrl));
+      if (!['http:', 'https:'].includes(u.protocol)) return fail('fileUrl must be http(s)', 400);
+    } catch {
+      return fail('Invalid fileUrl', 400);
+    }
+    // taskId must belong to the same project when provided
+    if (body.taskId) {
+      const { Task } = await import('@/lib/models/Task');
+      const t = await Task.findById(body.taskId).select('projectId').lean();
+      if (!t) return fail('Task not found', 404);
+      if (String(t.projectId) !== String(body.projectId)) return fail('Task does not belong to this project', 400);
+    }
 
     const doc = await ProjectDocument.create({
       projectId: body.projectId,

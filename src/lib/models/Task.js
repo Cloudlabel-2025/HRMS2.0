@@ -40,7 +40,8 @@ const TaskSchema = new mongoose.Schema({
   statusHistory: [{ status: { type: String }, changedAt: { type: Date, default: Date.now }, changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } }],
   activityLog: [{ date: { type: String, required: true }, comment: { type: String, required: true }, addedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, addedAt: { type: Date, default: Date.now } }],
   due:        { type: String, required: true },
-}, { timestamps: true });
+  deletedAt:  { type: Date, default: null, index: true },
+}, { timestamps: true, optimisticConcurrency: true });
 
 // Force re-register to pick up schema changes (critical for Next.js HMR)
 if (mongoose.models.Project) delete mongoose.models.Project;
