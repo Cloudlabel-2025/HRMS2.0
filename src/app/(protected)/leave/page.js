@@ -56,6 +56,13 @@ export default function LeavePage() {
     setCurrentPage(1);
   }, [filterStatus, tab, selectedEmpId]);
   const [fieldErrs, setFieldErrs]   = useState({});
+  const [fromDateError, setFromDateError] = useState('');
+  const [toDateError, setToDateError] = useState('');
+  const dateRangeError = useMemo(() => {
+    if (form.from && form.to && form.to < form.from) return 'End date must be on or after start date';
+    return '';
+  }, [form.from, form.to]);
+  const dateFieldsInvalid = Boolean(fromDateError || toDateError || dateRangeError);
   const fieldErrTimers = typeof window !== 'undefined' ? (window.__leaveErrTimers = window.__leaveErrTimers || {}) : {};
   const clearFErr = (k) => { if(fieldErrTimers[k]) { clearTimeout(fieldErrTimers[k]); delete fieldErrTimers[k]; } setFieldErrs(p => { const n={...p}; delete n[k]; return n; }); };
 
@@ -126,7 +133,10 @@ export default function LeavePage() {
     const errs = {};
     if (!form.typeCode) errs.typeCode = 'Leave type is required';
     if (!form.from) errs.from = 'Start date is required';
+    else if (fromDateError) errs.from = fromDateError;
     if (!form.to) errs.to = 'End date is required';
+    else if (toDateError) errs.to = toDateError;
+    else if (dateRangeError) errs.to = dateRangeError;
     if (!form.reason || !form.reason.trim()) errs.reason = 'Reason is required';
     else if (form.reason.trim().length < 5) errs.reason = 'Reason must be at least 5 characters';
     else if (form.reason.length > 500) errs.reason = 'Reason must be 500 characters or fewer';
@@ -147,6 +157,8 @@ export default function LeavePage() {
       showToast('Leave application submitted');
       setShowModal(false);
       setForm(EMPTY_FORM);
+      setFromDateError('');
+      setToDateError('');
       load('my');
       setTab('my');
     } catch (e) {
@@ -516,7 +528,7 @@ export default function LeavePage() {
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">Apply for Leave</h5>
-                <button className="btn-close" onClick={() => { setShowModal(false); setFieldErrs({}); }} />
+                <button className="btn-close" onClick={() => { setShowModal(false); setFieldErrs({}); setFromDateError(''); setToDateError(''); }} />
               </div>
               <div className="modal-body">
                 <div className="mb-3">
@@ -544,13 +556,30 @@ export default function LeavePage() {
                 <div className="row g-3 mb-3">
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>From Date</label>
-                    <DateInput className={`form-control ${fieldErrs.from?'is-invalid':''}`} value={form.from} onChange={e => { setForm(p => ({ ...p, from: e.target.value })); clearFErr('from'); }} />
+                    <DateInput
+                      className={`form-control ${fieldErrs.from ? 'is-invalid' : ''}`}
+                      value={form.from}
+                      onChange={e => { setForm(p => ({ ...p, from: e.target.value })); clearFErr('from'); }}
+                      allowTyping
+                      showHint
+                      max={form.to || undefined}
+                      onErrorChange={setFromDateError}
+                    />
                     {fieldErrs.from && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.from}</div>}
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>To Date</label>
-                    <DateInput className={`form-control ${fieldErrs.to?'is-invalid':''}`} value={form.to} onChange={e => { setForm(p => ({ ...p, to: e.target.value })); clearFErr('to'); }} />
+                    <DateInput
+                      className={`form-control ${fieldErrs.to ? 'is-invalid' : ''}`}
+                      value={form.to}
+                      onChange={e => { setForm(p => ({ ...p, to: e.target.value })); clearFErr('to'); }}
+                      allowTyping
+                      showHint
+                      min={form.from || undefined}
+                      onErrorChange={setToDateError}
+                    />
                     {fieldErrs.to && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{fieldErrs.to}</div>}
+                    {!fieldErrs.to && dateRangeError && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{dateRangeError}</div>}
                   </div>
                 </div>
                 {(() => {
@@ -645,8 +674,8 @@ export default function LeavePage() {
                 </div>
               </div>
               <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleApply} disabled={saving}>
+                <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); setFieldErrs({}); setFromDateError(''); setToDateError(''); }}>Cancel</button>
+                <button className="btn btn-primary" onClick={handleApply} disabled={saving || dateFieldsInvalid}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Submitting...</> : 'Submit Application'}
                 </button>
               </div>

@@ -5,6 +5,7 @@ import { useAuth, ROLE_COLORS } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 
 import { countSaturdaysFromCycleStart } from '@/lib/saturday-cycle';
 
@@ -619,7 +620,7 @@ export default function CalendarPage() {
                 </div>
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date</label>
-                  <input className="form-control" type="date" value={holidayModal.date}
+                  <DateInput className="form-control" value={holidayModal.date}
                     onChange={e => setHolidayModal(p => ({ ...p, date: e.target.value }))} />
                 </div>
                 <div className="mb-3">

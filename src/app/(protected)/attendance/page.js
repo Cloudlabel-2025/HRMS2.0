@@ -347,6 +347,14 @@ export default function AttendancePage() {
   const [teamMonth, setTeamMonth] = useState(month);
   const [teamFromDate, setTeamFromDate] = useState('');
   const [teamToDate, setTeamToDate] = useState('');
+  const [teamFromDateError, setTeamFromDateError] = useState('');
+  const [teamToDateError, setTeamToDateError] = useState('');
+  const [regDateError, setRegDateError] = useState('');
+  const teamDateRangeError = useMemo(() => {
+    if (teamFromDate && teamToDate && teamToDate < teamFromDate) return 'To Date must be on or after From Date';
+    return '';
+  }, [teamFromDate, teamToDate]);
+  const teamDateFiltersInvalid = Boolean(teamFromDateError || teamToDateError || teamDateRangeError);
   const [showAllEmployees, setShowAllEmployees] = useState(false);
   const [downloadLoading, setDownloadLoading] = useState(false);
 
@@ -1004,6 +1012,7 @@ export default function AttendancePage() {
   // ── Regularization ──────────────────────────────────────────────────────────
   const submitRegularization = async () => {
     if (!regForm.date || !regForm.reason) { showToast('Date and reason are required', 'error'); return; }
+    if (regDateError) { showToast(regDateError, 'error'); return; }
     if (regForm.requestedIn && !TIME_RE.test(regForm.requestedIn)) { showToast('Clock in must be in HH:MM (24-hour) format', 'error'); return; }
     if (regForm.requestedOut && !TIME_RE.test(regForm.requestedOut)) { showToast('Clock out must be in HH:MM (24-hour) format', 'error'); return; }
     for (const b of (regForm.requestedBreaks || [])) {
@@ -1017,6 +1026,7 @@ export default function AttendancePage() {
       showToast('Regularization request submitted');
       setShowRegModal(false);
       setRegForm({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], reason: '' });
+      setRegDateError('');
       loadRegRequests(regScope);
     } catch (e) { showToast(e.message, 'error'); }
     finally { setRegSaving(false); }
@@ -1879,19 +1889,24 @@ export default function AttendancePage() {
                 </div>
                 <div className="col-md-3">
                   <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>From Date</label>
-                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamFromDate} onChange={e => setTeamFromDate(e.target.value)} max={teamToDate || undefined} />
+                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamFromDate} onChange={e => setTeamFromDate(e.target.value)} max={teamToDate || undefined} allowTyping showHint onErrorChange={setTeamFromDateError} />
                 </div>
                 <div className="col-md-3">
                   <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>To Date</label>
-                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} />
+                   <DateInput className="form-control" style={{ fontSize: 13 }} value={teamToDate} onChange={e => setTeamToDate(e.target.value)} min={teamFromDate || undefined} allowTyping showHint onErrorChange={setTeamToDateError} />
                 </div>
                 <div className="col-md-3">
                   <label className="form-label" style={{ fontSize: 11, fontWeight: 600 }}>&nbsp;</label>
-                  <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); setShowAllEmployees(false); setSelectedUserId(''); }}>
+                  <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={() => { setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); setTeamFromDateError(''); setTeamToDateError(''); setShowAllEmployees(false); setSelectedUserId(''); }}>
                     <i className="bi bi-arrow-counterclockwise me-1" />Reset
                   </button>
                 </div>
               </div>
+              {teamDateRangeError && (
+                <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <i className="bi bi-exclamation-circle-fill" style={{ fontSize: 11 }} />{teamDateRangeError}
+                </div>
+              )}
             </div>
           </div>
 
@@ -2197,7 +2212,7 @@ export default function AttendancePage() {
                         <i className="bi bi-calendar" style={{ color: '#3b82f6', fontSize: 14 }} />
                         <span style={{ fontSize: 13, fontWeight: 700 }}>Date</span>
                       </div>
-                      <DateInput className="form-control" value={regForm.date} max={todayStr} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} />
+                      <DateInput className="form-control" value={regForm.date} max={todayStr} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} allowTyping showHint onErrorChange={setRegDateError} />
                     </div>
                     <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -2297,11 +2312,11 @@ export default function AttendancePage() {
                     </div>
                   </div>
                   <div style={{ padding: '16px 24px', borderTop: '1px solid #f1f5f9', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                    <button className="btn btn-sm" onClick={() => setShowRegModal(false)}
+                    <button className="btn btn-sm" onClick={() => { setShowRegModal(false); setRegDateError(''); }}
                       style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, border: '1px solid #e2e8f0', borderRadius: 10, background: '#fff', color: '#64748b' }}>
                       Cancel
                     </button>
-                    <button className="btn btn-sm" onClick={submitRegularization} disabled={regSaving}
+                    <button className="btn btn-sm" onClick={submitRegularization} disabled={regSaving || Boolean(regDateError)}
                       style={{ padding: '8px 20px', fontSize: 13, fontWeight: 600, borderRadius: 10, background: 'linear-gradient(135deg,#3b82f6,#1e293b)', color: '#fff', border: 'none', opacity: regSaving ? 0.7 : 1 }}>
                       {regSaving ? <><span className="spinner-border spinner-border-sm me-2" />Submitting...</> : 'Submit Request'}
                     </button>

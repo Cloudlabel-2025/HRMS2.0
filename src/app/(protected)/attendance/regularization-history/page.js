@@ -6,6 +6,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import { MANAGER_ROLES } from '@/lib/constants';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 
 const STATUS_STYLE = {
   pending:  { bg: '#fef3c7', color: '#d97706' },
@@ -121,19 +122,19 @@ export default function RegularizationHistoryPage() {
               <option value="recruiter">Recruiter</option>
               <option value="admin_full">Admin</option>
             </select>
-            <input
-              type="date"
+            <DateInput
               className="form-control form-control-sm"
               style={{ width: 155 }}
               value={dateFrom}
+              max={dateTo || undefined}
               onChange={e => { setDateFrom(e.target.value); setPage(1); }}
               title="From date"
             />
-            <input
-              type="date"
+            <DateInput
               className="form-control form-control-sm"
               style={{ width: 155 }}
               value={dateTo}
+              min={dateFrom || undefined}
               onChange={e => { setDateTo(e.target.value); setPage(1); }}
               title="To date"
             />

@@ -3,6 +3,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok } from '@/lib/jwt';
 import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
+import User from '@/lib/models/User';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
 import { Announcement, Employee, Shift, SelfServiceRequest } from '@/lib/models/index';
@@ -254,19 +255,13 @@ export async function GET(req) {
     }
   }
 
-  const myLeaveBalance = isSelfRole
+  const isLeaveBalanceVisible = ['employee', 'intern', 'team_lead', 'team_admin'].includes(role);
+  const myLeaveBalance = isLeaveBalanceVisible
     ? 12 - await Leave.countDocuments({ userId: user._id, status: 'approved', typeCode: 'CL' })
     : 0;
 
   let pendingTasks = null;
-  if (!isAdminRole) {
-    const ownerFilter = isTeamRole ? { $in: [...teamIds, user._id] } : user._id;
-    const worksheetRecords = await Attendance.find({ userId: ownerFilter })
-      .populate('userId', 'name')
-      .select('userId date workProgress')
-      .sort({ date: -1 })
-      .lean();
-
+  const buildPendingRows = (worksheetRecords) => {
     const latest = new Map();
     const attemptDates = new Map();
 
@@ -308,7 +303,30 @@ export async function GET(req) {
         attempts: attemptDates.get(key).size,
       });
     }
-    pendingTasks = rows;
+    return rows;
+  };
+
+  if (role === 'admin_full') {
+    // Worksheet tasks: own + all employees, excluding other admin_full / super_admin.
+    // super_admin remains unrestricted via overview and can see everything there.
+    const others = await User.find({ status: 'active', role: { $nin: ['super_admin', 'admin_full'] } }).select('_id').lean().catch(() => []);
+    const ownerFilter = { $in: [user._id, ...others.map(o => o._id)] };
+    const worksheetRecords = await Attendance.find({ userId: ownerFilter })
+      .populate('userId', 'name')
+      .select('userId date workProgress')
+      .sort({ date: -1 })
+      .lean();
+    pendingTasks = buildPendingRows(worksheetRecords);
+  }
+
+  if (!isAdminRole) {
+    const ownerFilter = isTeamRole ? { $in: [...teamIds, user._id] } : user._id;
+    const worksheetRecords = await Attendance.find({ userId: ownerFilter })
+      .populate('userId', 'name')
+      .select('userId date workProgress')
+      .sort({ date: -1 })
+      .lean();
+    pendingTasks = buildPendingRows(worksheetRecords);
   }
 
   const lastPayslip = isSelfRole

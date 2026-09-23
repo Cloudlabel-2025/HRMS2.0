@@ -129,6 +129,11 @@ export default function ProfilePage() {
     }
   }, [tab, data]);
 
+  const isSuperAdminEarly = user?.role === 'super_admin';
+  useEffect(() => {
+    if (isSuperAdminEarly && ['attendance', 'workprogress', 'pendingtasks'].includes(tab)) setTab('overview');
+  }, [isSuperAdminEarly, tab]);
+
   useEffect(() => {
     if (tab === 'audit' && auditLogs.length === 0 && !auditLoading) {
       setAuditLoading(true);
@@ -408,7 +413,10 @@ export default function ProfilePage() {
   const initials = (emp.name || user?.name || '?').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
   const roleColor = ROLE_COLORS[emp.role] || '#3b82f6';
 
+  const isSuperAdmin = isSuperAdminEarly;
+  const hiddenForSuperAdmin = new Set(['attendance', 'workprogress', 'pendingtasks']);
   const visibleTabs = TABS.filter(t => {
+    if (isSuperAdmin && hiddenForSuperAdmin.has(t.key)) return false;
     if (t.key === 'payroll' && !data.payslips?.length && !salaryStructure) return false;
     return true;
   });
@@ -754,7 +762,7 @@ export default function ProfilePage() {
       )}
 
       {/* ATTENDANCE TAB */}
-      {tab === 'attendance' && (
+      {tab === 'attendance' && !isSuperAdmin && (
         <div className="row g-3">
           <div className="col-md-4">
             <div className="card text-center" style={{ padding: '32px 20px', borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', transition: 'all 0.2s' }}
@@ -1073,7 +1081,7 @@ export default function ProfilePage() {
       )}
 
       {/* WORK PROGRESS TAB */}
-      {tab === 'workprogress' && (
+      {tab === 'workprogress' && !isSuperAdmin && (
         <>
           <div className="card mb-3" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
             <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
@@ -1318,7 +1326,7 @@ export default function ProfilePage() {
       )}
 
       {/* PENDING TASKS TAB */}
-      {tab === 'pendingtasks' && (
+      {tab === 'pendingtasks' && !isSuperAdmin && (
         <div className="card" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #6366f115, #4f46e508)', border: '1px solid #6366f110', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

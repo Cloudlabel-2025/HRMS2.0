@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 import { useSettings } from '@/lib/settings';
 
 const TABS = [
@@ -266,11 +267,11 @@ export default function LeavePoliciesPage() {
                 </div>
                 <div className="col-md-4">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Effective From *</label>
-                  <input type="date" className="form-control" value={policyForm.effectiveFrom?.split('T')[0] || ''} onChange={e => setPolicyForm(p => ({ ...p, effectiveFrom: e.target.value }))} />
+                  <DateInput className="form-control" value={policyForm.effectiveFrom?.split('T')[0] || ''} onChange={e => setPolicyForm(p => ({ ...p, effectiveFrom: e.target.value }))} />
                 </div>
                 <div className="col-md-4">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Effective To (Optional)</label>
-                  <input type="date" className="form-control" value={policyForm.effectiveTo?.split('T')[0] || ''} onChange={e => setPolicyForm(p => ({ ...p, effectiveTo: e.target.value || null }))} />
+                  <DateInput className="form-control" value={policyForm.effectiveTo?.split('T')[0] || ''} min={policyForm.effectiveFrom?.split('T')[0] || undefined} onChange={e => setPolicyForm(p => ({ ...p, effectiveTo: e.target.value || null }))} />
                 </div>
                 <div className="col-md-4 d-flex align-items-end gap-3" style={{ paddingBottom: 8 }}>
                   <div className="form-check form-switch" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

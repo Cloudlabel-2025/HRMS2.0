@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 
 const CATEGORY_COLORS = { Policy: '#3b82f6', Employee: '#10b981', Contract: '#8b5cf6', HR: '#f59e0b', Other: '#64748b' };
 const CATEGORIES = ['Policy', 'Employee', 'Contract', 'HR', 'Other'];
@@ -642,7 +643,7 @@ export default function DocumentsPage() {
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Expiry Date</label>
-                    <input type="date" className="form-control" value={form.expiry} onChange={e => setForm(p => ({ ...p, expiry: e.target.value }))} />
+                    <DateInput className="form-control" value={form.expiry} onChange={e => setForm(p => ({ ...p, expiry: e.target.value }))} />
                   </div>
                   <div className="col-md-6" ref={empSearchRef} style={{ position: 'relative' }}>
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Employee (if employee-specific)</label>

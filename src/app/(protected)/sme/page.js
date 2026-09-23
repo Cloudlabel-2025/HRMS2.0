@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 import { useSettings } from '@/lib/settings';
 
 const EMPTY_SME = {
@@ -765,11 +766,11 @@ export default function SMEPage() {
                 </div>
                 <div className="col-md-2">
                   <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>From Date</label>
-                  <input type="date" className="form-control form-control-sm" value={leaveFromDate} onChange={e => setLeaveFromDate(e.target.value)} style={{ fontSize: 13 }} />
+                  <DateInput className="form-control form-control-sm" value={leaveFromDate} onChange={e => setLeaveFromDate(e.target.value)} style={{ fontSize: 13 }} />
                 </div>
                 <div className="col-md-2">
                   <label style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>To Date</label>
-                  <input type="date" className="form-control form-control-sm" value={leaveToDate} onChange={e => setLeaveToDate(e.target.value)} style={{ fontSize: 13 }} />
+                  <DateInput className="form-control form-control-sm" value={leaveToDate} min={leaveFromDate || undefined} onChange={e => setLeaveToDate(e.target.value)} style={{ fontSize: 13 }} />
                 </div>
                 <div className="col-md-3 d-flex gap-2">
                   <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12, borderRadius: 8 }} onClick={() => { setLeaveSearchTerm(''); setLeaveTypeFilter('all'); setLeaveFromDate(''); setLeaveToDate(''); setLeaveStatusFilter('all'); }}>
@@ -949,7 +950,7 @@ export default function SMEPage() {
                   )}
                   <div className="col-md-3">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Date of Birth</label>
-                    <input type="date" className="form-control" value={form.dob} onChange={e => setForm(p => ({ ...p, dob: e.target.value }))} />
+                    <DateInput className="form-control" value={form.dob} onChange={e => setForm(p => ({ ...p, dob: e.target.value }))} />
                   </div>
                   <div className="col-md-3">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Phone</label>
@@ -1070,11 +1071,11 @@ export default function SMEPage() {
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Contract Start Date</label>
-                    <input type="date" className="form-control" value={form.contractStart} onChange={e => setForm(p => ({ ...p, contractStart: e.target.value }))} />
+                    <DateInput className="form-control" value={form.contractStart} max={form.contractEnd || undefined} onChange={e => setForm(p => ({ ...p, contractStart: e.target.value }))} />
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Contract End Date</label>
-                    <input type="date" className="form-control" value={form.contractEnd} onChange={e => setForm(p => ({ ...p, contractEnd: e.target.value }))} />
+                    <DateInput className="form-control" value={form.contractEnd} min={form.contractStart || undefined} onChange={e => setForm(p => ({ ...p, contractEnd: e.target.value }))} />
                   </div>
                 </div>
               </div>

@@ -5,7 +5,7 @@ import { useSettings } from '@/lib/settings';
 const MIN_YEAR = 1900;
 const MAX_YEAR = 2100;
 
-function validateDate(iso, min, max) {
+function validateDate(iso, min, max, formatFn) {
   if (!iso) return '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return 'Invalid date format';
   const [y, m, d] = iso.split('-').map(Number);
@@ -13,8 +13,9 @@ function validateDate(iso, min, max) {
   if (m < 1 || m > 12) return `Month ${m} is invalid (must be 01-12)`;
   const daysInMonth = new Date(y, m, 0).getDate();
   if (d < 1 || d > daysInMonth) return `Day ${d} is invalid (max ${daysInMonth} for month ${m})`;
-  if (min && iso < min) return `Must be on or after ${min}`;
-  if (max && iso > max) return `Must be on or before ${max}`;
+  const fmt = typeof formatFn === 'function' ? formatFn : (v => v);
+  if (min && iso < min) return `Must be on or after ${fmt(min)}`;
+  if (max && iso > max) return `Must be on or before ${fmt(max)}`;
   return '';
 }
 
@@ -40,7 +41,29 @@ function parseDisplayToISO(display, dateFormat) {
   return iso;
 }
 
-export default function DateInput({ value, onChange, min, max, className = 'form-control', style: styleProp, showHint, allowTyping = false, onErrorChange, ...props }) {
+// Auto-slash masking driven by Settings -> General -> Date Format.
+// Digits-only input is re-rendered with separators in the correct position
+// so typing 01022026 becomes 01/02/2026 (or 02/01/2026 / 2026-02-01).
+function maskDigits(digits, dateFormat) {
+  const d = String(digits || '').replace(/\D/g, '').slice(0, 8);
+  if (!d) return '';
+  if (dateFormat === 'YYYY-MM-DD') {
+    const y = d.slice(0, 4);
+    const m = d.slice(4, 6);
+    const dd = d.slice(6, 8);
+    if (d.length <= 4) return y;
+    if (d.length <= 6) return y + '-' + m;
+    return y + '-' + m + '-' + dd;
+  }
+  const p1 = d.slice(0, 2);
+  const p2 = d.slice(2, 4);
+  const y = d.slice(4, 8);
+  if (d.length <= 2) return p1;
+  if (d.length <= 4) return p1 + '/' + p2;
+  return p1 + '/' + p2 + '/' + y;
+}
+
+export default function DateInput({ value, onChange, min, max, className = 'form-control', style: styleProp, showHint, allowTyping = true, onErrorChange, ...props }) {
   const [error, setError] = useState('');
   const { settings, formatDate } = useSettings();
   const [display, setDisplay] = useState(value ? formatDate(value) : '');
@@ -52,10 +75,11 @@ export default function DateInput({ value, onChange, min, max, className = 'form
   }, [error, onErrorChange]);
 
   // Re-validate when bounds change (e.g. data range or cross-field min/max).
+  // min/max messages follow Settings -> General -> Date Format via formatDate.
   useEffect(() => {
     if (!value) return;
-    setError(validateDate(value, min, max));
-  }, [min, max, value]);
+    setError(validateDate(value, min, max, formatDate));
+  }, [min, max, value, formatDate]);
 
   // Keep typed text in sync when the ISO value changes externally
   // (e.g. picked from calendar, cleared). Don't clobber while focused.
@@ -66,29 +90,38 @@ export default function DateInput({ value, onChange, min, max, className = 'form
 
   const handleChange = useCallback((e) => {
     const iso = e.target.value;
-    const nextError = validateDate(iso, min, max);
+    const nextError = validateDate(iso, min, max, formatDate);
     setError(nextError);
     onChange(e);
-  }, [min, max, onChange]);
+  }, [min, max, onChange, formatDate]);
 
   const handleTextChange = useCallback((e) => {
-    const next = e.target.value;
-    setDisplay(next);
-    if (!next.trim()) {
+    const raw = e.target.value;
+    const digits = String(raw || '').replace(/\D/g, '').slice(0, 8);
+    if (!digits) {
+      setDisplay('');
       setError('');
       onChange({ target: { value: '' } });
       return;
     }
-    const iso = parseDisplayToISO(next, settings.dateFormat);
+    const masked = maskDigits(digits, settings.dateFormat);
+    setDisplay(masked);
+    // Only validate + commit once a complete date is typed; partial input
+    // stays editable without blocking the parent form.
+    if (masked.length < 10) {
+      setError('');
+      return;
+    }
+    const iso = parseDisplayToISO(masked, settings.dateFormat);
     if (iso === null) {
       setError(`Invalid date format. Use ${settings.dateFormat}`);
       return;
     }
-    const nextError = validateDate(iso, min, max);
+    const nextError = validateDate(iso, min, max, formatDate);
     setError(nextError);
     // Only commit valid dates so parent state always stays a real ISO date.
     if (!nextError) onChange({ target: { value: iso } });
-  }, [min, max, onChange, settings.dateFormat]);
+  }, [min, max, onChange, settings.dateFormat, formatDate]);
 
   const handleBlur = useCallback(() => {
     if (!display.trim()) {
@@ -96,15 +129,19 @@ export default function DateInput({ value, onChange, min, max, className = 'form
       setError('');
       return;
     }
+    if (display.replace(/\D/g, '').length < 8) {
+      setError(`Incomplete date. Use ${settings.dateFormat}`);
+      return;
+    }
     const iso = parseDisplayToISO(display, settings.dateFormat);
     if (iso === null) {
       setError(`Invalid date format. Use ${settings.dateFormat}`);
       return;
     }
-    const nextError = validateDate(iso, min, max);
+    const nextError = validateDate(iso, min, max, formatDate);
     setError(nextError);
     if (!nextError) {
-      // Normalize e.g. 1/2/2026 -> 01/02/2026
+      // Normalize e.g. 1/2/2026 -> 01/02/2026 per Settings -> General -> Date Format
       setDisplay(formatDate(iso));
       if (iso !== value) onChange({ target: { value: iso } });
     }
@@ -155,9 +192,6 @@ export default function DateInput({ value, onChange, min, max, className = 'form
             {...props}
           />
         </div>
-        {showHint && !hasError && (
-          <div style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Format: {settings.dateFormat}</div>
-        )}
         {hasError && (
           <div style={{ color: '#ef4444', fontSize: 11, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
             <i className="bi bi-exclamation-circle-fill" style={{ fontSize: 10 }} />{error}
@@ -180,6 +214,10 @@ export default function DateInput({ value, onChange, min, max, className = 'form
           onBlur={handleBlur}
           disabled={props.disabled}
           aria-invalid={hasError}
+          inputMode="numeric"
+          maxLength={10}
+          autoComplete="off"
+          spellCheck={false}
           style={{
             borderColor: hasError ? '#ef4444' : undefined,
             paddingRight: 38,
@@ -212,9 +250,6 @@ export default function DateInput({ value, onChange, min, max, className = 'form
           {...props}
         />
       </div>
-      {showHint && !hasError && (
-        <div style={{ color: '#64748b', fontSize: 10, marginTop: 2 }}>Format: {settings.dateFormat} · type or pick</div>
-      )}
       {hasError && (
         <div style={{ color: '#ef4444', fontSize: 11, marginTop: 2, display: 'flex', alignItems: 'center', gap: 4 }}>
           <i className="bi bi-exclamation-circle-fill" style={{ fontSize: 10 }} />{error}
