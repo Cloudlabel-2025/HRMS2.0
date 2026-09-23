@@ -115,6 +115,8 @@ export default function WorkProgressPage() {
   const [filterToMonth, setFilterToMonth] = useState('');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
+  const [fromDateError, setFromDateError] = useState('');
+  const [toDateError, setToDateError] = useState('');
 
   // Download timer
   const [showTimer, setShowTimer] = useState(false);
@@ -164,7 +166,22 @@ export default function WorkProgressPage() {
     setFilterToMonth('');
     setFilterFromDate('');
     setFilterToDate('');
+    setFromDateError('');
+    setToDateError('');
   };
+
+  // Actual data range — From/To dates are strictly limited to this range.
+  const dataBounds = useMemo(() => {
+    const dates = cycles.flatMap(c => (c.dates || []).map(d => d.date)).filter(Boolean).sort();
+    return dates.length ? { min: dates[0], max: dates[dates.length - 1] } : { min: '', max: '' };
+  }, [cycles]);
+  const dateRangeError = useMemo(() => {
+    if (filterFromDate && dataBounds.min && filterFromDate < dataBounds.min) return `From Date must be on or after ${formatDate(dataBounds.min)}`;
+    if (filterToDate && dataBounds.max && filterToDate > dataBounds.max) return `To Date must be on or before ${formatDate(dataBounds.max)}`;
+    if (filterFromDate && filterToDate && filterFromDate > filterToDate) return 'From Date must be on or before To Date';
+    return '';
+  }, [filterFromDate, filterToDate, dataBounds, formatDate]);
+  const dateFiltersInvalid = Boolean(fromDateError || toDateError || dateRangeError);
 
   // Build available month options from data
   const monthOptions = useMemo(() => {
@@ -216,6 +233,10 @@ export default function WorkProgressPage() {
   }, [filteredCycles]);
 
   const handleDownload = () => {
+    if (dateFiltersInvalid) {
+      showToast(dateRangeError || fromDateError || toDateError || 'Fix the date filters before downloading.', 'error');
+      return;
+    }
     const rows = toCsvRows(filteredCycles, formatTime);
     const entryCount = rows.length - 1; // minus header
 
@@ -292,7 +313,7 @@ export default function WorkProgressPage() {
                 )}
               </div>
             </div>
-            <button className="btn btn-primary" style={{ fontSize: 13, padding: '8px 20px' }} onClick={handleDownload} disabled={filteredCycles.length === 0}>
+            <button className="btn btn-primary" style={{ fontSize: 13, padding: '8px 20px' }} onClick={handleDownload} disabled={filteredCycles.length === 0 || dateFiltersInvalid} title={dateFiltersInvalid ? (dateRangeError || fromDateError || toDateError) : undefined}>
               <i className="bi bi-download me-2" />Download{filteredCycles.length > 0 ? ` (${totalEntryCount} entries)` : ''}
             </button>
           </div>
@@ -322,11 +343,31 @@ export default function WorkProgressPage() {
           </div>
           <div className="col-md-2">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
-            <DateInput className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
+            <DateInput
+              className="form-control"
+              style={{ fontSize: 13 }}
+              value={filterFromDate}
+              onChange={e => setFilterFromDate(e.target.value)}
+              allowTyping
+              showHint
+              min={dataBounds.min || undefined}
+              max={filterToDate || dataBounds.max || undefined}
+              onErrorChange={setFromDateError}
+            />
           </div>
           <div className="col-md-2">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
-            <DateInput className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
+            <DateInput
+              className="form-control"
+              style={{ fontSize: 13 }}
+              value={filterToDate}
+              onChange={e => setFilterToDate(e.target.value)}
+              allowTyping
+              showHint
+              min={filterFromDate || dataBounds.min || undefined}
+              max={dataBounds.max || undefined}
+              onErrorChange={setToDateError}
+            />
           </div>
           <div className="col-md-2">
             <button className="btn btn-outline-secondary w-100" style={{ fontSize: 13 }} onClick={resetFilters}>
@@ -334,6 +375,17 @@ export default function WorkProgressPage() {
             </button>
           </div>
         </div>
+        {dataBounds.min && dataBounds.max && (
+          <div style={{ fontSize: 11.5, color: '#64748b', marginTop: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <i className="bi bi-calendar-range" style={{ fontSize: 12, color: '#3b82f6' }} />
+            Data available: {formatDate(dataBounds.min)} – {formatDate(dataBounds.max)} · type or pick a date within this range
+          </div>
+        )}
+        {dateRangeError && (
+          <div style={{ fontSize: 12, color: '#dc2626', marginTop: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <i className="bi bi-exclamation-circle-fill" style={{ fontSize: 11 }} />{dateRangeError}
+          </div>
+        )}
       </FilterCard>
 
       {filteredCycles.length === 0 ? (

@@ -361,6 +361,11 @@ export default function EmployeeProfilePage() {
     setShowCancelConfirm(false);
   };
 
+  const isViewedSuperAdminEarly = data?.employee?.role === 'super_admin';
+  useEffect(() => {
+    if (isViewedSuperAdminEarly && ['attendance', 'workprogress', 'pendingtasks'].includes(tab)) setTab('overview');
+  }, [isViewedSuperAdminEarly, tab]);
+
   if (loading) return (
     <AppShell title="Loading...">
       <div style={{ textAlign: 'center', padding: 100 }}><div className="spinner-border text-primary" /></div>
@@ -406,7 +411,10 @@ export default function EmployeeProfilePage() {
       setIdSaving(false);
     }
   };
+  const isViewedSuperAdmin = isViewedSuperAdminEarly;
+  const hiddenForSuperAdmin = new Set(['attendance', 'workprogress', 'pendingtasks']);
   const visibleTabs = TABS.filter(t => {
+    if (isViewedSuperAdmin && hiddenForSuperAdmin.has(t.key)) return false;
     if (t.key === 'payroll' && !['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (!data.payslips?.length)) return false;
     if (t.key === 'audit' && (!['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString())) return false;
     if ((t.key === 'workprogress' || t.key === 'pendingtasks') && !(['super_admin', 'admin_full'].includes(user?.role) || user?._id === emp.userId?.toString() || user?.id === emp.userId?.toString() || (['team_admin', 'team_lead'].includes(user?.role) && canAccessDepartment(user, emp.department)))) return false;
@@ -772,7 +780,7 @@ export default function EmployeeProfilePage() {
       )}
 
       {/* ATTENDANCE TAB */}
-      {tab === 'attendance' && (
+      {tab === 'attendance' && !isViewedSuperAdmin && (
         <div className="row g-3">
           <div className="col-md-4">
             <div className="card text-center" style={{ padding: '32px 20px', borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)', transition: 'all 0.2s' }}
@@ -1045,7 +1053,7 @@ export default function EmployeeProfilePage() {
       )}
 
       {/* WORK PROGRESS TAB */}
-      {tab === 'workprogress' && (
+      {tab === 'workprogress' && !isViewedSuperAdmin && (
         <>
           <div className="card mb-3" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
             <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
@@ -1259,7 +1267,7 @@ export default function EmployeeProfilePage() {
       )}
 
       {/* PENDING TASKS TAB */}
-      {tab === 'pendingtasks' && (
+      {tab === 'pendingtasks' && !isViewedSuperAdmin && (
         <div className="card" style={{ borderRadius: 14, border: '1px solid rgba(226,232,240,0.8)', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #6366f115, #4f46e508)', border: '1px solid #6366f110', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

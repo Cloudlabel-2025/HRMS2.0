@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 
 const RATING_COLOR = (r) => r >= 4.5 ? '#10b981' : r >= 3.5 ? '#3b82f6' : r >= 2.5 ? '#f59e0b' : '#ef4444';
 const RATING_LABEL = (r) => r >= 4.5 ? 'Excellent' : r >= 3.5 ? 'Good' : r >= 2.5 ? 'Average' : 'Needs Improvement';
@@ -806,7 +807,7 @@ export default function PerformancePage() {
                 <div className="row g-3">
                   <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Goal Title *</label><input className="form-control" maxLength={35} value={goalForm.title} onChange={e => setGoalForm(p => ({ ...p, title: e.target.value }))} /></div>
                   {showAssigneeSelector && <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To</label><select className="form-select" value={goalForm.userId} onChange={e => setGoalForm(p => ({ ...p, userId: e.target.value }))}><option value="">Myself</option>{assignableEmployees.filter(e => e.userId?.toString() !== user?.id).map(e => <option key={e._id} value={e.userId}>{e.name}</option>)}</select></div>}
-                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date *</label><input type="date" className="form-control" min={targetDateMin} max={targetDateMax} value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
+                  <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Target Date *</label><DateInput className="form-control" min={targetDateMin} max={targetDateMax} value={goalForm.target} onChange={e => setGoalForm(p => ({ ...p, target: e.target.value }))} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Cycle</label><input className="form-control" value={goalForm.cycle} disabled style={{ background: '#f1f5f9', cursor: 'not-allowed' }} /></div>
                   <div className="col-6"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Progress %</label><input type="number" min="0" max="100" className="form-control" value={goalForm.progress} onChange={e => setGoalForm(p => ({ ...p, progress: +e.target.value }))} /></div>
                 </div>

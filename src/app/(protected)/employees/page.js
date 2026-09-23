@@ -57,9 +57,16 @@ export default function EmployeesPage() {
   const [firstLoginPage, setFirstLoginPage] = useState(1);
   const pageSize = 10;
 
+  const canViewFirstLogin = ['super_admin', 'admin_full'].includes(user?.role);
+  const visibleTabs = canViewFirstLogin ? ['directory', 'orgchart', 'firstlogin'] : ['directory', 'orgchart'];
+
   useEffect(() => {
     setDirPage(1);
   }, [search, filterDept, filterRole, filterStatus]);
+
+  useEffect(() => {
+    if (!canViewFirstLogin && tab === 'firstlogin') setTab('directory');
+  }, [canViewFirstLogin, tab]);
   const [firstLoginsLoading, setFirstLoginsLoading] = useState(false);
   const [showModal, setShowModal]   = useState(false);
   const [editEmp, setEditEmp]       = useState(null);
@@ -316,8 +323,8 @@ export default function EmployeesPage() {
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 20, background: '#f1f4f9', borderRadius: 14, padding: 4, width: 'fit-content' }}>
-        {['directory', 'orgchart', 'firstlogin'].map(t => (
-          <button key={t} onClick={() => { setTab(t); if (t === 'firstlogin') loadFirstLogins(); }}
+        {visibleTabs.map(t => (
+          <button key={t} onClick={() => { setTab(t); if (t === 'firstlogin' && canViewFirstLogin) loadFirstLogins(); }}
             style={{ padding: '8px 20px', borderRadius: 10, border: 'none', fontWeight: 600, fontSize: 13, cursor: 'pointer', background: tab === t ? '#fff' : 'transparent', color: tab === t ? '#0f172a' : '#64748b', boxShadow: tab === t ? '0 1px 4px rgba(0,0,0,0.08)' : 'none', transition: 'all 0.2s' }}>
             {t === 'directory' ? 'Directory' : t === 'orgchart' ? 'Org Chart' : <><i className="bi bi-box-arrow-in-right me-1" />First Login</>}
           </button>

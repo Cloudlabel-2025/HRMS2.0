@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
+import DateInput from '@/components/DateInput';
 import { useSettings } from '@/lib/settings';
 
 function InfoRow({ icon, label, value }) {
@@ -187,11 +188,11 @@ export default function SMEProfilePage() {
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>From Date *</label>
-                    <input type="date" className="form-control" value={leaveForm.from} onChange={e => setLeaveForm(p => ({ ...p, from: e.target.value }))} />
+                    <DateInput className="form-control" value={leaveForm.from} max={leaveForm.to || undefined} onChange={e => setLeaveForm(p => ({ ...p, from: e.target.value }))} />
                   </div>
                   <div className="col-md-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>To Date *</label>
-                    <input type="date" className="form-control" value={leaveForm.to} onChange={e => setLeaveForm(p => ({ ...p, to: e.target.value }))} />
+                    <DateInput className="form-control" value={leaveForm.to} min={leaveForm.from || undefined} onChange={e => setLeaveForm(p => ({ ...p, to: e.target.value }))} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Reason *</label>

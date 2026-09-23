@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 import { formatMins } from '@/lib/format';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -20,6 +21,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingPage, setPendingPage] = useState(1);
+  const [overviewPage, setOverviewPage] = useState(1);
+  const OVERVIEW_PAGE_SIZE = 8;
+  const [showOthersTasks, setShowOthersTasks] = useState(false);
   const [continueTask, setContinueTask] = useState(null);
   const [continuing, setContinuing] = useState(false);
   const [taskMsg, setTaskMsg] = useState('');
@@ -90,7 +94,11 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setPendingPage(1);
-  }, [stats?.pendingTasks?.length]);
+  }, [stats?.pendingTasks?.length, showOthersTasks]);
+
+  useEffect(() => {
+    setOverviewPage(1);
+  }, [stats?.overview?.length]);
 
   const refresh = () => api.get('/api/dashboard').then(setStats).catch(e => setError(e.message));
 
@@ -149,6 +157,7 @@ export default function DashboardPage() {
 
   const role = user.role;
   const isSuperAdmin = role === 'super_admin';
+  const isAdminFull = role === 'admin_full';
   const isAdmin     = ['super_admin', 'admin_full'].includes(role);
   const isTeamLead  = role === 'team_lead';
   const isTeamAdmin = role === 'team_admin';
@@ -162,12 +171,12 @@ export default function DashboardPage() {
       { label: 'Open Tasks',       value: stats.myPendingTasks,  icon: 'bi-check2-square',  color: '#8b5cf6' },
     ] : isTeamLead ? [
       { label: 'Team Members',     value: stats.totalEmployees,  icon: 'bi-people',         color: '#3b82f6' },
-      { label: 'Present Today',    value: stats.presentToday,    icon: 'bi-person-check',   color: '#10b981' },
+      { label: 'Leave Balance',    value: stats.myLeaveBalance,  icon: 'bi-calendar-check', color: '#3b82f6' },
       { label: 'Pending Approvals',value: stats.pendingLeaves,   icon: 'bi-calendar-check', color: '#f59e0b' },
       { label: 'Team Tasks',       value: stats.myPendingTasks,  icon: 'bi-check2-square',  color: '#8b5cf6' },
     ] : isTeamAdmin ? [
       { label: 'Team Members',     value: stats.totalEmployees,  icon: 'bi-people',         color: '#3b82f6' },
-      { label: 'Present Today',    value: stats.presentToday,    icon: 'bi-person-check',   color: '#10b981' },
+      { label: 'Leave Balance',    value: stats.myLeaveBalance,  icon: 'bi-calendar-check', color: '#3b82f6' },
       { label: 'Leave Approvals',  value: stats.pendingLeaves,   icon: 'bi-calendar-check', color: '#f59e0b' },
       { label: 'Team Tasks',       value: stats.myPendingTasks,  icon: 'bi-check2-square',  color: '#8b5cf6' },
     ] : isRecruiter ? [
@@ -201,12 +210,17 @@ export default function DashboardPage() {
   };
 
   // Quick actions based on role
-  const quickActions = isAdmin ? [
+  const quickActions = isSuperAdmin ? [
     { icon: 'bi-person-plus', label: 'Add Employee', color: '#3b82f6', href: '/employees' },
     { icon: 'bi-calendar-check', label: 'Approve Leaves', color: '#f59e0b', href: '/leave' },
     { icon: 'bi-cash-stack', label: 'Run Payroll', color: '#10b981', href: '/payroll' },
     { icon: 'bi-megaphone', label: 'Announce', color: '#8b5cf6', href: '/communication' },
-    ...(!isSuperAdmin ? [{ icon: 'bi-shield-check', label: 'Request Permission', color: '#14b8a6', onClick: () => setShowPermissionModal(true) }] : []),
+  ] : isAdminFull ? [
+    { icon: 'bi-clock', label: 'Mark Attendance', color: '#3b82f6', href: '/attendance' },
+    { icon: 'bi-calendar-check', label: 'Approve Leaves', color: '#f59e0b', href: '/leave' },
+    { icon: 'bi-cash-stack', label: 'Run Payroll', color: '#10b981', href: '/payroll' },
+    { icon: 'bi-megaphone', label: 'Announce', color: '#8b5cf6', href: '/communication' },
+    { icon: 'bi-shield-check', label: 'Request Permission', color: '#14b8a6', onClick: () => setShowPermissionModal(true) },
   ] : [
     { icon: 'bi-clock', label: 'Mark Attendance', color: '#3b82f6', href: '/attendance' },
     { icon: 'bi-calendar-plus', label: 'Request Leave', color: '#f59e0b', href: '/leave' },
@@ -329,7 +343,8 @@ export default function DashboardPage() {
         {stats?.overview?.length > 0 && <Link href="/employees" style={{ marginLeft: 'auto', color: '#ef4444', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>All employees <i className="bi bi-arrow-right" /></Link>}
       </div>
       {stats?.overview?.length ? (
-        stats.overview.map((emp, i) => (
+        <>
+        {(stats.overview || []).slice((overviewPage - 1) * OVERVIEW_PAGE_SIZE, overviewPage * OVERVIEW_PAGE_SIZE).map((emp, i) => (
           <div key={emp.userId} style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', borderLeft: emp.high ? '3px solid #ef4444' : '3px solid transparent', background: emp.high ? '#fef2f2' : 'transparent' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <div style={{ minWidth: 0, flex: 1 }}>
@@ -356,8 +371,89 @@ export default function DashboardPage() {
               <span className="badge" style={{ background: emp.high ? '#fee2e2' : '#f1f5f9', color: emp.high ? '#b91c1c' : '#64748b', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{emp.pendingCount} pending</span>
             </div>
           </div>
-        ))
+        ))}
+        {(stats?.overview?.length || 0) > OVERVIEW_PAGE_SIZE && (
+          <Pagination currentPage={overviewPage} totalPages={Math.ceil((stats?.overview?.length || 0) / OVERVIEW_PAGE_SIZE)} onPageChange={setOverviewPage} totalItems={stats?.overview?.length || 0} pageSize={OVERVIEW_PAGE_SIZE} />
+        )}
+        </>
       ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No pending tasks</p></div>}
+    </div>
+  );
+
+  const adminMyTasks = (stats?.pendingTasks || []).filter(t => t.assigneeId === String(user?._id));
+  const adminOthersTasks = (stats?.pendingTasks || []).filter(t => t.assigneeId !== String(user?._id));
+  const adminDisplayedTasks = showOthersTasks ? adminOthersTasks : adminMyTasks;
+
+  const adminPendingTasksCard = (
+    <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #8b5cf615, #3b82f615)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <i className="bi bi-check2-square" style={{ color: '#8b5cf6', fontSize: 15 }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Pending Tasks</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12, flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', margin: 0 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, minWidth: 132, color: showOthersTasks ? '#0f172a' : '#8b5cf6' }}>
+            {showOthersTasks ? 'Others pending tasks' : 'My tasks'}
+          </span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showOthersTasks}
+            aria-label="Toggle my vs others pending tasks"
+            onClick={() => setShowOthersTasks(v => !v)}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowOthersTasks(v => !v); } }}
+            style={{
+              width: 44, height: 24, borderRadius: 999, border: 'none', padding: 2,
+              background: showOthersTasks ? '#0f172a' : '#8b5cf6',
+              transition: 'background 0.2s', position: 'relative', flexShrink: 0, cursor: 'pointer',
+            }}
+          >
+            <span style={{
+              width: 20, height: 20, borderRadius: '50%', background: '#fff', display: 'block',
+              transform: showOthersTasks ? 'translateX(20px)' : 'translateX(0)',
+              transition: 'transform 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+            }} />
+          </button>
+          <span className="badge" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 10.5, fontWeight: 700 }}>
+            {showOthersTasks ? `${adminOthersTasks.length} tasks` : `${adminMyTasks.length} tasks`}
+          </span>
+        </label>
+      </div>
+      {adminDisplayedTasks?.length ? (
+        <>
+          {adminDisplayedTasks.slice((pendingPage - 1) * 8, pendingPage * 8).map((task, i) => {
+            const isOwn = task.assigneeId === String(user?._id);
+            const eff = task.carriedForward ? 'pending' : task.status;
+            const isHigh = (task.attempts || 0) > 1;
+            return (
+              <div key={task._id || i}
+                onClick={isOwn ? () => { setTaskMsg(''); setContinueTask(task); } : undefined}
+                onMouseEnter={isOwn ? e => { e.currentTarget.style.background = '#f8fafc'; } : undefined}
+                onMouseLeave={isOwn ? e => { e.currentTarget.style.background = 'transparent'; } : undefined}
+                style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9', cursor: isOwn ? 'pointer' : 'default', transition: 'background 0.15s ease' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#f1f5f9', color: '#64748b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><i className={isOwn ? 'bi bi-list-task' : 'bi bi-lock'} /></div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                      <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{task.text}</div>
+                      <span className="badge" style={{ background: isOwn ? '#dcfce7' : '#f1f5f9', color: isOwn ? '#16a34a' : '#64748b', fontSize: 9.5, fontWeight: 800, padding: '2px 7px', letterSpacing: 0.4, flexShrink: 0 }}>{isOwn ? 'MINE' : 'OTHERS'}</span>
+                      {isHigh && <span className="badge" style={{ background: '#fee2e2', color: '#b91c1c', fontSize: 9.5, fontWeight: 800, padding: '2px 7px', letterSpacing: 0.4, flexShrink: 0 }}>HIGH</span>}
+                    </div>
+                    <div style={{ color: '#94a3b8', fontSize: 11.5 }}>
+                      {formatDate(task.date)}{task.duration ? ` · ${formatMins(task.duration)}` : ''}{task.assignee ? ` · ${task.assignee}` : ''}{task.attempts > 0 ? ` · Tried ${task.attempts} time${task.attempts > 1 ? 's' : ''}` : ''}
+                    </div>
+                    {task.remarks ? <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.remarks}</div> : null}
+                  </div>
+                  <span className="badge" style={{ background: (WORK_STATUS_COLORS[eff] || '#64748b') + '20', color: WORK_STATUS_COLORS[eff] || '#64748b', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{WORK_STATUS_LABELS[eff] || eff}</span>
+                </div>
+              </div>
+            );
+          })}
+          <Pagination currentPage={pendingPage} totalPages={Math.ceil((adminDisplayedTasks?.length || 0) / 8)} onPageChange={setPendingPage} totalItems={adminDisplayedTasks?.length || 0} pageSize={8} />
+        </>
+      ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>{showOthersTasks ? 'No pending tasks from others' : 'No pending tasks'}</p></div>}
     </div>
   );
 
@@ -476,6 +572,16 @@ export default function DashboardPage() {
                 <div className="col-12">{monitoringCard}</div>
               </div>
             </>
+          ) : isAdminFull ? (
+            <>
+              <div className="row g-3">
+                <div className="col-lg-6">{adminPendingTasksCard}</div>
+                <div className="col-lg-6">{announcementsCard}</div>
+              </div>
+              <div className="row g-3">
+                <div className="col-12">{monitoringCard}</div>
+              </div>
+            </>
           ) : (
             <div className="row g-3">
               <div className="col-lg-6">{monitoringCard}</div>
@@ -528,7 +634,7 @@ export default function DashboardPage() {
 
               <div className="mb-3">
                 <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Date <span style={{color:'#ef4444'}}>*</span></label>
-                <input type="date" className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={new Date().toISOString().split('T')[0]} />
+                <DateInput className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={new Date().toISOString().split('T')[0]} />
               </div>
 
               <div className="row g-3 mb-3">
