@@ -100,6 +100,17 @@ export async function POST(req) {
       return fail('Super administrators cannot submit permission requests', 403);
     }
 
+    if (body.requestType === 'profile_update' && body.payload?.preferredName) {
+      const name = String(body.payload.preferredName).trim().replace(/\s{2,}/g, ' ');
+      if (name.length > 50) {
+        return fail('Preferred name must be 50 characters or less', 400);
+      }
+      if (name && !/^[A-Z][a-zA-Z ]*$/.test(name)) {
+        return fail('Preferred name must start with a capital letter and contain only alphabets and spaces', 400);
+      }
+      body.payload.preferredName = name;
+    }
+
     const identityId = user.identityId;
     if (!identityId) {
       auditLog('Self-Service Request Failed', 'SelfService', user._id, 'Identity link not found', 'low', ip, null, user._id);

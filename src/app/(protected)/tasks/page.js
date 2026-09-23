@@ -255,7 +255,7 @@ export default function TasksPage() {
 
   const handleSave = async (confirmed = false) => {
     if (!form.title) { showToast('Task title is required', 'error'); return; }
-    if (form.title.length > 30) { showToast('Task title must be at most 30 characters', 'error'); return; }
+    if (form.title.length > 75) { showToast('Task title must be at most 75 characters', 'error'); return; }
     if (!form.title.trim()) { showToast('Task title cannot contain only spaces', 'error'); return; }
     if (!form.description) { showToast('Task description is required', 'error'); return; }
     if (!form.projectId) { showToast('Please select a project', 'error'); return; }
@@ -490,7 +490,7 @@ export default function TasksPage() {
 
   const handleCreateProject = async () => {
     if (!projectForm.name) { showToast('Project name is required', 'error'); return; }
-    if (projectForm.name.length > 30) { showToast('Project name must be at most 30 characters', 'error'); return; }
+    if (projectForm.name.length > 75) { showToast('Project name must be at most 75 characters', 'error'); return; }
     if (!projectForm.name.trim()) { showToast('Project name cannot contain only spaces', 'error'); return; }
     if (!projectForm.description) { showToast('Description is required', 'error'); return; }
     if (!projectForm.responsibleTo) { showToast('Project responsible person is required', 'error'); return; }
@@ -882,7 +882,7 @@ export default function TasksPage() {
                   <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-list-check me-2" />Task Details</div></div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task Title *</label>
-                    <input className="form-control" maxLength={30} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} disabled={!canEditForm} />
+                    <input className="form-control" maxLength={75} value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))} disabled={!canEditForm} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description *</label>
@@ -1083,7 +1083,7 @@ export default function TasksPage() {
                 <div className="row g-3">
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Name *</label>
-                    <input className="form-control" maxLength={30} value={projectForm.name} onChange={e => setProjectForm(p => ({ ...p, name: e.target.value }))} />
+                    <input className="form-control" maxLength={75} value={projectForm.name} onChange={e => setProjectForm(p => ({ ...p, name: e.target.value }))} />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Description *</label>

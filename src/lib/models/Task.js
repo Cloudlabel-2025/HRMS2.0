@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 
 const ProjectSchema = new mongoose.Schema({
-  name:        { type: String, required: true, trim: true, maxlength: 30 },
+  name:        { type: String, required: true, trim: true, maxlength: 75 },
   description: { type: String, required: true },
   team:        [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   responsibleTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
@@ -30,7 +30,7 @@ const ProjectSchema = new mongoose.Schema({
 });
 
 const TaskSchema = new mongoose.Schema({
-  title:      { type: String, required: true, trim: true, maxlength: 30 },
+  title:      { type: String, required: true, trim: true, maxlength: 75 },
   description:{ type: String, required: true },
   projectId:  { type: mongoose.Schema.Types.ObjectId, ref: 'Project', required: true },
   assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },

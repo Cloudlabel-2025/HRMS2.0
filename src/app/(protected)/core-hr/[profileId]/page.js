@@ -15,7 +15,7 @@ const ACTIONS = [
   { key: 'promotion',         label: 'Promote',    icon: 'bi-graph-up-arrow',   color: '#10b981', help: 'Record a new designation for the employee.' },
   { key: 'rehire',            label: 'Rehire',     icon: 'bi-person-plus',      color: '#06b6d4', help: 'Restore a separated employee with new assignment details.' },
   { key: 'suspend',           label: 'Suspend',    icon: 'bi-pause-circle',     color: '#f59e0b', help: 'Place an employee on suspension.' },
-  { key: 'separation',        label: 'Separate',   icon: 'bi-box-arrow-right',  color: '#ef4444', help: 'Record exit details and track offboarding clearance.' },
+  { key: 'separation',        label: 'Exit',       icon: 'bi-box-arrow-right',  color: '#ef4444', help: 'Record exit details and track offboarding clearance.' },
   { key: 'finalize_exit',     label: 'Finalize Exit', icon: 'bi-person-x',      color: '#dc2626', help: 'Complete employment on or after the confirmed last working date.' },
 ];
 

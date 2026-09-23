@@ -49,7 +49,7 @@ export async function POST(req) {
       if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return fail('Invalid start or end date', 400);
       if (e < s) return fail('End date must be on or after start date', 400);
     }
-    if (body.name.length > 30 || !body.name.trim()) return fail('Project name must be between 1 and 30 characters', 400);
+    if (body.name.length > 75 || !body.name.trim()) return fail('Project name must be between 1 and 75 characters', 400);
     let team = Array.isArray(body.team) ? body.team.filter(Boolean) : [];
     // Resolve team IDs to departments so ID-only payloads cannot bypass cross-dept detection
     let crossDept = await isCrossDeptProject(user, { departments: Array.isArray(body.departments) ? body.departments : [], team });

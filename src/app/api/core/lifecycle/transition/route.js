@@ -151,7 +151,7 @@ export async function POST(req) {
       return fail('This employee is already separated. Use rehire to create a new employment period.', 409);
     }
     if (['transfer', 'promotion', 'suspend'].includes(action) && separatedStatuses.includes(profile.employmentStatus)) {
-      return fail('Separated employees cannot be changed. Rehire the employee first.', 409);
+      return fail('Exited employees cannot be changed. Rehire the employee first.', 409);
     }
     if (action === 'suspend' && profile.employmentStatus === 'suspended') {
       return fail('This employee is already suspended', 409);

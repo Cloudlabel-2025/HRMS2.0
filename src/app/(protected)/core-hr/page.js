@@ -142,7 +142,7 @@ export default function CoreHrPage() {
           { label: 'Active',        value: profiles.filter(p => p.employmentStatus === 'active').length,                                icon: 'bi-person-check', color: '#10b981' },
           { label: 'Onboarding',    value: profiles.filter(p => ['onboarding','probation'].includes(p.employmentStatus)).length,         icon: 'bi-person-plus',  color: '#f59e0b' },
           { label: 'Notice Period', value: profiles.filter(p => p.employmentStatus === 'notice_period').length,                         icon: 'bi-hourglass-split', color: '#d97706' },
-          { label: 'Separated',     value: profiles.filter(p => ['resigned','terminated','retired'].includes(p.employmentStatus)).length, icon: 'bi-person-dash',  color: '#ef4444' },
+          { label: 'Exited',        value: profiles.filter(p => ['resigned','terminated','retired'].includes(p.employmentStatus)).length, icon: 'bi-person-dash',  color: '#ef4444' },
         ].map(s => (
           <div key={s.label} style={{ background: '#fff', border: '1px solid #f1f5f9', borderRadius: 12, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div>

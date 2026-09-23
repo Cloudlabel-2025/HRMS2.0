@@ -119,6 +119,33 @@ export async function GET(req) {
       }).map(leave => ({ ...leave, canAct: true }));
     }
 
+    // ── Type color/name enrichment ──────────────────────────────────────
+    // All Leaves spans many users/policies, so the frontend cannot resolve
+    // badge colors from a single viewer's policy. Each row carries its own
+    // typeColor/typeName (own policy wins; active policies cover legacy
+    // rows without policyId).
+    const enrichIds = [...new Set(leaves.map(leave => leave.policyId?.toString()).filter(Boolean))];
+    let enrichPolicies = enrichIds.length
+      ? await LeavePolicy.find({ _id: { $in: enrichIds } }).select('leaveTypeConfigs').lean()
+      : [];
+    if (leaves.some(leave => !leave.policyId)) {
+      const actives = await LeavePolicy.find({ status: 'active' }).select('leaveTypeConfigs').sort({ createdAt: -1 }).lean();
+      enrichPolicies = [...enrichPolicies, ...actives];
+    }
+    const colorByCode = new Map();
+    for (const p of enrichPolicies) {
+      for (const c of p.leaveTypeConfigs || []) {
+        if (c?.code && !colorByCode.has(c.code)) {
+          colorByCode.set(c.code, { color: c.color || '', name: c.name || '' });
+        }
+      }
+    }
+    leaves = leaves.map(leave => ({
+      ...leave,
+      typeColor: colorByCode.get(leave.typeCode)?.color || null,
+      typeName: colorByCode.get(leave.typeCode)?.name || leave.type || leave.typeCode,
+    }));
+
     return ok(leaves);
   } catch (e) {
     return fail(e.message, 500);
