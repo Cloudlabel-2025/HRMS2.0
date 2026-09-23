@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import Pagination from '@/components/Pagination';
 import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
@@ -46,6 +47,10 @@ export default function MonitoringPage() {
   const [departments, setDepartments] = useState([]);
   const [workProgressEmp, setWorkProgressEmp] = useState(null);
   const [patternFlags, setPatternFlags] = useState([]);
+  const [teamPage, setTeamPage] = useState(1);
+  const [flagPage, setFlagPage] = useState(1);
+  const TEAM_PAGE_SIZE = 12;
+  const FLAG_PAGE_SIZE = 6;
 
   const isSuperAdmin = user?.role === 'super_admin';
   const isFullMonitoring = ['super_admin', 'admin_full'].includes(user?.role);
@@ -217,6 +222,14 @@ export default function MonitoringPage() {
     fetchData();
   }, [user]);
 
+  useEffect(() => {
+    setTeamPage(1);
+  }, [filterStatus, filterDept, searchTerm, showPendingPermissions]);
+
+  useEffect(() => {
+    setFlagPage(1);
+  }, [patternFlags]);
+
   const depts = departments;
   const normalizedSearch = searchTerm.trim().toLowerCase();
   const pendingHiddenCount = team.filter(e => e.permissionStatus === 'pending').length;
@@ -226,6 +239,10 @@ export default function MonitoringPage() {
     (!normalizedSearch || [e.name, e.employeeNumber, e.dept, e.designation].some(value => String(value || '').toLowerCase().includes(normalizedSearch)))
   );
   const filtered = showPendingPermissions ? baseFiltered : baseFiltered.filter(e => e.permissionStatus !== 'pending');
+  const paginatedTeam = filtered.slice((teamPage - 1) * TEAM_PAGE_SIZE, teamPage * TEAM_PAGE_SIZE);
+  const totalTeamPages = Math.ceil(filtered.length / TEAM_PAGE_SIZE);
+  const paginatedFlags = patternFlags.slice((flagPage - 1) * FLAG_PAGE_SIZE, flagPage * FLAG_PAGE_SIZE);
+  const totalFlagPages = Math.ceil(patternFlags.length / FLAG_PAGE_SIZE);
 
   const counts = {
     present: team.filter(e => e.status === 'present').length,
@@ -270,7 +287,10 @@ export default function MonitoringPage() {
 
       {patternFlags.length > 0 && <div className="card p-3 mb-4" style={{ border: '1px solid #fde68a', background: '#fffbeb' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}><i className="bi bi-flag-fill" style={{ color: '#d97706' }} /><span style={{ fontSize: 14, fontWeight: 750, color: '#92400e' }}>Attendance Pattern Review Flags</span><span style={{ fontSize: 11, color: '#a16207' }}>Evidence-based signals — not disciplinary findings</span></div>
-        <div className="row g-2">{patternFlags.map((flag, index) => <div key={`${flag.employee?.userId || flag.employee?._id}-${flag.type}-${index}`} className="col-md-6 col-xl-4"><div style={{ background: '#fff', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}>{flag.employee?.name}</div><div style={{ fontSize: 11.5, color: '#d97706', fontWeight: 700, marginTop: 3 }}>{flag.type}</div><div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>{flag.evidence}</div><div style={{ fontSize: 10.5, color: '#a16207', marginTop: 6 }}>{flag.reviewState}</div></div></div>)}</div>
+        <div className="row g-2">{paginatedFlags.map((flag, index) => <div key={`${flag.employee?.userId || flag.employee?._id}-${flag.type}-${(flagPage - 1) * FLAG_PAGE_SIZE + index}`} className="col-md-6 col-xl-4"><div style={{ background: '#fff', border: '1px solid #fde68a', borderRadius: 10, padding: 12 }}><div style={{ fontSize: 13, fontWeight: 700, color: '#334155' }}>{flag.employee?.name}</div><div style={{ fontSize: 11.5, color: '#d97706', fontWeight: 700, marginTop: 3 }}>{flag.type}</div><div style={{ fontSize: 11.5, color: '#64748b', marginTop: 4 }}>{flag.evidence}</div><div style={{ fontSize: 10.5, color: '#a16207', marginTop: 6 }}>{flag.reviewState}</div></div></div>)}</div>
+        {totalFlagPages > 1 && (
+          <Pagination currentPage={flagPage} totalPages={totalFlagPages} onPageChange={setFlagPage} totalItems={patternFlags.length} pageSize={FLAG_PAGE_SIZE} />
+        )}
       </div>}
 
       {!showPendingPermissions && pendingHiddenCount > 0 && !loading && (
@@ -327,7 +347,7 @@ export default function MonitoringPage() {
               )}
 
               <div className="row g-2">
-                {filtered.map(emp => {
+                {paginatedTeam.map(emp => {
                   const style = STATUS_STYLE[emp.status] || STATUS_STYLE.absent;
                   const activeBreakStyle = emp.onBreak ? breakStyle(emp.activeBreakType) : null;
                   const dotColor = emp.isLoggedOut ? '#64748b' : emp.onBreak ? activeBreakStyle.color : style.color;
@@ -424,6 +444,9 @@ export default function MonitoringPage() {
                   );
                 })}
               </div>
+              {filtered.length > 0 && (
+                <Pagination currentPage={teamPage} totalPages={totalTeamPages} onPageChange={setTeamPage} totalItems={filtered.length} pageSize={TEAM_PAGE_SIZE} />
+              )}
             </div>
           </div>
 

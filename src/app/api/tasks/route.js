@@ -55,9 +55,9 @@ export async function POST(req) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: title is required', 'low', ip, null, user._id);
       return fail('Task title is required', 400);
     }
-    if (body.title.length > 30 || !body.title.trim()) {
+    if (body.title.length > 75 || !body.title.trim()) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: invalid title', 'low', ip, null, user._id);
-      return fail('Task title must be between 1 and 30 characters', 400);
+      return fail('Task title must be between 1 and 75 characters', 400);
     }
     if (!body.description) {
       auditLog('Task Create Failed', 'Tasks', user._id, 'Failed to create task: description is required', 'low', ip, null, user._id);

@@ -61,8 +61,11 @@ export default function SelfServicePage() {
     if (form.requestType === 'profile_update') {
       if (!form.personalPhone) errs.personalPhone = 'Personal phone is required';
       else if (!/^\d{10}$/.test(form.personalPhone)) errs.personalPhone = 'Personal phone must be exactly 10 digits';
-      if (form.preferredName && !/^[A-Z][a-zA-Z]*$/.test(form.preferredName)) errs.preferredName = 'Preferred name must start with a capital letter and contain only alphabets';
-      else if (form.preferredName && form.preferredName.length > 25) errs.preferredName = 'Preferred name must be 25 characters or less';
+      if (form.preferredName) {
+        const t = form.preferredName.trim().replace(/\s{2,}/g, ' ');
+        if (t && !/^[A-Z][a-zA-Z ]*$/.test(t)) errs.preferredName = 'Preferred name must start with a capital letter and contain only alphabets and spaces';
+        else if (t.length > 50) errs.preferredName = 'Preferred name must be 50 characters or less';
+      }
       if (form.secondaryPhone && !/^\d{10}$/.test(form.secondaryPhone)) errs.secondaryPhone = 'Secondary phone must be exactly 10 digits';
     }
     if (form.requestType === 'address_update') {
@@ -171,7 +174,7 @@ export default function SelfServicePage() {
 
     const payload = { requestType: form.requestType, reason: form.reason, payload: {} };
     if (form.requestType === 'profile_update') {
-      payload.payload.preferredName = form.preferredName;
+      payload.payload.preferredName = form.preferredName.trim().replace(/\s{2,}/g, ' ');
       payload.payload.personalPhone = form.personalPhone;
       payload.payload.secondaryPhone = form.secondaryPhone;
     }
@@ -364,7 +367,7 @@ export default function SelfServicePage() {
 
               {form.requestType === 'profile_update' && (
                 <>
-                  <div className="col-md-4"><label className="form-label">Preferred Name</label><input className={`form-control${formErrors.preferredName ? ' is-invalid' : ''}`} value={form.preferredName} onChange={e => { let v = e.target.value.replace(/[^a-zA-Z]/g, '').slice(0, 25); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setForm(prev => ({ ...prev, preferredName: v })); clearError('preferredName'); }} />{formErrors.preferredName && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.preferredName}</div>}</div>
+                  <div className="col-md-4"><label className="form-label">Preferred Name</label><input className={`form-control${formErrors.preferredName ? ' is-invalid' : ''}`} value={form.preferredName} maxLength={50} onChange={e => { let v = e.target.value.replace(/[^a-zA-Z ]/g, '').replace(/\s{2,}/g, ' ').slice(0, 50); if (v.startsWith(' ')) v = v.slice(1); if (v.length > 0) v = v.charAt(0).toUpperCase() + v.slice(1); setForm(prev => ({ ...prev, preferredName: v })); clearError('preferredName'); }} />{formErrors.preferredName && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.preferredName}</div>}</div>
                   <div className="col-md-4"><label className="form-label">Personal Phone <span style={{color:'#ef4444'}}>*</span></label><input className={`form-control${formErrors.personalPhone ? ' is-invalid' : ''}`} value={form.personalPhone} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, personalPhone: v })); clearError('personalPhone'); }} />{formErrors.personalPhone && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.personalPhone}</div>}</div>
                   <div className="col-md-4"><label className="form-label">Secondary Phone</label><input className={`form-control${formErrors.secondaryPhone ? ' is-invalid' : ''}`} value={form.secondaryPhone} onChange={e => { const v = e.target.value.replace(/\D/g, '').slice(0, 10); setForm(prev => ({ ...prev, secondaryPhone: v })); clearError('secondaryPhone'); }} />{formErrors.secondaryPhone && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.secondaryPhone}</div>}</div>
                 </>

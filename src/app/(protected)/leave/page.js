@@ -17,6 +17,11 @@ const STATUS_STYLE = {
 };
 const EMPTY_FORM = { typeCode: '', from: '', to: '', reason: '', halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', documents: [], _showTimePicker: false };
 
+// Saturated fallback so a type badge is never light-on-light (previously
+// '#e2e8f0' + white text looked transparent when the viewer's policy map
+// missed a cross-policy typeCode in All Leaves).
+const FALLBACK_TYPE_COLORS = { CL: '#3b82f6', SL: '#10b981', PL: '#f59e0b', LOP: '#ef4444', ML: '#ec4899', PATL: '#8b5cf6' };
+
 function ApprovalBadge({ value, holdReason }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
   return (
@@ -70,34 +75,19 @@ export default function LeavePage() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     setLoading(true);
-    Promise.all([
-      api.get('/api/leave/balance').then(d => {
-        console.log('[LEAVE DEBUG] Balance API response:', d);
-        setBalanceData(d);
-      }).catch(e => {
-        console.error('[LEAVE DEBUG] Balance API error:', e.message);
-      }),
-    ]).finally(() => setLoading(false));
-  }, [user]);
-
-  useEffect(() => {
-    if (user && targetUserId) {
-      api.get(`/api/leave/balance?userId=${targetUserId}`).then(d => {
-        console.log('[LEAVE DEBUG] Balance API response (target user):', d);
-        setBalanceData(d);
-      }).catch(e => {
-        console.error('[LEAVE DEBUG] Balance API error (target user):', e.message);
-      });
-    } else if (user && tab === 'my') {
-      api.get('/api/leave/balance').then(d => {
-        console.log('[LEAVE DEBUG] Balance API response:', d);
-        setBalanceData(d);
-      }).catch(e => {
-        console.error('[LEAVE DEBUG] Balance API error:', e.message);
-      });
-    }
-  }, [targetUserId, tab]);
+    const url = targetUserId ? `/api/leave/balance?userId=${targetUserId}` : '/api/leave/balance';
+    api.get(url).then(d => {
+      if (!cancelled) setBalanceData(d);
+    }).catch(e => {
+      // 'Session expired' is handled globally by api.js (redirect to login); don't spam console.
+      if (!cancelled && e.message !== 'Session expired') {
+        console.error('Balance API error:', e.message);
+      }
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [user, targetUserId, tab]);
 
   const load = async (scope) => {
     setLoading(true);
@@ -417,7 +407,7 @@ export default function LeavePage() {
                         )}
                         <td style={{ fontSize: 13 }}>
                           {l.typeCode ? (
-                            <span className="badge" style={{ background: typeMap[l.typeCode]?.color || '#e2e8f0', color: '#fff' }}>
+                            <span className="badge" title={l.typeName || l.type || l.typeCode} style={{ background: l.typeColor || typeMap[l.typeCode]?.color || FALLBACK_TYPE_COLORS[l.typeCode] || '#3b82f6', color: '#fff' }}>
                               {l.typeCode}
                             </span>
                           ) : l.type}

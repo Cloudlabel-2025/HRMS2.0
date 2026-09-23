@@ -39,8 +39,10 @@ export async function PUT(req, { params }) {
       return ok(updated);
     }
 
-    // Status-only update — any role can do this
-    const statusKeys = Object.keys(body).filter(k => body[k] !== undefined);
+    // Status-only update — any role can do this.
+    // expectedFrom is the optimistic-concurrency token the kanban buttons
+    // send alongside status; it must not force the full-update branch.
+    const statusKeys = Object.keys(body).filter(k => body[k] !== undefined && k !== 'expectedFrom');
     if (statusKeys.length === 1 && statusKeys[0] === 'status' && body.status) {
       if (!['To Do', 'In Progress', 'Pending', 'Completed', 'Blocked'].includes(body.status)) return fail('Invalid task status', 400);
       // Employees/interns can only update their own tasks
@@ -74,8 +76,8 @@ export async function PUT(req, { params }) {
     if (!body.title || !body.description || !body.projectId || !body.assignedTo || !body.priority || !body.due) {
       return fail('All fields are required', 400);
     }
-    if (body.title.length > 30 || !body.title.trim()) {
-      return fail('Task title must be between 1 and 30 characters', 400);
+    if (body.title.length > 75 || !body.title.trim()) {
+      return fail('Task title must be between 1 and 75 characters', 400);
     }
 
     const nextAssignee = await User.findById(body.assignedTo).select('status').lean();
