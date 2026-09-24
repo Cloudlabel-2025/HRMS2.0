@@ -100,10 +100,10 @@ export async function POST(req) {
       return fail('Super administrators cannot submit permission requests', 403);
     }
 
-<<<<<<< HEAD
     if (body.requestType === 'permission' && String(body.reason || '').trim().length > 300) {
       return fail('Reason must be 300 characters or less for permission requests', 400);
-=======
+    }
+
     if (body.requestType === 'profile_update' && body.payload?.preferredName) {
       const name = String(body.payload.preferredName).trim().replace(/\s{2,}/g, ' ');
       if (name.length > 50) {
@@ -113,7 +113,6 @@ export async function POST(req) {
         return fail('Preferred name must start with a capital letter and contain only alphabets and spaces', 400);
       }
       body.payload.preferredName = name;
->>>>>>> karun
     }
 
     const identityId = user.identityId;
