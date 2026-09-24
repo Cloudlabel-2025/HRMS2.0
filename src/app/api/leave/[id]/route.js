@@ -313,6 +313,28 @@ export async function PUT(req, { params }) {
     if (leave.status === 'rejected') return fail('This leave has already been finalised', 400);
     if (isAdmin && leave.status === 'approved' && !hasObjection) return fail('This leave is already approved with no objections', 400);
 
+    async function materializeLeaveAttendance(targetLeave) {
+      if (targetLeave.status !== 'approved') return;
+      const isEmp = !!(targetLeave.userId?.role && isEmployer(targetLeave.userId.role));
+      if (isEmp) return;
+      try {
+        const cfg = await getGlobalConfig();
+        const fromDate = new Date(targetLeave.from + 'T00:00:00');
+        const toDate = new Date(targetLeave.to + 'T00:00:00');
+        const holidays = await Holiday.find({ date: { $gte: targetLeave.from, $lte: targetLeave.to } }).lean();
+        for (let d = new Date(fromDate); d <= toDate; d.setDate(d.getDate() + 1)) {
+          const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+          if (!isWorkingDay(dateStr, cfg, holidays)) continue;
+          const isHalf = !!targetLeave.halfDay && targetLeave.from === targetLeave.to;
+          await Attendance.findOneAndUpdate(
+            { userId: targetLeave.userId._id || targetLeave.userId, date: dateStr },
+            { $set: { userId: targetLeave.userId._id || targetLeave.userId, date: dateStr, status: isHalf ? 'half_day' : 'leave', relatedLeaveId: targetLeave._id, approvedHalfDayLeave: isHalf } },
+            { upsert: true, new: true }
+          );
+        }
+      } catch (e) { console.error('Failed to materialize SME leave attendance:', e?.message || e); }
+    }
+
     // ── SME Leave: simple admin approval, skip multi-level chain ──
     if (leave.smeId) {
       if (!isAdmin) return fail('Access denied', 403);
@@ -327,6 +349,7 @@ export async function PUT(req, { params }) {
         await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
       }
       await leave.save();
+      if (action === 'approved') await materializeLeaveAttendance(leave);
       await auditLog(`Leave ${action}`, 'Leave', user._id, `${action} SME leave for ${leave.days} days (${leave.from} to ${leave.to})`, action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, applicantId);
       return ok(leave);
     }

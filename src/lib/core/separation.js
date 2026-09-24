@@ -88,6 +88,7 @@ async function syncLinkedRecords(profile, identity) {
       teamLeadId: reporting.teamLeadId,
       teamAdminId: reporting.teamAdminId,
       status: userStatus,
+      role: profile.rbacRole,
     }, { upsert: false });
   }
 }

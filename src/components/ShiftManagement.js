@@ -78,7 +78,7 @@ export default function ShiftManagement() {
     empSearch: '',
   });
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 5000); };
 
   const loadData = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -191,12 +191,16 @@ export default function ShiftManagement() {
       });
       setConfirmOpen(false);
       setPreview(null);
-      if (res.scheduled) {
-        showToast(`Scheduled for ${formatDate(res.effectiveDate)} — ${res.count} employee(s) will move to ${res.shiftName}.`);
-      } else {
-        showToast(`Applied — ${res.applied} employee(s) moved to ${res.shiftName}.`);
-      }
       await loadData(true);
+      if (res.scheduled) {
+        showToast(`Process successfully created — scheduled for ${formatDate(res.effectiveDate)} — ${res.count} employee(s) will move to ${res.shiftName}.`, 'success');
+      } else {
+        showToast(`Process successfully created — ${res.applied} employee(s) moved to ${res.shiftName} immediately.`, 'success');
+      }
+      setForm({ shiftId: '', effectiveDate: todayLocal(), reason: '', userIds: [], roles: [...ASSIGNABLE_ROLES], fromShiftId: '', empSearch: '' });
+      setAttempted(false);
+      setEmpPage(1);
+      if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -221,8 +225,10 @@ export default function ShiftManagement() {
   return (
     <>
       {toast && (
-        <div className={`alert alert-${toast.type === 'error' ? 'danger' : 'success'} py-2`} style={{ fontSize: 13 }}>
-          <i className={`bi ${toast.type === 'error' ? 'bi-exclamation-circle' : 'bi-check-circle'} me-1`} />{toast.msg}
+        <div className="toast-container-custom">
+          <div className={`toast-custom ${toast.type}`}>
+            <i className={`bi ${toast.type === 'error' ? 'bi-exclamation-circle' : 'bi-check-circle'} me-2`} />{toast.msg}
+          </div>
         </div>
       )}
 
@@ -507,12 +513,15 @@ export default function ShiftManagement() {
             <div className="mt-1"><span style={{ color: '#94a3b8', fontWeight: 700 }}>When:</span> {isImmediate ? 'Immediately' : formatDate(form.effectiveDate)}</div>
             <div className="mt-1"><span style={{ color: '#94a3b8', fontWeight: 700 }}>Reason:</span> {form.reason}</div>
           </div>
-          <p className="mb-0" style={{ fontSize: 12, color: '#ef4444' }}>
-            <i className="bi bi-exclamation-triangle me-1" />
-            {isImmediate
-              ? 'Applies instantly to all matching active employees (super_admin is always excluded).'
-              : 'Applied automatically on the effective date. Employees on the target shift are skipped.'}
-          </p>
+          <div style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+            <i className="bi bi-exclamation-triangle" style={{ color: '#f59e0b', flexShrink: 0, marginTop: 1 }} />
+            <span>
+              <strong style={{ color: '#92400e' }}>Warning: </strong>
+              {isImmediate
+                ? 'Applies instantly to all matching active employees (super_admin is always excluded).'
+                : 'Applied automatically on the effective date. Employees on the target shift are skipped.'}
+            </span>
+          </div>
         </div>
       </ConfirmModal>
     </>

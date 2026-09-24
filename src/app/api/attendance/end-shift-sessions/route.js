@@ -37,11 +37,11 @@ export async function POST(req) {
     const userIds = users.map(u => u._id);
     if (userIds.length === 0) return ok({ message: 'No employees are assigned to this shift.', count: 0, records: [] });
 
+    // Admin force: close even regularizationOutOpen sessions (criteria 5,6 — no permanent suppression)
     const records = await Attendance.find({
       userId: { $in: userIds },
       clockIn: { $ne: null },
       clockOut: null,
-      regularizationOutOpen: { $ne: true },
     }).lean();
 
     let count = 0;
@@ -78,6 +78,7 @@ export async function POST(req) {
           $set: {
             clockOut: clockOutTime,
             autoLoggedOut: true,
+            regularizationOutOpen: false,
             status,
             hoursWorked,
             payableHours,

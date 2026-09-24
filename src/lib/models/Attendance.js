@@ -30,9 +30,12 @@ const AttendanceSchema = new mongoose.Schema({
     completedAt: { type: String, default: null },
     completedDate: { type: String, default: null },
     tries: { type: Number, default: null },
+    permissionRequestId: { type: mongoose.Schema.Types.ObjectId, ref: 'SelfServiceRequest', default: null },
+    resumedAfter: { type: String, enum: ['break', 'permission'], default: null },
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
+  halfDayThresholdExceeded: { type: Boolean, default: false },
   note:       { type: String, default: '' },
   absenceReason: { type: String, default: '' },
   autoLoggedOut: { type: Boolean, default: false },
@@ -68,9 +71,22 @@ const AttendanceSchema = new mongoose.Schema({
     status: { type: String, enum: ['approved'], default: 'approved' },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     approvedAt: { type: Date, default: null },
+    endedAt: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    endedEarly: { type: Boolean, default: false },
   },
 }, { timestamps: true });
 
 AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
+
+if (mongoose.models.Attendance) {
+  const existing = mongoose.models.Attendance;
+  const hasEndedAt = !!existing.schema.path('permission.endedAt');
+  const hasPermReqId = !!existing.schema.path('workProgress.permissionRequestId');
+  const hasResumedAfter = !!existing.schema.path('workProgress.resumedAfter');
+  if (!hasEndedAt || !hasPermReqId || !hasResumedAfter) {
+    delete mongoose.models.Attendance;
+    if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
+  }
+}
 
 export default mongoose.models.Attendance || mongoose.model('Attendance', AttendanceSchema);

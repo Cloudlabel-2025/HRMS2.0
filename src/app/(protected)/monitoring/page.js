@@ -52,7 +52,6 @@ export default function MonitoringPage() {
   const TEAM_PAGE_SIZE = 12;
   const FLAG_PAGE_SIZE = 6;
 
-  const isSuperAdmin = user?.role === 'super_admin';
   const isFullMonitoring = ['super_admin', 'admin_full'].includes(user?.role);
 
   const fetchData = async (quiet = false) => {
@@ -368,10 +367,10 @@ export default function MonitoringPage() {
                           border: emp.autoLoggedOut ? '1px solid #f59e0b' : '1px solid #e2e8f0',
                           borderRadius: 12,
                           padding: 14,
-                          cursor: isSuperAdmin ? 'pointer' : 'default',
+                          cursor: isFullMonitoring ? 'pointer' : 'default',
                           transition: 'box-shadow 0.15s',
                         }}
-                        onClick={() => isSuperAdmin && setWorkProgressEmp(emp)}
+                        onClick={() => isFullMonitoring && setWorkProgressEmp(emp)}
                       >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -434,7 +433,7 @@ export default function MonitoringPage() {
                             <i className="bi bi-exclamation-triangle" />Late login flagged{emp.permissionStatus === 'pending' ? ' · Permission pending' : ''}
                           </div>
                         )}
-                        {isSuperAdmin && (
+                        {isFullMonitoring && (
                           <div style={{ marginTop: 8, fontSize: 10, color: '#3b82f6', display: 'flex', alignItems: 'center', gap: 4 }}>
                             <i className="bi bi-eye" /> Click to view work progress
                           </div>
@@ -475,7 +474,7 @@ export default function MonitoringPage() {
       )}
 
       {/* Work Progress Modal */}
-      {isSuperAdmin && workProgressEmp && (
+      {isFullMonitoring && workProgressEmp && (
         <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setWorkProgressEmp(null)}>
           <div className="modal-dialog modal-dialog-centered modal-lg" onClick={e => e.stopPropagation()}>
             <div className="modal-content">

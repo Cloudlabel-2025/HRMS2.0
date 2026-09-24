@@ -8,10 +8,11 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { matchBreakRule } from '@/lib/attendance-breaks';
+import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
 import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -112,11 +113,20 @@ export async function GET(req) {
       if (sd) shiftByUserId[u._id.toString()] = sd;
     }
 
-    // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer)
+    // Lazy auto-logout honoring each user's shift setup (shift-aware deadlines, overnight-correct).
+    // For past dates use historical shift (criterion 2); regularizationOutOpen only defers until grace (criteria 5/6).
+    const _calTodayForAuto = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     for (const rec of raw) {
       if (!rec.clockIn || rec.clockOut) continue;
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
-      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      let shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      // Historical shift for past dates so grace deadline matches that day's config
+      if (rec.date && rec.date !== _calTodayForAuto && rec.userId?._id) {
+        try {
+          const hist = await resolveShiftForDate(rec.userId, rec.date);
+          if (hist) shiftDoc = hist;
+        } catch { /* fallback to current */ }
+      }
       const cfg = getShiftConfig(shiftDoc, config);
       if (await checkAndApplyAutoLogout(rec, now, cfg, shiftDoc, employerIdSet.has(rec.userId?._id?.toString()))) {
         await Attendance.findByIdAndUpdate(rec._id, {
@@ -185,6 +195,7 @@ export async function GET(req) {
       if (rec.approvedHalfDayLeave) {
         rec.status = 'half_day';
         rec.lateFlag = false;
+        rec.halfDayThresholdExceeded = false;
       } else if (shiftFound) {
         const result = resolveDayStatus({
           clockIn: rec.clockIn,
@@ -198,14 +209,16 @@ export async function GET(req) {
         });
         rec.status = result.status;
         rec.lateFlag = result.lateFlag;
+        rec.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
       }
-      // Permission day: highlight real hours but never mark shortHours.
-      // Per product decision: ANY approved permission forces Present (even mid-day).
       if (rec.permission?.requestId || rec.permission?.startTime) {
         rec.status = 'present';
         rec.lateFlag = false;
+        rec.halfDayThresholdExceeded = false;
         rec.shortHours = false;
         rec._permissionStatus = 'approved';
+      } else {
+        rec.halfDayThresholdExceeded = !!rec.halfDayThresholdExceeded;
       }
     }
 
@@ -277,20 +290,117 @@ export async function GET(req) {
       console.error('Pending permission join failed:', e?.message || e);
     }
 
-    // Persist corrected status/lateFlag/shortHours for all recalculated records
+    const nowTimeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    const permissionDirtyIds = new Set();
+    for (const rec of raw) {
+      if (!rec.clockIn || rec.clockOut) continue;
+      if (reconcilePermissionWorkProgress(rec, nowTimeStr)) permissionDirtyIds.add(String(rec._id));
+    }
+
+    if (raw.length === 0 && scope === 'my' && date) {
+      try {
+        const { SelfServiceRequest } = await import('@/lib/models/index');
+        const reqs = await SelfServiceRequest.find({
+          $or: [{ identityId: user.identityId }, { profileId: user.profileId }],
+          requestType: 'permission',
+          'payload.date': date,
+          status: { $in: ['pending', 'approved'] },
+        }).sort({ createdAt: -1 }).lean();
+        if (reqs.length > 0) {
+          const r = reqs[0];
+          const isApproved = r.status === 'approved';
+          raw.push({
+            _id: null,
+            userId: { _id: user._id, name: user.name, department: user.department, role: user.role, shift: user.shift, shiftId: user.shiftId },
+            date,
+            clockIn: null,
+            clockOut: null,
+            status: 'absent',
+            workProgress: [],
+            permission: isApproved ? { requestId: r._id, startTime: r.payload?.startTime || null, endTime: r.payload?.endTime || null, status: 'approved' } : undefined,
+            pendingPermission: !isApproved ? { startTime: r.payload?.startTime || '', endTime: r.payload?.endTime || '', status: 'pending', requestId: String(r._id) } : undefined,
+            _permissionStatus: r.status,
+          });
+        }
+      } catch {}
+    }
+
+    if (typeof date === 'string' && date && (scope === 'team' || scope === 'my' || userId)) {
+      try {
+        const { Leave } = await import('@/lib/models/index');
+        const leaves = await Leave.find({ status: 'approved', from: { $lte: date }, to: { $gte: date } }).select('userId from to halfDay').lean();
+        if (leaves.length > 0) {
+          const isUserAllowed = (uid) => {
+            const qUid = query.userId;
+            const idStr = String(uid);
+            if (!qUid) return true;
+            if (typeof qUid === 'string') return String(qUid) === idStr;
+            if (qUid instanceof String) return String(qUid) === idStr;
+            if (qUid._id) return String(qUid._id) === idStr;
+            if (qUid.$in && qUid.$nin) {
+              const inSet = new Set(qUid.$in.map(String));
+              const ninSet = new Set(qUid.$nin.map(String));
+              if (ninSet.has(idStr)) return false;
+              return inSet.has(idStr);
+            }
+            if (qUid.$in) return new Set(qUid.$in.map(String)).has(idStr);
+            if (qUid.$nin) return !new Set(qUid.$nin.map(String)).has(idStr);
+            return true;
+          };
+          for (const l of leaves) {
+            const uidStr = String(l.userId);
+            if (employerIdSet.has(uidStr)) continue;
+            if (!isUserAllowed(l.userId)) continue;
+            const exists = raw.some(r => String(r.userId?._id || r.userId) === uidStr && r.date === date);
+            if (exists) continue;
+            const isHalf = !!l.halfDay && l.from === l.to;
+            const userDoc = await User.findById(l.userId).select('name avatar department role shift shiftId').lean().catch(() => null);
+            if (!userDoc) continue;
+            let rec = await Attendance.findOne({ userId: l.userId, date }).lean().catch(() => null);
+            if (!rec) {
+              rec = await Attendance.findOneAndUpdate(
+                { userId: l.userId, date },
+                { $set: { userId: l.userId, date, status: isHalf ? 'half_day' : 'leave', relatedLeaveId: l._id, approvedHalfDayLeave: isHalf } },
+                { upsert: true, new: true }
+              ).lean().catch(() => null);
+              if (!rec) continue;
+              rec.userId = userDoc;
+            } else {
+              if (rec.status !== 'half_day' && rec.status !== 'leave') {
+                await Attendance.findByIdAndUpdate(rec._id, { status: isHalf ? 'half_day' : 'leave', relatedLeaveId: l._id, approvedHalfDayLeave: isHalf }).catch(() => {});
+                rec.status = isHalf ? 'half_day' : 'leave';
+                rec.approvedHalfDayLeave = isHalf;
+              }
+              rec.userId = userDoc;
+            }
+            raw.push(rec);
+          }
+        }
+      } catch (e) { console.error('Lazy leave materialize failed:', e?.message || e); }
+    }
+
     const bulkOps = raw
       .filter(rec => rec.clockIn && rec._id)
-      .map(rec => ({
-        updateOne: {
-          filter: { _id: rec._id },
-          update: { $set: { status: rec.status, lateFlag: rec.lateFlag, shortHours: !!rec.shortHours } }
+      .map(rec => {
+        const set = { status: rec.status, lateFlag: rec.lateFlag, halfDayThresholdExceeded: !!rec.halfDayThresholdExceeded, shortHours: !!rec.shortHours };
+        if (permissionDirtyIds.has(String(rec._id))) {
+          set.workProgress = rec.workProgress;
+          set.permission = rec.permission;
         }
-      }));
+        return { updateOne: { filter: { _id: rec._id }, update: { $set: set } } };
+      });
 
     if (bulkOps.length > 0) {
       await Attendance.bulkWrite(bulkOps).catch(err => {
         console.error('Failed to persist corrected attendance status:', err);
       });
+    }
+    for (const rec of raw) {
+      if (permissionDirtyIds.has(String(rec._id)) && rec.workProgress) {
+        try {
+          await Attendance.findByIdAndUpdate(rec._id, { workProgress: rec.workProgress, permission: rec.permission });
+        } catch {}
+      }
     }
 
     // Consecutive late detection for managers
@@ -426,11 +536,71 @@ export async function PUT(req) {
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
 
     if (update.workProgress) {
+      const existing = await Attendance.findOne({ userId: targetUserId, date: today }).lean();
+      if (existing?.permission?.requestId) {
+        const serverPerm = existing.permission;
+        const hasActiveServerPerm = existing.workProgress?.some(r => r.type === 'permission' && !r.endTime);
+        const serverEnded = !!serverPerm.endedAt;
+        const incomingPermIdx = update.workProgress.findIndex(r => r.type === 'permission');
+        if (serverPerm.requestId) {
+          if (incomingPermIdx === -1 && hasActiveServerPerm && !serverEnded) {
+            const permRow = existing.workProgress.find(r => r.type === 'permission' && !r.endTime);
+            if (permRow) update.workProgress.push(permRow);
+          }
+          if (incomingPermIdx !== -1) {
+            const idx = incomingPermIdx;
+            if (serverEnded) {
+              update.workProgress[idx] = { ...existing.workProgress.find(r => r.type === 'permission'), ...update.workProgress[idx], endTime: existing.workProgress.find(r => r.type === 'permission')?.endTime || serverPerm.endedAt || serverPerm.endTime, status: 'completed' };
+              update.workProgress[idx].permissionRequestId = serverPerm.requestId;
+            } else if (!serverEnded) {
+              update.workProgress[idx].permissionRequestId = serverPerm.requestId;
+              if (update.workProgress[idx].endTime && !hasActiveServerPerm) {
+              } else if (!update.workProgress[idx].endTime) {
+                update.workProgress[idx].status = 'work_in_progress';
+              }
+            }
+          }
+          const permRows = update.workProgress.filter(r => r.type === 'permission');
+          if (permRows.length > 1) {
+            const keepIdx = update.workProgress.findIndex(r => r.type === 'permission' && String(r.permissionRequestId || '') === String(serverPerm.requestId));
+            const filtered = [];
+            let kept = false;
+            for (const r of update.workProgress) {
+              if (r.type !== 'permission') { filtered.push(r); continue; }
+              if (!kept && String(r.permissionRequestId || '') === String(serverPerm.requestId)) { filtered.push(r); kept = true; }
+              else if (!kept && keepIdx === -1) { filtered.push(r); kept = true; }
+            }
+            update.workProgress = filtered;
+          }
+        }
+        if (serverPerm.requestId && !serverEnded) {
+          const activePerm = existing.workProgress?.some(r => r.type === 'permission' && !r.endTime);
+          if (activePerm && update.workProgress.some(r => r.type !== 'permission' && r.startTime && !r.endTime)) {
+            const incomingActiveIdx = update.workProgress.findIndex(r => r.startTime && !r.endTime && r.type !== 'permission');
+            if (incomingActiveIdx !== -1) {
+              return fail('Cannot start a new task or break while permission is active. End permission first.', 400);
+            }
+          }
+        }
+      }
+      const lockedRows = (existing?.workProgress || []).filter(r => r.resumedAfter === 'break' || r.resumedAfter === 'permission');
+      for (const lr of lockedRows) {
+        const stillThere = update.workProgress.some(r => r.startTime === lr.startTime && r.resumedAfter === lr.resumedAfter && r.type === lr.type);
+        if (!stillThere) {
+          return fail(`Task created after ${lr.resumedAfter} at ${lr.startTime} cannot be deleted.`, 400);
+        }
+      }
       const activeRows = update.workProgress.filter(row => row.startTime && !row.endTime);
       if (activeRows.length > 1) {
         return fail('Multiple active work rows detected. End the current row before starting another.', 400);
       }
       update.workProgress = update.workProgress.map(row => ({ ...row, duration: computeWorkRowDuration(row) }));
+      if (update.workProgress.some(r => r.type === 'permission' && !r.permissionRequestId && r.startTime)) {
+        const perm = await Attendance.findOne({ userId: targetUserId, date: today }).select('permission').lean();
+        if (perm?.permission?.requestId) {
+          update.workProgress = update.workProgress.map(r => r.type === 'permission' && !r.permissionRequestId ? { ...r, permissionRequestId: perm.permission.requestId } : r);
+        }
+      }
     }
 
     // Enforce break limits from shift config

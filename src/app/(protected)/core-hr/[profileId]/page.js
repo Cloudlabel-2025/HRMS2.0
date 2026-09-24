@@ -12,7 +12,7 @@ const ACTIONS = [
   { key: 'start_probation',   label: 'New Probation', icon: 'bi-calendar-plus', color: '#f59e0b', help: 'Set a probation period for onboarding, active, or rehired employees.' },
   { key: 'confirm_probation', label: 'Probation',  icon: 'bi-shield-check',    color: '#3b82f6', help: 'Onboarding → Probation, or confirm Probation → Active.' },
   { key: 'transfer',          label: 'Transfer',   icon: 'bi-arrow-left-right', color: '#8b5cf6', help: 'Update department, designation and shift.' },
-  { key: 'promotion',         label: 'Promote',    icon: 'bi-graph-up-arrow',   color: '#10b981', help: 'Record a new designation for the employee.' },
+  { key: 'promotion',         label: 'Promote',    icon: 'bi-graph-up-arrow',   color: '#10b981', help: 'Record a new designation for the employee. Role change is optional.' },
   { key: 'rehire',            label: 'Rehire',     icon: 'bi-person-plus',      color: '#06b6d4', help: 'Restore a separated employee with new assignment details.' },
   { key: 'suspend',           label: 'Suspend',    icon: 'bi-pause-circle',     color: '#f59e0b', help: 'Place an employee on suspension.' },
   { key: 'separation',        label: 'Exit',       icon: 'bi-box-arrow-right',  color: '#ef4444', help: 'Record exit details and track offboarding clearance.' },
@@ -91,7 +91,37 @@ export default function CoreHrProfilePage() {
   const [toast, setToast]               = useState(null);
   const [activeConfirmOpen, setActiveConfirmOpen] = useState(false);
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3500); };
+  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 5000); };
+
+  const successMessageFor = () => {
+    const name = identity?.legalName || profile?.identityId?.legalName || profile?.employeeNumber || 'Employee';
+    const effective = formatDate(form.effectiveDate);
+    const currentRoleLabel = ROLE_LABELS[profile?.rbacRole || empUser?.role] || profile?.rbacRole || empUser?.role || 'employee';
+    switch (action) {
+      case 'transfer':
+        return `${name} has been transferred to ${form.department} as ${form.designation}${form.shift ? ` (${form.shift})` : ''}. Effective ${effective}.`;
+      case 'promotion':
+        return form.role
+          ? `${name} has been promoted to ${form.designation} with role ${ROLE_LABELS[form.role] || form.role}. Previous designation ${profile.designation} updated. Effective ${effective}.`
+          : `${name} has been promoted to ${form.designation}. Role remains ${currentRoleLabel}. Effective ${effective}.`;
+      case 'rehire':
+        return `${name} has been rehired to ${form.department} / ${form.designation} as ${fmt(form.employmentType)}. Shift ${form.shift || profile.shift}. Effective ${effective}.`;
+      case 'suspend':
+        return `${name} has been placed on suspension${form.suspensionUntil ? ` until ${formatDate(form.suspensionUntil)}` : ''}. Effective ${effective}. Access restricted.`;
+      case 'separation':
+        return `${name} — ${fmt(form.separationType)} recorded. Last working day ${formatDate(form.lastWorkingDate)} with ${form.noticePeriodDays} days notice. Effective ${effective}. Clearance checklist activated.`;
+      case 'finalize_exit':
+        return `${name} exit finalized. Last working day was ${formatDate(profile?.separation?.lastWorkingDate)}. Login disabled, headcount removed, clearance locked. Effective ${effective}.`;
+      case 'start_probation':
+        return `${name} probation started. Period ${effective} → ${formatDate(form.probationEndDate)}. Confirmation due on or after ${formatDate(form.probationEndDate)}.`;
+      case 'confirm_probation':
+        return profile?.employmentStatus === 'onboarding'
+          ? `${name} moved from Onboarding to Probation. Period ${formatDate(profile?.probationStartDate || form.effectiveDate)} → ${formatDate(form.probationEndDate)}.`
+          : `${name} probation confirmed. Status moved from Probation to Active. Confirmation date ${effective}. Welcome to Active employment.`;
+      default:
+        return `Lifecycle transition applied successfully for ${name}.`;
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -112,7 +142,7 @@ export default function CoreHrProfilePage() {
       setDepartments(Array.isArray(deptRes) ? deptRes.map(d => d.name) : []);
       setDesignations(Array.isArray(desigRes) ? desigRes : []);
       setShifts(Array.isArray(shiftRes) ? shiftRes.map(s => s.name) : []);
-      setForm({ ...EMPTY_FORM, profileId, department: p.department || '', designation: p.designation || '', shift: p.shift || '', role: p.identityId?.authUserId?.role || '' });
+      setForm({ ...EMPTY_FORM, profileId, department: p.department || '', designation: p.designation || '', shift: p.shift || '', role: '' });
 
       // Fetch full identity
       if (p.identityId?._id || p.identityId) {
@@ -128,7 +158,7 @@ export default function CoreHrProfilePage() {
         try {
           const employees = await api.get('/api/employees');
           const linked = Array.isArray(employees)
-            ? employees.find(e => e._id === p.identityId.authUserId?.toString?.())
+            ? employees.find(e => (e.userId || e._id)?.toString() === p.identityId.authUserId?.toString?.())
             : null;
           if (linked) setEmpUser(linked);
         } catch {}
@@ -158,7 +188,7 @@ export default function CoreHrProfilePage() {
 
   const switchAction = key => {
     setAction(key);
-    setForm({ ...EMPTY_FORM, profileId, department: profile?.department || '', designation: profile?.designation || '', shift: profile?.shift || '' });
+    setForm({ ...EMPTY_FORM, profileId, department: profile?.department || '', designation: profile?.designation || '', shift: profile?.shift || '', role: key === 'promotion' ? '' : profile?.rbacRole || empUser?.role || '' });
   };
 
   const submit = async () => {
@@ -166,7 +196,7 @@ export default function CoreHrProfilePage() {
     if (!['confirm_probation', 'finalize_exit'].includes(action) && !form.reason.trim()) return showToast('Reason is required', 'error');
     if (['confirm_probation', 'start_probation'].includes(action) && !form.confirmationNote?.trim()) return showToast('Confirmation note is required', 'error');
     if (action === 'transfer' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
-    if (action === 'promotion' && (!form.designation || !form.role)) return showToast('New designation and promoted role are required', 'error');
+    if (action === 'promotion' && !form.designation) return showToast('New designation is required', 'error');
     if (action === 'rehire' && (!form.department || !form.designation)) return showToast('Department and designation are required', 'error');
     if (action === 'separation' && !form.lastWorkingDate) return showToast('Last working date is required', 'error');
     if (action === 'confirm_probation' && probationTabLocked) return showToast(`Probation active until ${formatDate(probationEndDate)}`, 'error');
@@ -179,13 +209,12 @@ export default function CoreHrProfilePage() {
     if (!form.lastWorkingDate) delete payload.data.lastWorkingDate;
     if (!form.suspensionUntil) delete payload.data.suspensionUntil;
     if (!form.probationEndDate) delete payload.data.probationEndDate;
+    if (action === 'promotion' && !form.role) delete payload.data.role;
 
     setSaving(true);
     try {
       await api.post('/api/core/lifecycle/transition', payload);
-      showToast(action === 'confirm_probation'
-        ? (profile.employmentStatus === 'onboarding' ? 'Employee moved to Probation' : 'Probation confirmed — employee is now Active')
-        : 'Lifecycle transition applied successfully');
+      showToast(successMessageFor());
       await load();
       await loadHistory();
     } catch (e) {
@@ -210,7 +239,7 @@ export default function CoreHrProfilePage() {
         },
       });
       setActiveConfirmOpen(false);
-      showToast('Employee is now Active');
+      showToast(`${identity?.legalName || profile?.employeeNumber || 'Employee'} is now Active. Probation period completed on ${formatDate(new Date())}. Status updated from Probation to Active.`);
       await load();
       await loadHistory();
     } catch (e) {
@@ -224,8 +253,13 @@ export default function CoreHrProfilePage() {
     setClearanceSaving(true);
     try {
       const res = await api.patch('/api/core/profiles/clearance', { profileId, field, value });
-      showToast(field === 'settlementStatus' ? 'Settlement status updated' : value ? 'Marked complete' : 'Unchecked');
-      if (res.isLocked) showToast('Profile locked — all clearance items complete', 'success');
+      const empLabel = identity?.legalName || profile?.employeeNumber || 'Employee';
+      showToast(field === 'settlementStatus'
+        ? `Settlement status for ${empLabel} updated to ${String(value).replace(/_/g, ' ')}.`
+        : value
+          ? `${field === 'assetReturned' ? 'Asset returned' : field === 'accessRevoked' ? 'Access revoked' : field === 'finalSettlement' ? 'Final settlement' : field === 'exitInterviewDone' ? 'Exit interview' : field === 'nocIssued' ? 'NOC issued' : 'Relieving letter'} marked complete for ${empLabel}.`
+          : `Checklist item unchecked for ${empLabel}.`);
+      if (res.isLocked) showToast(`Profile for ${empLabel} locked — all clearance items complete. Employment status will transition to alumni.`);
       await load();
     } catch (e) { showToast(e.message, 'error'); }
     finally { setClearanceSaving(false); }
@@ -246,7 +280,7 @@ export default function CoreHrProfilePage() {
   const empName    = identity?.legalName || profile.identityId?.legalName || profile.employeeNumber || 'Unknown';
   const initials   = empName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
   const statusCfg  = STATUS_CONFIG[profile.employmentStatus] || { color: '#64748b', bg: '#f1f5f9' };
-  const empRole    = empUser?.role;
+  const empRole    = empUser?.role || profile?.rbacRole;
   const roleColor  = ROLE_COLORS?.[empRole] || '#64748b';
   const roleLabel  = ROLE_LABELS?.[empRole] || empRole;
 
@@ -486,10 +520,10 @@ export default function CoreHrProfilePage() {
                       <option value="">Select designation</option>
                       {designations.map(d => <option key={d._id} value={d.name}>{d.name}{d.department ? ` (${d.department})` : ''}</option>)}
                     </select>
-                  </Field><Field label="Role *">
+                  </Field><Field label="Role" col="col-12">
                     <select className="form-select" style={{ fontSize: 13 }} value={form.role} onChange={e => setForm(p => ({ ...p, role: e.target.value }))}>
-                      <option value="">Select role</option>
-                      {Object.entries(ROLE_LABELS).filter(([key]) => ['super_admin', 'admin_full'].includes(user?.role) || ['employee', 'intern', 'sme'].includes(key)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                      <option value="">Keep current role{(profile?.rbacRole || empUser?.role) ? ` (${ROLE_LABELS[profile?.rbacRole || empUser?.role] || profile?.rbacRole || empUser?.role})` : ''}</option>
+                      {Object.entries(ROLE_LABELS).filter(([key]) => key !== 'sme' && key !== (profile?.rbacRole || empUser?.role)).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
                   </Field></>
                 )}

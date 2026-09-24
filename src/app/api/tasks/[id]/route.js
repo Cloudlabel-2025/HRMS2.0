@@ -26,7 +26,7 @@ export async function PUT(req, { params }) {
       const canUpdate = MANAGER_ROLES.includes(user.role) ? await canManageUser(user, task.assignedTo) : task.assignedTo.toString() === user._id.toString();
       if (!canUpdate) return fail('Access denied', 403);
       const date = /^\d{4}-\d{2}-\d{2}$/.test(String(body.date || '')) ? body.date : new Date().toISOString().slice(0, 10);
-      const updated = await Task.findByIdAndUpdate(id, { $push: { activityLog: { date, comment, addedBy: user._id } } }, { new: true }).populate('assignedTo', 'name avatar').populate('projectId', 'name');
+      const updated = await Task.findByIdAndUpdate(id, { $push: { activityLog: { date, comment, addedBy: user._id } } }, { new: true }).populate('assignedTo', 'name avatar').populate('projectId', 'name').populate('activityLog.addedBy', 'name');
       const recipientIds = await getTaskStakeholders(task.assignedTo, user._id);
       if (recipientIds.length) await Notification.insertMany(recipientIds.map(userId => ({
         userId,

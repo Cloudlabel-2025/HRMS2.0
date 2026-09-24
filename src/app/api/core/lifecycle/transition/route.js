@@ -32,6 +32,7 @@ function buildLegacyEmployeeSync(profile, identity, userStatus, reportingUserIds
     teamLeadId: reportingUserIds.teamLeadId,
     teamAdminId: reportingUserIds.teamAdminId,
     status: userStatus,
+    role: profile.rbacRole,
     leaveBalance: undefined,
   };
 }
@@ -244,9 +245,10 @@ export async function POST(req) {
     }
 
     if (action === 'promotion') {
-      if (!data.role) return fail('Promoted role is required', 400);
-      if (!['super_admin', 'admin_full'].includes(user.role) && CORE_HR_PRIVILEGED_ROLES.includes(data.role)) return fail('Only full admins can grant this role', 403);
-      profile.rbacRole = data.role;
+      if (data.role) {
+        if (!['super_admin', 'admin_full'].includes(user.role) && CORE_HR_PRIVILEGED_ROLES.includes(data.role)) return fail('Only full admins can grant this role', 403);
+        profile.rbacRole = data.role;
+      }
       profile.designation = data.designation;
       profile.businessUnit = data.businessUnit || profile.businessUnit;
       profile.compensationSnapshot = {
@@ -330,16 +332,29 @@ export async function POST(req) {
     // Notify the employee about their status change
     const authUserId = getIdentityUserId(identity);
     if (authUserId) {
-      const statusMessages = {
-        probation:  { title: 'You have moved to Probation',  message: `Your employment status has been updated from Onboarding to Probation${reason ? ': ' + reason : '.'}` },
-        active:     { title: 'Employment Confirmed — Active', message: `Congratulations! Your probation has been confirmed. You are now an Active employee${reason ? ': ' + reason : '.'}` },
-        suspended:  { title: 'Account Suspended',            message: `Your employment has been suspended${reason ? ': ' + reason : '. Please contact HR.'}` },
-        resigned:   { title: 'Resignation Processed',        message: `Your resignation has been recorded${reason ? ': ' + reason : '.'}` },
-        terminated: { title: 'Employment Terminated',        message: `Your employment has been terminated${reason ? ': ' + reason : '. Please contact HR.'}` },
-        rehired:    { title: 'Welcome Back!',                message: `Your employment has been reinstated${reason ? ': ' + reason : '.'}` },
-      };
-      const msg = statusMessages[profile.employmentStatus];
-      if (msg) await notify(authUserId, msg.title, msg.message, 'lifecycle', profile._id);
+      // Promotion has its own notification — suppress the generic status message for it
+      if (action === 'promotion') {
+        const promoRoleChanged = !!data.role;
+        const promoRole = promoRoleChanged ? String(data.role || '').replace(/_/g, ' ') : '';
+        const promoDesig = profile.designation || data.designation || '';
+        await notify(authUserId, 'Promotion — Congratulations!', `You have been promoted to ${promoDesig}${promoRole ? ` (${promoRole})` : ''}${reason ? ': ' + reason : '.'}`, 'lifecycle', profile._id);
+      } else {
+        const statusChanged = before.employmentStatus !== profile.employmentStatus;
+        // Only fire the status message when status actually changed (avoids firing
+        // "Employment Confirmed" on promotion/transfer where status stays `active`).
+        if (statusChanged) {
+          const statusMessages = {
+            probation:  { title: 'You have moved to Probation',  message: `Your employment status has been updated from Onboarding to Probation${reason ? ': ' + reason : '.'}` },
+            active:     { title: 'Employment Confirmed — Active', message: `Congratulations! Your probation has been confirmed. You are now an Active employee${reason ? ': ' + reason : '.'}` },
+            suspended:  { title: 'Account Suspended',            message: `Your employment has been suspended${reason ? ': ' + reason : '. Please contact HR.'}` },
+            resigned:   { title: 'Resignation Processed',        message: `Your resignation has been recorded${reason ? ': ' + reason : '.'}` },
+            terminated: { title: 'Employment Terminated',        message: `Your employment has been terminated${reason ? ': ' + reason : '. Please contact HR.'}` },
+            rehired:    { title: 'Welcome Back!',                message: `Your employment has been reinstated${reason ? ': ' + reason : '.'}` },
+          };
+          const msg = statusMessages[profile.employmentStatus];
+          if (msg) await notify(authUserId, msg.title, msg.message, 'lifecycle', profile._id);
+        }
+      }
 
       if (String(authUserId) !== String(user._id)) {
         await notify(

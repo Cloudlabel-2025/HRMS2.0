@@ -55,7 +55,9 @@ export function calculateHoursWorked(elapsedMins, breakDeduction, cfg) {
 }
 
 export function determineStatus(minutesSinceShiftStart, cfg) {
-  // Arrival time is informational. It must never create absence, half-day, or LOP.
-  if (minutesSinceShiftStart > cfg.lateThreshold) return { status: 'late', lateFlag: true };
-  return { status: 'present', lateFlag: false };
+  if (minutesSinceShiftStart > cfg.lateThreshold) {
+    const halfDayThresholdExceeded = Number.isFinite(cfg?.halfDayThreshold) && minutesSinceShiftStart >= cfg.halfDayThreshold;
+    return { status: 'late', lateFlag: true, halfDayThresholdExceeded };
+  }
+  return { status: 'present', lateFlag: false, halfDayThresholdExceeded: false };
 }

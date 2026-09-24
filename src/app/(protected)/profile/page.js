@@ -476,7 +476,7 @@ export default function ProfilePage() {
         <div style={{ padding: '0 28px 20px', display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
           {[
             { icon: 'bi-envelope', val: emp.email, label: 'Email' },
-            { icon: 'bi-telephone', val: emp.phone, label: 'Phone' },
+            { icon: 'bi-telephone', val: identity?.personalPhone || emp.phone, label: 'Phone' },
             { icon: 'bi-calendar2', val: emp.joinDate ? `Joined ${formatDate(emp.joinDate)}` : null, label: 'Joined' },
             { icon: 'bi-clock', val: emp.shift, label: 'Shift' },
             { icon: 'bi-geo-alt', val: profile?.workLocation, label: 'Location' },

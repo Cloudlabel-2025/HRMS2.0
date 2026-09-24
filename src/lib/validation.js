@@ -220,7 +220,7 @@ export const LifecycleTransferSchema = z.object({
 export const LifecyclePromotionSchema = z.object({
   profileId: ObjectIdSchema,
   effectiveDate: z.preprocess(v => (v === '' || v == null ? undefined : v), z.coerce.date().optional()),
-  role: z.enum(ROLES),
+  role: z.preprocess(v => (v === '' || v == null ? undefined : v), z.enum(ROLES).optional()),
   designation: z.string().min(1).max(120),
   businessUnit: z.string().max(120).optional().or(z.literal('')),
   grade: z.string().max(50).optional().or(z.literal('')),

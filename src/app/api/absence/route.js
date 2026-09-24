@@ -36,8 +36,18 @@ export async function GET(req) {
     const calToday = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     const month = searchParams.get('month') || calToday.slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(month)) return fail('Invalid month format (YYYY-MM)', 400);
-    const from = `${month}-01`;
-    const to = lastDayOfMonth(month);
+    const monthFrom = `${month}-01`;
+    const monthTo = lastDayOfMonth(month);
+    // Optional narrow date range within month (client sends when From/To are set)
+    const qFrom = searchParams.get('fromDate');
+    const qTo = searchParams.get('toDate');
+    if (qFrom && !/^\d{4}-\d{2}-\d{2}$/.test(qFrom)) return fail('Invalid fromDate (YYYY-MM-DD)', 400);
+    if (qTo && !/^\d{4}-\d{2}-\d{2}$/.test(qTo)) return fail('Invalid toDate (YYYY-MM-DD)', 400);
+    let from = monthFrom;
+    let to = monthTo;
+    if (qFrom) from = qFrom < monthFrom ? monthFrom : qFrom > monthTo ? monthTo : qFrom;
+    if (qTo) to = qTo > monthTo ? monthTo : qTo < monthFrom ? monthFrom : qTo;
+    if (from > to) return fail('fromDate must be <= toDate', 400);
 
     const isAdmin = ['super_admin', 'admin_full'].includes(user.role);
     const isManager = ['team_lead', 'team_admin'].includes(user.role);
@@ -47,8 +57,14 @@ export async function GET(req) {
     // ── Roster: Employee primary + User fallback (mirrors /api/employees) ──
     let employees = await Employee.find({ status: 'active' })
       .populate({ path: 'userId', match: { status: 'active', role: { $ne: 'super_admin' } }, select: '_id name role shift shiftId identityId profileId department' })
-      .select('userId name department designation shift shiftId')
+      .select('userId name department designation shift shiftId joinDate')
       .lean();
+    const toJoinStr = (d) => {
+      if (!d) return '';
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return '';
+      return dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+    };
     let roster = employees.filter((e) => e.userId).map((e) => ({
       uid: String(e.userId._id),
       name: e.name || e.userId?.name || '',
@@ -59,12 +75,13 @@ export async function GET(req) {
       shiftId: e.shiftId || e.userId?.shiftId || null,
       identityId: e.userId?.identityId ? String(e.userId.identityId) : null,
       profileId: e.userId?.profileId ? String(e.userId.profileId) : null,
+      joinDateStr: toJoinStr(e.joinDate || e.userId?.joinDate),
     }));
 
     const rosterIds = new Set(roster.map((r) => r.uid));
     // Merge active users missing from Employee collection so nobody is invisible.
     const extraUsers = await User.find({ status: 'active', role: { $ne: 'super_admin' } })
-      .select('_id name avatar department designation shift shiftId identityId profileId')
+      .select('_id name avatar department designation shift shiftId identityId profileId joinDate')
       .lean();
     for (const u of extraUsers) {
       const uid = String(u._id);
@@ -79,6 +96,7 @@ export async function GET(req) {
         shiftId: u.shiftId || null,
         identityId: u.identityId ? String(u.identityId) : null,
         profileId: u.profileId ? String(u.profileId) : null,
+        joinDateStr: toJoinStr(u.joinDate),
       });
       rosterIds.add(uid);
     }
@@ -179,6 +197,7 @@ export async function GET(req) {
       const shiftDoc = shiftFor(r);
       for (const date of dates) {
         if (date > calToday) continue; // future dates are never absent/not-arrived
+        if (r.joinDateStr && date < r.joinDateStr) continue; // not employed yet — don't fabricate absence
         if (!isWorkingDay(date, config, holidays || [])) continue;
         const key = `${r.uid}|${date}`;
         const attendance = attByKey.get(key) || null;
@@ -240,6 +259,8 @@ export async function GET(req) {
       const key = `${uid}|${a.date}`;
       if (seen.has(key)) continue; // dedupe: derived row already covers this date
       if (a.date > calToday) continue;
+      const rJoin = rosterById.get(uid)?.joinDateStr;
+      if (rJoin && a.date < rJoin) continue; // legacy absences before hire are ignored
       seen.add(key);
       const r = rosterById.get(uid);
       records.push({

@@ -122,13 +122,20 @@ export function deriveAbsenceKind({
     };
   }
 
-  // 3. Any clock-in means not absent — keep the attendance status semantics.
   if (attendance?.clockIn) {
     const st = attendance.status;
     if (st === 'half_day' || attendance.approvedHalfDayLeave) {
+      const halfLabel = leave?.halfDayType ? `Half day (${leave.halfDayType === 'first_half' ? 'First half' : 'Second half'})` : 'Half day (leave)';
       return {
         kind: 'half_day', absent: false, permissionStatus: permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null,
-        reason: 'Half day', halfDayThreshold, elapsed: 0, coversShift: false,
+        reason: halfLabel, halfDayThreshold, elapsed: 0, coversShift: false,
+      };
+    }
+    if (attendance?.halfDayThresholdExceeded && st === 'late') {
+      const permStatus = permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null;
+      return {
+        kind: 'half_day', absent: false, permissionStatus: permStatus,
+        reason: 'Half day — clocked in after half-day threshold', halfDayThreshold, elapsed: 0, coversShift: false,
       };
     }
     if (st === 'leave' || attendance?.leaveOverride?.status === 'rejected') {
@@ -141,6 +148,13 @@ export function deriveAbsenceKind({
     }
     const hasApprovedPerm = !!((attendance?.permission?.requestId || attendance?.permission?.startTime) || permission?.status === 'approved');
     const hasPendingPerm = !hasApprovedPerm && permission?.status === 'pending';
+    if (st === 'late' && attendance?.halfDayThresholdExceeded) {
+      return {
+        kind: 'half_day', absent: false,
+        permissionStatus: hasApprovedPerm ? 'approved' : hasPendingPerm ? 'pending' : null,
+        reason: 'Half day — clocked in after half-day threshold', halfDayThreshold, elapsed: 0, coversShift: false,
+      };
+    }
     const kind = st === 'late' ? 'late' : 'present';
     return {
       kind,

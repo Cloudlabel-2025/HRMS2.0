@@ -7,7 +7,7 @@ import { useSettings } from '@/lib/settings';
 import { NOTIF_ICONS, NOTIF_COLORS, getNotifRoute } from '@/lib/notifications-constants';
 import { useShellData } from '@/lib/shell-data';
 
-export default function Topbar({ title, onMenuClick, isReadOnly }) {
+export default function Topbar({ title, onMenuClick, isReadOnly, onRefresh, refreshing }) {
   const { user } = useAuth();
   const { formatDateTime } = useSettings();
   const router = useRouter();
@@ -77,6 +77,19 @@ export default function Topbar({ title, onMenuClick, isReadOnly }) {
           <span className="topbar-news-viewport">
             {newsText ? <span className="topbar-news-track"><span>{newsText}</span><span aria-hidden="true">{newsText}</span></span> : <span className="topbar-news-empty">No new announcements today</span>}
           </span>
+        </button>
+
+        <button
+          type="button"
+          className="topbar-icon-btn"
+          onClick={onRefresh}
+          disabled={refreshing}
+          aria-label="Refresh page"
+          title="Refresh"
+          data-readonly-allow="true"
+          style={{ opacity: refreshing ? 0.6 : 1 }}
+        >
+          <i className={`bi bi-arrow-clockwise ${refreshing ? 'topbar-refresh-spin' : ''}`} style={{ fontSize: 18 }} />
         </button>
 
         <div style={{ position: 'relative' }} ref={notifRef}>

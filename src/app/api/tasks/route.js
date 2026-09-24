@@ -32,6 +32,7 @@ export async function GET(req) {
       .populate('assignedTo', 'name avatar')
       .populate('assignedBy', 'name role')
       .populate('projectId', 'name departments')
+      .populate('activityLog.addedBy', 'name')
       .sort({ createdAt: -1 });
 
     return ok(tasks);

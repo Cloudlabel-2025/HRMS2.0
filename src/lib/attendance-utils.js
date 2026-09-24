@@ -44,7 +44,6 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   if (isEmployerUser) return false;
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
-  if (record.regularizationOutOpen && !force) return false;
 
   const shiftCfg = cfg || { expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
 
@@ -57,6 +56,10 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   if (deadlineMins <= 0) return false;
 
   const deadlineMs = recordDateMs + deadlineMins * 60 * 1000;
+  // regularizationOutOpen defers auto-logout only until the grace deadline
+  // (shift end + autoLogoutAfterShiftEnd). After deadline it no longer suppresses (criteria 5/6).
+  // Current-day "not yet" remains open within the grace window (criterion 7) and overnight
+  // deadlines use shift-aware end via getShiftEndMinutes (criterion 8).
   if (!force && now.getTime() < deadlineMs) return false;
 
   const elapsedNowMins = Math.floor((now.getTime() - recordDateMs) / 60000);

@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
+import DateInput from '@/components/DateInput';
 
 const KIND_STYLE = {
   absent:        { bg: '#fee2e2', color: '#dc2626', label: 'Absent',      icon: 'bi-x-circle' },
@@ -38,11 +39,31 @@ export default function AbsencePage() {
   const [toast, setToast] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [cardFilter, setCardFilter] = useState('all');
+  const [searchValue, setSearchValue] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
+  const [department, setDepartment] = useState('');
+  const [downloadLoading, setDownloadLoading] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [month, cardFilter]);
+  }, [month, cardFilter, searchValue, fromDate, toDate, department]);
+
+  // Clear date range when month changes if out of bounds
+  const handleMonthChange = (v) => {
+    setMonth(v);
+    setFromDate('');
+    setToDate('');
+  };
+
+  const monthBounds = useMemo(() => {
+    if (!/^\d{4}-\d{2}$/.test(month)) return { min: '', max: '' };
+    const [y, m] = month.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    return { min: `${month}-01`, max: `${month}-${String(last).padStart(2, '0')}` };
+  }, [month]);
 
   const showToast = (msg, type = 'error') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
 
@@ -61,10 +82,53 @@ export default function AbsencePage() {
 
   useEffect(() => { if (user) load(); }, [user, month]);
 
+  const departmentOptions = useMemo(() => {
+    const s = new Set(absences.map(a => a.userId?.department).filter(Boolean));
+    return [...s].sort();
+  }, [absences]);
+
+  const depts = departmentOptions.length;
+
+  // Client-side filter pipeline — respects all active filters; report uses same pipeline
+  const filteredAbsences = useMemo(() => {
+    let out = absences;
+    if (fromDate) out = out.filter(a => (a.date || '') >= fromDate);
+    if (toDate) out = out.filter(a => (a.date || '') <= toDate);
+    if (department) out = out.filter(a => (a.userId?.department || '') === department);
+    if (searchValue.trim()) {
+      const q = searchValue.trim().toLowerCase();
+      out = out.filter(a => (a.userId?.name || '').toLowerCase().includes(q));
+    }
+    switch (cardFilter) {
+      case 'flagged': return out.filter(a => a.flagged || (a.pattern || 0) >= 3);
+      case 'unnotified': return out.filter(a => a.kind === 'absent' && !a.hasLeave);
+      case 'all': return out;
+      default: return out.filter(a => a.kind === cardFilter);
+    }
+  }, [absences, cardFilter, searchValue, fromDate, toDate, department]);
+
+  const hasActiveFilters = cardFilter !== 'all' || !!searchValue.trim() || !!fromDate || !!toDate || !!department;
+
+  const clearFilters = () => {
+    setCardFilter('all');
+    setSearchValue('');
+    setFromDate('');
+    setToDate('');
+    setDepartment('');
+  };
+
   const counts = useMemo(() => {
-    if (summary) return summary;
+    // Cards reflect scope after date/search/department but BEFORE status filter so siblings don't zero out
+    let scoped = absences;
+    if (fromDate) scoped = scoped.filter(a => (a.date || '') >= fromDate);
+    if (toDate) scoped = scoped.filter(a => (a.date || '') <= toDate);
+    if (department) scoped = scoped.filter(a => (a.userId?.department || '') === department);
+    if (searchValue.trim()) {
+      const q = searchValue.trim().toLowerCase();
+      scoped = scoped.filter(a => (a.userId?.name || '').toLowerCase().includes(q));
+    }
     const c = { totalAbsences: 0, notArrived: 0, onLeave: 0, onPermission: 0, late: 0, halfDay: 0, withoutLeave: 0 };
-    for (const a of absences) {
+    for (const a of scoped) {
       if (a.kind === 'absent') c.totalAbsences++;
       if (a.kind === 'not_arrived') c.notArrived++;
       if (a.kind === 'on_leave') c.onLeave++;
@@ -74,23 +138,22 @@ export default function AbsencePage() {
       if (a.kind === 'absent' && !a.hasLeave) c.withoutLeave++;
     }
     return c;
-  }, [absences, summary]);
-
-  const filteredAbsences = useMemo(() => {
-    switch (cardFilter) {
-      case 'flagged': return absences.filter(a => a.flagged || (a.pattern || 0) >= 3);
-      case 'unnotified': return absences.filter(a => a.kind === 'absent' && !a.hasLeave);
-      case 'all': return absences;
-      default: return absences.filter(a => a.kind === cardFilter);
-    }
-  }, [absences, cardFilter]);
-
-  const depts = useMemo(() => new Set(absences.map(a => a.userId?.department).filter(Boolean)).size, [absences]);
+  }, [absences, searchValue, fromDate, toDate, department]);
 
   const filterLabel = FILTERS.find(f => f.key === cardFilter)?.label || 'All';
 
-  const handleExport = () => {
-    if (!filteredAbsences.length) return showToast('No absence records available to export');
+  const buildFilename = (ext) => {
+    const base = `absence-management-${month}`;
+    const parts = [];
+    if (fromDate || toDate) parts.push(`${fromDate || monthBounds.min}_to_${toDate || monthBounds.max}`);
+    if (cardFilter !== 'all') parts.push(cardFilter);
+    if (department) parts.push(department.replace(/\s+/g, '_'));
+    const suffix = parts.length ? `-${parts.join('-')}` : '';
+    return `${base}${suffix}.${ext}`;
+  };
+
+  const handleExportCsv = () => {
+    if (!filteredAbsences.length) return showToast('No absence records available to export', 'error');
     const escapeCsv = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
     const rows = [
       ['Employee', 'Department', 'Date', 'Status', 'Reason', 'Permission', 'Leave', 'Absences This Month', 'Pattern Alert'],
@@ -110,9 +173,44 @@ export default function AbsencePage() {
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = `absence-management-${month}${cardFilter === 'all' ? '' : `-${cardFilter}`}.csv`;
+    link.download = buildFilename('csv');
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('CSV downloaded', 'success');
+  };
+
+  const handleDownload = async (format) => {
+    if (!filteredAbsences.length) return showToast('No absence records available to export', 'error');
+    if (format === 'csv') return handleExportCsv();
+    setDownloadLoading(true);
+    try {
+      const meta = { month, fromDate, toDate, statusFilter: cardFilter, searchValue: searchValue.trim(), department, formatDate };
+      if (format === 'excel') {
+        const { buildAbsenceExcel } = await import('@/lib/absence-export');
+        const buffer = await buildAbsenceExcel(filteredAbsences, meta);
+        const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = buildFilename('xlsx');
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } else if (format === 'pdf') {
+        const { buildAbsencePdf } = await import('@/lib/absence-export');
+        const doc = await buildAbsencePdf(filteredAbsences, meta);
+        doc.save(buildFilename('pdf'));
+      }
+      showToast('Downloaded successfully', 'success');
+    } catch (e) {
+      showToast('Download failed: ' + (e.message || String(e)), 'error');
+    } finally {
+      setDownloadLoading(false);
+      setDownloadOpen(false);
+    }
   };
 
   const cards = [
@@ -129,10 +227,23 @@ export default function AbsencePage() {
       {toast && <div className="toast-container-custom"><div className={`toast-custom ${toast.type}`}><i className="bi bi-exclamation-circle me-2" />{toast.msg}</div></div>}
 
       <div className="page-header">
-        <div><h4>Absence Management</h4><p>Track absences, not-arrived, leave &amp; permissions · {depts} dept{depts !== 1 ? 's' : ''}</p></div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input type="month" className="form-control" style={{ width: 160, fontSize: 13 }} value={month} onChange={e => setMonth(e.target.value)} />
-          <button className="btn btn-outline-secondary" onClick={handleExport} disabled={loading || filteredAbsences.length === 0}><i className="bi bi-download me-2" />Export</button>
+        <div><h4>Absence Management</h4><p>Track absences, not-arrived, leave &amp; permissions · {depts} dept{depts !== 1 ? 's' : ''}{hasActiveFilters ? ` · ${filteredAbsences.length} filtered` : ''}</p></div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="month" className="form-control" style={{ width: 160, fontSize: 13 }} value={month} onChange={e => handleMonthChange(e.target.value)} />
+          <div style={{ position: 'relative' }}>
+            <button className="btn btn-outline-secondary" onClick={() => setDownloadOpen(v => !v)} disabled={downloadLoading || filteredAbsences.length === 0} style={{ fontSize: 13 }}>
+              {downloadLoading ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-download me-2" />}
+              Download
+              <i className={`bi ms-2 ${downloadOpen ? 'bi-chevron-up' : 'bi-chevron-down'}`} style={{ fontSize: 11 }} />
+            </button>
+            {downloadOpen && (
+              <div style={{ position: 'absolute', right: 0, top: 'calc(100% + 6px)', background: '#fff', border: '1px solid #e2e8f0', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', minWidth: 180, zIndex: 20, overflow: 'hidden' }}>
+                <button type="button" onClick={() => handleDownload('excel')} disabled={downloadLoading} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', border: 'none', background: '#fff', textAlign: 'left', fontSize: 13, cursor: 'pointer' }}><i className="bi bi-file-earmark-spreadsheet" style={{ color: '#16a34a' }} /> Excel (.xlsx)</button>
+                <button type="button" onClick={() => handleDownload('pdf')} disabled={downloadLoading} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', border: 'none', background: '#fff', textAlign: 'left', fontSize: 13, cursor: 'pointer', borderTop: '1px solid #f1f5f9' }}><i className="bi bi-file-earmark-pdf" style={{ color: '#dc2626' }} /> PDF (.pdf)</button>
+                <button type="button" onClick={() => handleDownload('csv')} style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '10px 14px', border: 'none', background: '#fff', textAlign: 'left', fontSize: 13, cursor: 'pointer', borderTop: '1px solid #f1f5f9' }}><i className="bi bi-filetype-csv" style={{ color: '#64748b' }} /> CSV (.csv)</button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -155,13 +266,43 @@ export default function AbsencePage() {
             className="form-select"
             value={cardFilter}
             onChange={e => setCardFilter(e.target.value)}
-            style={{ width: 220, fontSize: 13 }}
+            style={{ width: 180, fontSize: 13 }}
             aria-label="Filter absence records by status"
           >
             {FILTERS.map(f => (
               <option key={f.key} value={f.key}>{f.label}</option>
             ))}
           </select>
+          <select
+            className="form-select"
+            value={department}
+            onChange={e => setDepartment(e.target.value)}
+            style={{ width: 170, fontSize: 13 }}
+            aria-label="Filter by department"
+          >
+            <option value="">All Departments</option>
+            {departmentOptions.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <div style={{ width: 155 }}>
+            <DateInput value={fromDate} onChange={e => setFromDate(e.target.value)} min={monthBounds.min} max={toDate || monthBounds.max} placeholder={monthBounds.min} title="From date" className="form-control" style={{ fontSize: 13 }} />
+          </div>
+          <div style={{ width: 155 }}>
+            <DateInput value={toDate} onChange={e => setToDate(e.target.value)} min={fromDate || monthBounds.min} max={monthBounds.max} placeholder={monthBounds.max} title="To date" className="form-control" style={{ fontSize: 13 }} />
+          </div>
+          <input
+            type="text"
+            className="form-control"
+            placeholder="Search employee..."
+            value={searchValue}
+            onChange={e => setSearchValue(e.target.value)}
+            style={{ width: 180, fontSize: 13 }}
+            aria-label="Search by employee name"
+          />
+          {hasActiveFilters && (
+            <button type="button" className="btn btn-sm btn-outline-secondary" onClick={clearFilters} style={{ fontSize: 12 }}>
+              <i className="bi bi-x-circle me-1" />Clear
+            </button>
+          )}
           {!loading && <span style={{ marginLeft: 'auto', fontSize: 12, color: '#64748b' }}>{filterLabel} · {filteredAbsences.length} record{filteredAbsences.length !== 1 ? 's' : ''}</span>}
         </div>
         {loading ? <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div> : (
@@ -170,7 +311,7 @@ export default function AbsencePage() {
               <thead><tr><th>Employee</th><th>Department</th><th>Date</th><th>Status</th><th>Reason / Detail</th><th>Permission</th><th>Leave</th><th>Absences (Month)</th><th>Pattern Alert</th></tr></thead>
               <tbody>
                 {filteredAbsences.length === 0 ? (
-                  <tr><td colSpan={9}><div className="empty-state"><i className="bi bi-person-check" /><h6>No {filterLabel.toLowerCase()} records for {month}</h6><p style={{ fontSize: 11, color: '#94a3b8' }}>Employees who have not arrived yet appear under “Not Arrived” until the half-day threshold.</p></div></td></tr>
+                  <tr><td colSpan={9}><div className="empty-state"><i className="bi bi-person-check" /><h6>No {filterLabel.toLowerCase()} records{hasActiveFilters ? ' for current filters' : ` for ${month}`}</h6><p style={{ fontSize: 11, color: '#94a3b8' }}>{hasActiveFilters ? 'Try clearing filters or changing the month.' : 'Employees who have not arrived yet appear under “Not Arrived” until the half-day threshold.'}</p></div></td></tr>
                 ) : filteredAbsences.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(a => {
                   const style = KIND_STYLE[a.kind] || KIND_STYLE.absent;
                   return (

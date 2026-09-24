@@ -93,6 +93,7 @@ export default function AttendancePage() {
   // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
   const [breakRuleIdx, setBreakRuleIdx] = useState(0);
   const [breakLoading, setBreakLoading] = useState(false);
+  const [permEnding, setPermEnding] = useState(false);
 
   const [shifts, setShifts] = useState([]);
   const [shiftConfig, setShiftConfig] = useState(null);
@@ -165,126 +166,32 @@ export default function AttendancePage() {
         allData.push({ emp, records });
       }
 
+      const meta = { teamMonth, teamFromDate, teamToDate, formatTime };
+
       if (format === 'excel') {
-        const { default: ExcelJS } = await import('exceljs');
-        const wb = new ExcelJS.Workbook();
-        wb.creator = 'HRMS';
-        wb.created = new Date();
-
-        for (const { emp, records } of allData) {
-          const sorted = [...records].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-          const headers = ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked'];
-          const colCount = headers.length;
-          const sheetName = (emp.name || 'Employee').slice(0, 31);
-          const ws = wb.addWorksheet(sheetName);
-
-          const thinBorder = { top: { style: 'thin' }, bottom: { style: 'thin' }, left: { style: 'thin' }, right: { style: 'thin' } };
-          const centerAlign = { horizontal: 'center', vertical: 'middle' };
-
-          // Row 1: Employee name — merged, bold, font 14
-          ws.mergeCells(1, 1, 1, colCount);
-          const nameCell = ws.getCell(1, 1);
-          nameCell.value = `Employee: ${emp.name || '—'}`;
-          nameCell.font = { bold: true, size: 14 };
-          nameCell.alignment = centerAlign;
-
-          // Row 2: Role | Department | Period — merged, font 10
-          ws.mergeCells(2, 1, 2, colCount);
-          const infoCell = ws.getCell(2, 1);
-          infoCell.value = `Role: ${emp.role || '—'}  |  Department: ${emp.department || '—'}  |  Period: ${teamMonth}`;
-          infoCell.font = { size: 10 };
-          infoCell.alignment = centerAlign;
-
-          // Row 3: empty spacer
-          // Row 4: Column headers
-          const headerRow = ws.getRow(4);
-          headers.forEach((h, i) => {
-            const cell = headerRow.getCell(i + 1);
-            cell.value = h;
-            cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
-            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF3B82F6' } };
-            cell.alignment = centerAlign;
-            cell.border = thinBorder;
-          });
-
-          // Row 5+: Data rows
-          sorted.forEach((r, idx) => {
-            const row = ws.getRow(5 + idx);
-            const values = [
-              r.date,
-              DAYS[new Date(r.date + 'T00:00:00').getDay()],
-              STATUS_STYLE[r.status]?.label || r.status,
-              formatTime(r.clockIn) || '—',
-              formatTime(r.clockOut) || '—',
-              r.hoursWorked ? formatMins(r.hoursWorked) : '—',
-            ];
-            values.forEach((v, ci) => {
-              const cell = row.getCell(ci + 1);
-              cell.value = v;
-              cell.alignment = centerAlign;
-              cell.border = thinBorder;
-            });
-          });
-
-          // Auto-fit column widths: max string length + padding of 4
-          const dataRows = sorted.length;
-          for (let ci = 0; ci < colCount; ci++) {
-            let maxLen = headers[ci].length;
-            for (let ri = 0; ri < dataRows; ri++) {
-              const cellVal = ws.getRow(5 + ri).getCell(ci + 1).value;
-              if (cellVal != null) maxLen = Math.max(maxLen, String(cellVal).length);
-            }
-            ws.getColumn(ci + 1).width = maxLen + 4;
-          }
-        }
-
-        const buffer = await wb.xlsx.writeBuffer();
+        const { buildAttendanceExcel } = await import('@/lib/attendance-team-export');
+        const buffer = await buildAttendanceExcel(allData, meta);
         const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `attendance_report_${teamMonth}.xlsx`;
+        const fileFrom = teamFromDate || (teamMonth ? `${teamMonth}-01` : 'report');
+        const fileTo = teamToDate || (teamMonth ? `${teamMonth}` : '');
+        a.download = fileTo && fileTo !== fileFrom ? `attendance_report_${fileFrom}_to_${fileTo}.xlsx` : `attendance_report_${fileFrom}.xlsx`;
+        document.body.appendChild(a);
         a.click();
-        URL.revokeObjectURL(url);
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
       } else {
-        const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
-          import('jspdf'),
-          import('jspdf-autotable'),
-        ]);
-        const doc = new jsPDF('l', 'mm', 'a4');
-        let isFirst = true;
-        for (const { emp, records } of allData) {
-          if (!isFirst) doc.addPage();
-          isFirst = false;
-
-          doc.setFontSize(14);
-          doc.setFont(undefined, 'bold');
-          doc.text(`Attendance Report — ${emp.name || 'Employee'}`, 14, 15);
-          doc.setFontSize(10);
-          doc.setFont(undefined, 'normal');
-          doc.text(`Role: ${emp.role || '—'}   |   Department: ${emp.department || '—'}   |   Period: ${teamMonth}`, 14, 22);
-
-          const rows = records.map(r => [
-            r.date,
-            DAYS[new Date(r.date + 'T00:00:00').getDay()],
-            STATUS_STYLE[r.status]?.label || r.status,
-            formatTime(r.clockIn) || '—',
-            formatTime(r.clockOut) || '—',
-            r.hoursWorked ? formatMins(r.hoursWorked) : '—',
-          ]);
-
-          autoTable(doc, {
-            startY: 28,
-            head: [['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked']],
-            body: rows,
-            styles: { fontSize: 9 },
-            headStyles: { fillColor: [59, 130, 246] },
-          });
-        }
-        doc.save(`attendance_report_${teamMonth}.pdf`);
+        const { buildAttendancePdf } = await import('@/lib/attendance-team-export');
+        const doc = await buildAttendancePdf(allData, meta);
+        const fileFrom = teamFromDate || (teamMonth ? `${teamMonth}-01` : 'report');
+        const fileTo = teamToDate || (teamMonth ? `${teamMonth}` : '');
+        const fileName = fileTo && fileTo !== fileFrom ? `attendance_report_${fileFrom}_to_${fileTo}.pdf` : `attendance_report_${fileFrom}.pdf`;
+        doc.save(fileName);
       }
       showToast('Downloaded successfully');
-    } catch (e) { showToast('Download failed: ' + e.message, 'error'); }
+    } catch (e) { showToast('Download failed: ' + (e.message || String(e)), 'error'); }
     finally { setDownloadLoading(false); }
   };
 
@@ -368,12 +275,21 @@ export default function AttendancePage() {
       const todayRec = Array.isArray(todayRecs) && todayRecs.length > 0 ? todayRecs[0] : null;
       const openRec = Array.isArray(openRecs) && openRecs.length > 0 ? openRecs[0] : null;
       if (openRec && openRec.date !== today) {
-        // Overnight worker: pin today to the open session's date and show that
-        // record directly — no today-dependent reload needed to surface the sheet.
-        setToday(openRec.date);
-        pinRef.current = { date: openRec.date, until: Date.now() + 10 * 60 * 1000 };
-        setTodayRecord(openRec);
-        setStaleOpenSession(null);
+        // Criteria 1: past approvals must not hijack today's worksheet.
+        // Only pin to an open session when it matches the current shift-aware today
+        // (legitimate overnight session). Past forgotten / regularizationOutOpen past
+        // sessions past their grace deadline are treated as stale banners instead.
+        const shiftAwareNow = computeToday(new Date(), shifts, user);
+        if (openRec.date === shiftAwareNow) {
+          setToday(openRec.date);
+          pinRef.current = { date: openRec.date, until: Date.now() + 10 * 60 * 1000 };
+          setTodayRecord(openRec);
+          setStaleOpenSession(null);
+          return;
+        }
+        // Past open session — do not hijack worksheet date
+        setTodayRecord(todayRec);
+        setStaleOpenSession(openRec);
         return;
       }
       setTodayRecord(todayRec);
@@ -605,6 +521,13 @@ export default function AttendancePage() {
     return () => { if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current); };
   }, []);
 
+  useEffect(() => {
+    const perm = todayRecord?.permission;
+    if (!perm || perm.endedAt || todayRecord?.clockOut) return;
+    const timer = setInterval(() => { loadTodayRecord(true); }, 45000);
+    return () => clearInterval(timer);
+  }, [todayRecord?.permission?.requestId, todayRecord?.permission?.endedAt, todayRecord?.clockOut]);
+
   const handleClock = async (action) => {
     if (clockBusyRef.current) return;
     clockBusyRef.current = true;
@@ -803,6 +726,8 @@ export default function AttendancePage() {
   };
 
   const commitWorkRow = async (idx, patch) => {
+    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
+    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
     const currentRows = todayRecord?.workProgress || [];
     const targetRow = currentRows[idx];
     const wasActive = !!(targetRow?.startTime && !targetRow?.endTime);
@@ -844,6 +769,8 @@ export default function AttendancePage() {
   };
 
   const endCurrentTask = async () => {
+    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
+    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
     if (!clockedIn) { showToast('Clock in first to end a task.', 'error'); return; }
     if (clockedOut) { showToast('You have already clocked out today.', 'error'); return; }
     if (anyActiveBreak()) { showToast('End your current break first.', 'error'); return; }
@@ -861,9 +788,13 @@ export default function AttendancePage() {
   };
 
   const deleteWorkRow = async (dbIdx) => {
+    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
+    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
     const rows = [...(todayRecord?.workProgress || [])];
     const deletedRow = rows[dbIdx];
     if (!deletedRow) return;
+    if (deletedRow.type === 'permission') { showToast('Permission task cannot be deleted.', 'error'); return; }
+    if (deletedRow.resumedAfter === 'break' || deletedRow.resumedAfter === 'permission') { showToast('Task created after break/permission cannot be deleted.', 'error'); return; }
     const isRunning = deletedRow.startTime && !deletedRow.endTime;
 
     rows.splice(dbIdx, 1);
@@ -890,6 +821,11 @@ export default function AttendancePage() {
   };
 
   const handleBreakClock = async (rule, ruleIdx) => {
+    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
+    if (activePerm && !todayRecord?.permission?.endedAt) {
+      showToast('Cannot start or end a break while permission is active. End permission first.', 'error');
+      return;
+    }
     setBreakLoading(true);
     try {
       const now = nowTimeStr();
@@ -923,7 +859,11 @@ export default function AttendancePage() {
         if (workIdx === -1) workIdx = updatedWorkProgress.findIndex(row => row.type === type && row.startTime && !row.endTime);
         if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
-        if (!clockedOut) updatedWorkProgress.push(buildTaskRow(now, lastTask?.taskDetails || ''));
+        if (!clockedOut) {
+          const t = buildTaskRow(now, lastTask?.taskDetails || '');
+          t.resumedAfter = 'break';
+          updatedWorkProgress.push(t);
+        }
         const ruleMins = updatedBreaks.filter(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.end)
           .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
         const over = Math.max(0, ruleMins - getRuleAllowance(rule));
@@ -951,6 +891,21 @@ export default function AttendancePage() {
       });
     } catch (e) { showToast(e.message, 'error'); }
     finally { setBreakLoading(false); }
+  };
+
+  const handleEndPermission = async () => {
+    setPermEnding(true);
+    try {
+      if (workProgressSaveTimer.current) { clearTimeout(workProgressSaveTimer.current); workProgressSaveTimer.current = null; }
+      setWorkProgressDirty(false);
+      const now = nowTimeStr();
+      const res = await api.post('/api/attendance/permission', { endTime: now });
+      const rec = res.record || res;
+      workProgressRef.current = rec.workProgress || [];
+      setTodayRecord(rec);
+      showToast('Permission ended at ' + now);
+    } catch (e) { showToast(e.message, 'error'); }
+    finally { setPermEnding(false); }
   };
 
   const downloadExcel = () => {
@@ -1137,7 +1092,8 @@ export default function AttendancePage() {
         </div>
 
         {/* Clock button */}
-        {!clockedOut && (
+        {(() => { const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime) && !todayRecord?.permission?.endedAt; return activePerm ? <div style={{ fontSize: 12, color: '#64748b', background: '#f1f5f9', borderRadius: 8, padding: '6px 10px', textAlign: 'center' }}>Break unavailable while permission is active — end permission first</div> : null; })()}
+        {!clockedOut && !todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime && !todayRecord?.permission?.endedAt) && (
           <button
             className="btn btn-sm w-100"
             disabled={breakLoading}
@@ -1240,6 +1196,17 @@ export default function AttendancePage() {
             {clockedOut ? 'Clocked Out' : clockedIn ? 'Clocked In' : 'Not Clocked In'}
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {(() => {
+              const perm = todayRecord?.permission;
+              const pending = todayRecord?.pendingPermission;
+              const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
+              const canEndPerm = !!perm && !perm.endedAt && activePerm && clockedIn && !clockedOut;
+              return canEndPerm ? (
+                <button className="btn btn-sm btn-warning" style={{ fontSize: 12 }} disabled={permEnding} onClick={handleEndPermission}>
+                  {permEnding ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Ending...</> : <><i className="bi bi-pause-circle me-1" />End Permission</>}
+                </button>
+              ) : null;
+            })()}
             {clockedOut && (
               <button className="btn btn-sm btn-outline-success" style={{ fontSize: 12 }} onClick={downloadExcel}>
                 <i className="bi bi-file-earmark-excel me-1" />Download Progress (Excel)
@@ -1255,6 +1222,28 @@ export default function AttendancePage() {
             </span>
           </div>
         </div>
+        {(() => {
+          const perm = todayRecord?.permission;
+          const pending = todayRecord?.pendingPermission;
+          const isPending = !!pending || todayRecord?._permissionStatus === 'pending';
+          if (isPending && pending) {
+            return (
+              <div style={{ padding: '10px 14px', background: '#fef3c7', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
+                <i className="bi bi-hourglass-split" />
+                <span><strong>Permission Requested:</strong> {pending.startTime || '--:--'} – {pending.endTime || '--:--'} · Pending approval</span>
+              </div>
+            );
+          }
+          const isApplied = !!perm?.applied;
+          if (!perm || !isApplied) return null;
+          const isEnded = !!perm.endedAt;
+          return (
+            <div style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
+              <i className="bi bi-patch-check" />
+              <span><strong>Permission {isEnded ? 'Ended' : 'Approved'}:</strong> {perm.startTime || '--:--'} – {perm.endedAt || perm.endTime || '--:--'}{perm.endedAt ? ` (ended early at ${perm.endedAt})` : ''}</span>
+            </div>
+          );
+        })()}
         {rows.length === 0 ? (
           <div className="empty-state"><i className="bi bi-list-task" /><p>Clock in to start today&apos;s first task</p></div>
         ) : (
@@ -1277,9 +1266,10 @@ export default function AttendancePage() {
                 {rows.map((row, idx) => {
                   const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
                   const isBreakRow = !isVirtual && isBreakType(row.type);
+                  const isPermissionRow = !isVirtual && row.type === 'permission';
                   const active = row.startTime && !row.endTime;
                   return (
-                    <tr key={idx} style={{ background: isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
+                    <tr key={idx} style={{ background: isPermissionRow ? '#eff6ff' : isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
                       <td style={{ fontSize: 13, fontWeight: 700 }}>{idx + 1}</td>
                       <td>
                         {isVirtual ? (
@@ -1292,6 +1282,10 @@ export default function AttendancePage() {
                               <i className="bi bi-box-arrow-right me-1" />Clocked Out
                             </span>
                           )
+                        ) : isPermissionRow ? (
+                          <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>
+                            <i className="bi bi-pause-circle me-1" />{row.taskDetails || `Permission (${row.startTime}-${row.endTime || 'Running'})`}
+                          </span>
                         ) : isBreakRow ? (
                           <span className="badge" style={{ background: breakStyle(row.type).bg, color: breakStyle(row.type).color }}>
                             <i className={`bi ${breakStyle(row.type).icon} me-1`} />{row.taskDetails || breakLabel(row.type)}
@@ -1422,7 +1416,7 @@ export default function AttendancePage() {
                         <select
                           className="form-select form-select-sm"
                           value={row.carriedForward ? 'pending' : (row.status || (active ? 'work_in_progress' : 'pending'))}
-                          disabled={isBreakRow || isVirtual}
+                          disabled={isBreakRow || isPermissionRow || isVirtual}
                           onChange={e => commitWorkRow(row.dbIdx, { status: e.target.value })}
                           style={{ fontSize: 12 }}>
                           {isVirtual ? <option value="completed">Completed</option> : WORK_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -1458,7 +1452,9 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td>
-                        {isVirtual ? null : isBreakRow ? null : (
+                        {isVirtual ? null : isBreakRow ? null : row.resumedAfter === 'break' || row.resumedAfter === 'permission' ? (
+                          <i className="bi bi-lock-fill" style={{ color: '#94a3b8', fontSize: 14 }} title={row.resumedAfter === 'permission' ? 'Task after permission cannot be deleted' : 'Task after break cannot be deleted'} />
+                        ) : (
                           row.dbIdx === 0 && row.type === 'task' ? (
                             <i className="bi bi-lock-fill" style={{ color: '#94a3b8', fontSize: 14 }} title="First task cannot be deleted" />
                           ) : deleteConfirmIdx === row.dbIdx ? (
@@ -1578,9 +1574,9 @@ export default function AttendancePage() {
                 {[
                   { label: 'Present', value: teamToday.filter(r => r.status === 'present').length, icon: 'bi-person-check', color: '#10b981' },
                   { label: 'Absent', value: teamToday.filter(r => r.status === 'absent').length, icon: 'bi-person-x', color: '#ef4444' },
-                  { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave').length, icon: 'bi-person-dash', color: '#3b82f6' },
-                  { label: 'Late', value: teamToday.filter(r => r.status === 'late').length, icon: 'bi-clock', color: '#f59e0b' },
-                  { label: 'Half Day', value: teamToday.filter(r => r.status === 'half_day').length, icon: 'bi-sun', color: '#ea580c' },
+                  { label: 'On Leave', value: teamToday.filter(r => r.status === 'leave' || r.status === 'half_day').length, icon: 'bi-person-dash', color: '#3b82f6' },
+                  { label: 'Late', value: teamToday.filter(r => r.status === 'late' && !r.halfDayThresholdExceeded).length, icon: 'bi-clock', color: '#f59e0b' },
+                  { label: 'Half Day', value: teamToday.filter(r => r.halfDayThresholdExceeded && r.status === 'late').length, icon: 'bi-sun', color: '#ea580c' },
                   { label: 'Short Hours', value: teamToday.filter(r => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length, icon: 'bi-hourglass-split', color: '#7c3aed' },
                 ].map((s, i) => (
                   <div key={i} className="col-6 col-xl">
@@ -1629,7 +1625,8 @@ export default function AttendancePage() {
                       {(showPendingPermissions ? teamToday : teamToday.filter(r => !(r._permissionStatus === 'pending' || r.pendingPermission))).slice((todayPage - 1) * pageSize, todayPage * pageSize).map(row => {
                         const isApprovedPerm = !!(row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved';
                         const isPendingPerm = !isApprovedPerm && (!!row.pendingPermission || row._permissionStatus === 'pending');
-                        const displayStatus = isApprovedPerm ? 'present' : row.status;
+                        const isHalfDayLeave = !!(row.approvedHalfDayLeave || row.status === 'half_day');
+                        const displayStatus = isApprovedPerm ? 'present' : isHalfDayLeave ? 'leave' : row.status;
                         const s = STATUS_STYLE[displayStatus] || STATUS_STYLE.present;
                         const hasClockOut = !!row.clockOut && !isApprovedPerm;
                         return (
@@ -1657,11 +1654,12 @@ export default function AttendancePage() {
                             <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {(row.lateFlag || isPendingPerm) && !isApprovedPerm && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
+                                {(row.lateFlag || isPendingPerm) && !isApprovedPerm && !row.halfDayThresholdExceeded && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
+                                {row.halfDayThresholdExceeded && !isApprovedPerm && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}><i className="bi bi-sun me-1" />Half Day</span>}
                                 {row.shortHours && !isApprovedPerm && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
-                                {isApprovedPerm && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission · Approved</span>}
+                                {isApprovedPerm && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission · Approved{row.permission?.startTime ? ` (${row.permission.startTime}-${row.permission.endedAt || row.permission.endTime})` : ''}</span>}
                                 {isPendingPerm && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Permission · Pending{row.pendingPermission?.startTime ? ` (${row.pendingPermission.startTime}-${row.pendingPermission.endTime})` : ''}</span>}
-                                {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
+                                {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>On Leave · Half-day</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
                                 {row.leaveOverride?.status === 'pending' && (
                                   <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
@@ -1707,7 +1705,7 @@ export default function AttendancePage() {
                       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 16 }}>Today — {formatDate(today)}{refreshingToday && <span className="spinner-border spinner-border-sm text-primary ms-2" role="status" aria-label="Refreshing" />}</div>
                       <div className="row g-3">
                         {[
-                          ['Status',    (() => { const isAp = !!((todayRecord.permission?.requestId || todayRecord.permission?.startTime) || todayRecord._permissionStatus === 'approved'); const st = isAp ? 'present' : todayRecord.status; return <span key="st" className="badge" style={{ background: STATUS_STYLE[st]?.bg, color: STATUS_STYLE[st]?.color }}>{STATUS_STYLE[st]?.label || st}</span>; })()],
+                          ['Status',    (() => { const isAp = !!((todayRecord.permission?.requestId || todayRecord.permission?.startTime) || todayRecord._permissionStatus === 'approved'); if (todayRecord.approvedHalfDayLeave) return <span key="st" className="badge" style={{ background: '#dbeafe', color: '#1e40af' }}>On Leave · Half-day</span>; if (todayRecord.halfDayThresholdExceeded && !isAp) return <span key="st" className="badge" style={{ background: '#ffedd5', color: '#ea580c' }}>Half Day</span>; const st = isAp ? 'present' : todayRecord.status; return <span key="st" className="badge" style={{ background: STATUS_STYLE[st]?.bg, color: STATUS_STYLE[st]?.color }}>{STATUS_STYLE[st]?.label || st}</span>; })()],
                           ['Clock In',  formatTime(todayRecord.clockIn)  || '—'],
                           ['Clock Out', formatTime(todayRecord.clockOut) || '—'],
                           ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
@@ -1768,9 +1766,19 @@ export default function AttendancePage() {
                           <i className="bi bi-hourglass-split me-2" />Permission requested for today{todayRecord.pendingPermission?.startTime ? ` (${todayRecord.pendingPermission.startTime}–${todayRecord.pendingPermission.endTime})` : ''} — pending approval, still marked Late.
                         </div>
                       )}
-                      {todayRecord.lateFlag && todayRecord._permissionStatus !== 'approved' && (
+                      {todayRecord.halfDayThresholdExceeded && todayRecord._permissionStatus !== 'approved' && (
+                        <div className="alert mt-3 py-2" style={{ fontSize: 13, background: '#ffedd5', color: '#9a3412', border: '1px solid #fed7aa' }}>
+                          <i className="bi bi-sun me-2" />Half day — clocked in after half-day threshold
+                        </div>
+                      )}
+                      {todayRecord.lateFlag && !todayRecord.halfDayThresholdExceeded && todayRecord._permissionStatus !== 'approved' && (
                         <div className="alert alert-warning mt-3 py-2" style={{ fontSize: 13 }}>
                           <i className="bi bi-exclamation-triangle me-2" />Late login detected
+                        </div>
+                      )}
+                      {todayRecord.approvedHalfDayLeave && (
+                        <div className="alert mt-3 py-2" style={{ fontSize: 13, background: '#dbeafe', color: '#1e40af', border: '1px solid #bfdbfe' }}>
+                          <i className="bi bi-calendar-check me-2" />On leave — half day
                         </div>
                       )}
                     </div>
@@ -2691,7 +2699,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
 
   const present = records.filter(r => r.status === 'present').length;
   const absent = records.filter(r => r.status === 'absent').length;
-  const leave = records.filter(r => r.status === 'leave').length;
+  const leave = records.filter(r => r.status === 'leave' || r.status === 'half_day').length;
   const late = records.filter(r => r.status === 'late').length;
   const shortHours = records.filter(r => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length;
 
@@ -2745,7 +2753,8 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                 const d = new Date(row.date + 'T00:00:00');
                 const isApprovedPerm = !!((row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved');
                 const isPendingPerm = !isApprovedPerm && (!!row.pendingPermission || row._permissionStatus === 'pending');
-                const displayStatus = isApprovedPerm ? 'present' : row.status;
+                const isHalfDayLeave = !!(row.approvedHalfDayLeave || row.status === 'half_day');
+                const displayStatus = isApprovedPerm ? 'present' : isHalfDayLeave ? 'leave' : row.status;
                 const s = STATUS_STYLE[displayStatus] || STATUS_STYLE.present;
                 return (
                   <tr key={row._id}>
@@ -2771,7 +2780,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {isPendingPerm && <span className="badge ms-1" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
                       {row.shortHours && !isApprovedPerm && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
                       {isApprovedPerm && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
-                      {row.approvedHalfDayLeave && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Present + Half-day Leave</span>}
+                      {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">
                           <button className="btn btn-sm btn-success me-1" style={{ fontSize: 11 }}
@@ -2799,7 +2808,8 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           const d = new Date(row.date + 'T00:00:00');
           const isApprovedPermM = !!((row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved');
           const isPendingPermM = !isApprovedPermM && (!!row.pendingPermission || row._permissionStatus === 'pending');
-          const displayStatusM = isApprovedPermM ? 'present' : row.status;
+          const isHalfDayLeaveM = !!(row.approvedHalfDayLeave || row.status === 'half_day');
+          const displayStatusM = isApprovedPermM ? 'present' : isHalfDayLeaveM ? 'leave' : row.status;
           const s = STATUS_STYLE[displayStatusM] || STATUS_STYLE.present;
           return (
             <div key={row._id} className="card p-3">
@@ -2810,10 +2820,11 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                 </div>
                 <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
               </div>
-              {(isApprovedPermM || isPendingPermM) && (
+              {(isApprovedPermM || isPendingPermM || row.approvedHalfDayLeave || row.status === 'half_day') && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
                   {isApprovedPermM && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                   {isPendingPermM && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
+                  {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
                 </div>
               )}
               <div className="row g-2">

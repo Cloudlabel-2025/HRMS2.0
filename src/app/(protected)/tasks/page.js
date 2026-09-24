@@ -5,6 +5,8 @@ import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
+import SearchableSelect from '@/components/SearchableSelect';
+import ConfirmModal from '@/components/ConfirmModal';
 import { useSettings } from '@/lib/settings';
 import { rankOf } from '@/lib/permissions';
 
@@ -97,6 +99,8 @@ export default function TasksPage() {
   const [filterStatus, setFilterStatus] = useState('');
   const [taskDocName, setTaskDocName] = useState('');
   const [taskDocUrl, setTaskDocUrl] = useState('');
+  const [deleteDocTarget, setDeleteDocTarget] = useState(null);
+  const [deletingDoc, setDeletingDoc] = useState(false);
   const pageSize = 10;
 
   useEffect(() => {
@@ -448,15 +452,21 @@ export default function TasksPage() {
     }
   };
 
-  const handleDeleteDoc = async (docId) => {
-    if (!confirm('Delete this document?')) return;
+  const openDeleteDoc = (doc) => setDeleteDocTarget(doc);
+
+  const confirmDeleteDoc = async () => {
+    if (!deleteDocTarget?._id) return;
+    setDeletingDoc(true);
     try {
-      await api.delete(`/api/projects/documents/${docId}`);
+      await api.delete(`/api/projects/documents/${deleteDocTarget._id}`);
       showToast('Document deleted');
       const pid = selectedDocProject || editTask?.projectId?._id || editTask?.projectId;
       if (pid) loadProjectDocs(pid);
+      setDeleteDocTarget(null);
     } catch (e) {
       showToast(e.message, 'error');
+    } finally {
+      setDeletingDoc(false);
     }
   };
 
@@ -589,11 +599,15 @@ export default function TasksPage() {
       </div>
 
       {tab !== 'projects' && tab !== 'permissions' && visibleProjects.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <select className="form-select" style={{ width: 220, fontSize: 13 }} value={filterProject} onChange={e => setFilterProject(e.target.value)}>
-            <option value="">All Projects</option>
-            {visibleProjects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-          </select>
+        <div style={{ marginBottom: 16, width: 260 }}>
+          <SearchableSelect
+            value={filterProject}
+            onChange={e => setFilterProject(e.target.value)}
+            options={[{ value: '', label: 'All Projects' }, ...visibleProjects.map(p => ({ value: String(p._id), label: p.name }))]}
+            placeholder="All Projects"
+            ariaLabel="Filter by project"
+            style={{ fontSize: 13 }}
+          />
         </div>
       )}
 
@@ -609,14 +623,12 @@ export default function TasksPage() {
               onChange={e => setSearchQuery(e.target.value)}
             />
           </div>
-          <select className="form-select" style={{ width: 150, fontSize: 13 }} value={filterPriority} onChange={e => setFilterPriority(e.target.value)}>
-            <option value="">All Priorities</option>
-            {PRIORITIES.map(p => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
-          </select>
-          <select className="form-select" style={{ width: 160, fontSize: 13 }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-            <option value="">All Statuses</option>
-            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <div style={{ width: 160 }}>
+            <SearchableSelect value={filterPriority} onChange={e => setFilterPriority(e.target.value)} options={[{ value: '', label: 'All Priorities' }, ...PRIORITIES.map(p => ({ value: p, label: p.charAt(0).toUpperCase() + p.slice(1) }))]} placeholder="All Priorities" ariaLabel="Filter by priority" style={{ fontSize: 13 }} />
+          </div>
+          <div style={{ width: 170 }}>
+            <SearchableSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} options={[{ value: '', label: 'All Statuses' }, ...STATUSES.map(s => ({ value: s, label: s }))]} placeholder="All Statuses" ariaLabel="Filter by status" style={{ fontSize: 13 }} />
+          </div>
           {(searchQuery || filterPriority || filterStatus) && (
             <button className="btn btn-sm btn-outline-secondary" style={{ fontSize: 12 }} onClick={() => { setSearchQuery(''); setFilterPriority(''); setFilterStatus(''); }}>
               <i className="bi bi-x-lg me-1" />Clear
@@ -631,12 +643,12 @@ export default function TasksPage() {
         <>
           {/* Kanban */}
           {tab === 'kanban' && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+            <div className="kanban-board">
               {STATUSES.map(status => {
                 const colTasks = filtered.filter(t => t.status === status);
                 return (
-                  <div key={status} className="kanban-col">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div key={status} className="kanban-col kanban-col-fixed">
+                    <div className="kanban-col-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_COLORS[status] }} />
                         <span style={{ fontWeight: 700, fontSize: 13 }}>{status}</span>
@@ -646,6 +658,7 @@ export default function TasksPage() {
                       </div>
                       <span style={{ background: '#e2e8f0', color: '#64748b', borderRadius: 20, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{colTasks.length}</span>
                     </div>
+                    <div className="kanban-col-body">
                     {colTasks.length === 0 && <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: '20px 0' }}>No tasks</div>}
                     {colTasks.map(task => (
                       <div key={task._id} className="kanban-card" onClick={() => openEdit(task)}>
@@ -678,6 +691,7 @@ export default function TasksPage() {
                         </div>
                       </div>
                     ))}
+                    </div>
                   </div>
                 );
               })}
@@ -778,15 +792,26 @@ export default function TasksPage() {
                         <span>{done}/{projTasks.length} tasks done</span>
                       </div>
                       {proj.status === 'completed' && <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', marginBottom: 10, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, color: '#15803d', fontSize: 11.5, fontWeight: 700 }}><i className="bi bi-stopwatch" />Total time taken: {formatProjectDuration(proj.startDate, proj.completedAt || proj.updatedAt || proj.endDate)}</div>}
-                      {proj.team?.length > 0 && (
-                        <div style={{ display: 'flex', gap: 4 }}>
-                          {proj.team.map(m => (
-                            <div key={m._id || m} style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 9, fontWeight: 700, border: '2px solid #fff' }}>
-                              {m.avatar || m.name?.slice(0, 2).toUpperCase() || '?'}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {proj.team?.length > 0 && (() => {
+                        const visible = proj.team.slice(0, 5);
+                        const extra = proj.team.length - visible.length;
+                        const allNames = proj.team.map(m => m.name || '?').join(', ');
+                        const remainingNames = proj.team.slice(5).map(m => m.name || '?').join(', ');
+                        return (
+                          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }} title={allNames}>
+                            {visible.map((m, i) => (
+                              <div key={m._id || String(m) || i} title={m.name || '?'} style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #1e293b)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 9, fontWeight: 700, border: '2px solid #fff', marginLeft: i === 0 ? 0 : -6, flexShrink: 0 }}>
+                                {m.avatar || m.name?.slice(0, 2).toUpperCase() || '?'}
+                              </div>
+                            ))}
+                            {extra > 0 && (
+                              <div title={remainingNames} style={{ width: 28, height: 28, borderRadius: '50%', background: '#e2e8f0', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#475569', fontSize: 10, fontWeight: 700, marginLeft: -6, flexShrink: 0 }}>
+                                +{extra}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
                         <button className="btn btn-sm btn-outline-primary" onClick={() => { setExpandedProjectId(expanded ? null : proj._id); if (!expanded) loadProjectDocs(proj._id); }}><i className={`bi ${expanded ? 'bi-chevron-up' : 'bi-chevron-down'} me-1`} />{expanded ? 'Hide Tasks' : 'View Progress'}</button>
                         {expanded && <><button className="btn btn-sm btn-outline-secondary" onClick={() => downloadProjectProgress(proj, projTasks, 'csv')}>CSV</button><button className="btn btn-sm btn-outline-success" onClick={() => downloadProjectProgress(proj, projTasks, 'excel')}>Excel</button><button className="btn btn-sm btn-outline-danger" onClick={() => downloadProjectProgress(proj, projTasks, 'pdf')}>PDF</button><span style={{ width: 1, background: '#e2e8f0', margin: '0 4px' }} />{docsLoading ? <span style={{ fontSize: 12, color: '#64748b' }}>Loading documents...</span> : projectDocs.map(doc => <a key={doc._id} href={doc.fileUrl} target="_blank" rel="noreferrer" className="btn btn-sm btn-outline-secondary" title={doc.taskId?.title || 'Project document'}><i className="bi bi-paperclip me-1" />{doc.name}</a>)}</>}
@@ -816,12 +841,9 @@ export default function TasksPage() {
             <div className="card">
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderBottom: '1px solid #e2e8f0' }}>
                 <div style={{ fontSize: 13, fontWeight: 700 }}>Project Approval Requests</div>
-                <select className="form-select" style={{ width: 150, fontSize: 12 }} value={approvalFilter} onChange={e => setApprovalFilter(e.target.value)}>
-                  <option value="all">All</option>
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                </select>
+                <div style={{ width: 170 }}>
+                  <SearchableSelect value={approvalFilter} onChange={e => setApprovalFilter(e.target.value)} options={[{ value: 'all', label: 'All' }, { value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }]} placeholder="All" ariaLabel="Filter approvals" style={{ fontSize: 12 }} />
+                </div>
               </div>
               <div className="table-responsive">
                 <table className="table mb-0">
@@ -890,18 +912,12 @@ export default function TasksPage() {
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project *</label>
-                    <select className="form-select" value={form.projectId} onChange={e => { const v = e.target.value; const found = projects.find(p => String(p._id) === String(v)); setSelectedProjectObj(found || null); setForm(p => ({ ...p, projectId: v })); }} disabled={!canEditForm}>
-                      <option value="">Select Project</option>
-                      {projects.map(p => <option key={p._id} value={p._id}>{p.name}</option>)}
-                    </select>
+                    <SearchableSelect value={form.projectId} onChange={e => { const v = e.target.value; const found = projects.find(p => String(p._id) === String(v)); setSelectedProjectObj(found || null); setForm(p => ({ ...p, projectId: v })); }} options={[{ value: '', label: 'Select Project' }, ...projects.map(p => ({ value: String(p._id), label: p.name }))]} placeholder="Select Project" disabled={!canEditForm} style={{ fontSize: 13 }} ariaLabel="Project" />
                   </div>
                   {isAdmin && (
                     <div className="col-6">
                       <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Assign To *</label>
-                      <select className="form-select assign-select" value={form.assignedTo} onChange={e => setForm(p => ({ ...p, assignedTo: e.target.value }))} disabled={!canEditForm || !selectedProjectObj}>
-                        <option value="">Select employee</option>
-                        {assignableByRank.map(e => <option key={e._id} value={e.userId || e._id}>{e.name}{selectedProjectDepts.length > 0 ? ` (${e.department})` : ''}</option>)}
-                      </select>
+                      <SearchableSelect value={form.assignedTo} onChange={e => setForm(p => ({ ...p, assignedTo: e.target.value }))} options={[{ value: '', label: 'Select employee' }, ...assignableByRank.map(e => ({ value: String(e.userId || e._id), label: `${e.name}${selectedProjectDepts.length > 0 ? ` (${e.department})` : ''}` }))]} placeholder="Select employee" disabled={!canEditForm || !selectedProjectObj} style={{ fontSize: 13 }} ariaLabel="Assign to" />
                       {selectedProjectDepts.length > 0 && (
                         <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{projectApprovedCrossDept ? 'Cross-department project approved — showing candidates from all project departments' : "Showing employees from selected project's departments"}</div>
                       )}
@@ -909,22 +925,18 @@ export default function TasksPage() {
                   )}
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Priority *</label>
-                    <select className="form-select" value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value }))} disabled={!canEditForm}>
-                      {PRIORITIES.map(p => <option key={p}>{p}</option>)}
-                    </select>
+                    <SearchableSelect value={form.priority} onChange={e => setForm(p => ({ ...p, priority: e.target.value }))} options={PRIORITIES.map(p => ({ value: p, label: p }))} placeholder="Select priority" disabled={!canEditForm} style={{ fontSize: 13 }} ariaLabel="Priority" />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Status *</label>
-                    <select className="form-select" value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} disabled={!canEditForm}>
-                      {STATUSES.map(s => <option key={s}>{s}</option>)}
-                    </select>
+                    <SearchableSelect value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} options={STATUSES.map(s => ({ value: s, label: s }))} placeholder="Select status" disabled={!canEditForm} style={{ fontSize: 13 }} ariaLabel="Status" />
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Due Date *</label>
                     <DateInput className="form-control" value={form.due} onChange={e => setForm(p => ({ ...p, due: e.target.value }))} disabled={!canEditForm} />
                   </div>
-                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} style={{ flex: 1 }} /><button type="button" className="btn btn-sm btn-outline-primary" style={{ padding: '0 8px', height: 28, minWidth: 28, fontSize: 14, lineHeight: 1 }} onClick={addTaskActivity} disabled={saving || !activityComment.trim()} title="Add comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ display: 'flex', gap: 12, padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none', fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap' }}>{item.comment}</span></div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div></>}
-                  {editTask && <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: "#2563eb", textTransform: "uppercase", letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: "1px solid #dbeafe" }}><i className="bi bi-paperclip me-2" />Documents</div><div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="Document name" value={taskDocName} onChange={e => setTaskDocName(e.target.value)} /><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="https://..." value={taskDocUrl} onChange={e => setTaskDocUrl(e.target.value)} /><button type="button" className="btn btn-sm btn-outline-primary" onClick={handleAddTaskDoc} disabled={saving} style={{ whiteSpace: "nowrap" }}><i className="bi bi-plus-lg me-1" />Add</button></div><div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, padding: 8, maxHeight: 120, overflowY: "auto" }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: "5px 3px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a><button type="button" className="btn btn-sm" style={{ padding: "0 4px", fontSize: 10, color: "#dc2626", background: "none", border: "none" }} onClick={() => handleDeleteDoc(doc._id)} title="Delete"><i className="bi bi-x-lg" /></button></div>) : <span style={{ color: "#64748b", fontSize: 12 }}>No documents yet.</span>}</div></div>}
+                  {editTask && <><div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: '#2563eb', textTransform: 'uppercase', letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: '1px solid #dbeafe' }}><i className="bi bi-chat-left-text me-2" />Progress Comments</div></div><div className="col-4"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment Date</label><DateInput className="form-control" value={activityDate} onChange={e => setActivityDate(e.target.value)} /></div><div className="col-8"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Comment</label><div style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}><textarea className="form-control" rows={2} value={activityComment} onChange={e => setActivityComment(e.target.value)} placeholder="Enter comment for the selected date" maxLength={2000} style={{ flex: 1 }} /><button type="button" className="btn btn-sm btn-outline-primary" style={{ padding: '0 8px', height: 28, minWidth: 28, fontSize: 14, lineHeight: 1 }} onClick={addTaskActivity} disabled={saving || !activityComment.trim()} title="Add comment"><i className="bi bi-plus-lg" /></button></div></div><div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saved Comments</label><div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: 6, maxHeight: 160, overflowY: 'auto' }}>{(editTask.activityLog || []).length ? editTask.activityLog.map((item, index) => <div key={item._id || index} style={{ padding: '9px 12px', borderBottom: index < editTask.activityLog.length - 1 ? '1px solid #f1f5f9' : 'none' }}><div style={{ display: 'flex', gap: 12, fontSize: 13 }}><strong style={{ color: '#475569', minWidth: 92 }}>{formatDate(item.date)}</strong><span style={{ whiteSpace: 'pre-wrap', flex: 1 }}>{item.comment}</span></div>{item.addedBy?.name ? <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4, paddingLeft: 104 }}><i className="bi bi-person me-1" />Commented by {item.addedBy.name}</div> : null}</div>) : <div style={{ padding: '10px 12px', color: '#64748b', fontSize: 13 }}>No comments added yet.</div>}</div></div></>}
+                  {editTask && <div className="col-12"><div style={{ fontSize: 12, fontWeight: 800, color: "#2563eb", textTransform: "uppercase", letterSpacing: .5, paddingTop: 8, paddingBottom: 7, borderBottom: "1px solid #dbeafe" }}><i className="bi bi-paperclip me-2" />Documents</div><div style={{ display: "flex", gap: 8, marginBottom: 8 }}><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="Document name" value={taskDocName} onChange={e => setTaskDocName(e.target.value)} /><input className="form-control" style={{ flex: 1, fontSize: 12 }} placeholder="https://..." value={taskDocUrl} onChange={e => setTaskDocUrl(e.target.value)} /><button type="button" className="btn btn-sm btn-outline-primary" onClick={handleAddTaskDoc} disabled={saving} style={{ whiteSpace: "nowrap" }}><i className="bi bi-plus-lg me-1" />Add</button></div><div style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 6, padding: 8, maxHeight: 120, overflowY: "auto" }}>{projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).length ? projectDocs.filter(doc => String(doc.taskId?._id || doc.taskId) === String(editTask._id)).map(doc => <div key={doc._id} style={{ padding: "5px 3px", borderBottom: "1px solid #f1f5f9", display: "flex", alignItems: "center", justifyContent: "space-between" }}><a href={doc.fileUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12 }}><i className="bi bi-paperclip me-1" />{doc.name}</a><button type="button" className="btn btn-sm" style={{ padding: "0 4px", fontSize: 10, color: "#dc2626", background: "none", border: "none" }} onClick={() => openDeleteDoc(doc)} title="Delete"><i className="bi bi-x-lg" /></button></div>) : <span style={{ color: "#64748b", fontSize: 12 }}>No documents yet.</span>}</div></div>}
                 </div>
               </div>
               <div className="modal-footer">
@@ -1005,7 +1017,7 @@ export default function TasksPage() {
                                       <i className="bi bi-download" />
                                     </a>
                                     {['super_admin', 'admin_full', 'team_admin', 'team_lead'].includes(user?.role) && (
-                                      <button className="btn btn-sm" style={{ padding: '4px 8px', fontSize: 10, borderRadius: 6, background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }} onClick={() => handleDeleteDoc(d._id)}>
+                                      <button className="btn btn-sm" style={{ padding: '4px 8px', fontSize: 10, borderRadius: 6, background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }} onClick={() => openDeleteDoc(d)}>
                                         <i className="bi bi-trash" />
                                       </button>
                                     )}
@@ -1041,12 +1053,7 @@ export default function TasksPage() {
                 <div className="row g-3">
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Task</label>
-                    <select className="form-select" value={uploadForm.taskId || ''} onChange={e => setUploadForm(p => ({ ...p, taskId: e.target.value === 'none' ? null : e.target.value || null }))}>
-                      <option value="none">No task (Project document)</option>
-                      {tasks.filter(t => t.projectId?._id === uploadForm.projectId || t.projectId === uploadForm.projectId).map(task => (
-                        <option key={task._id} value={task._id}>{task.title}</option>
-                      ))}
-                    </select>
+                    <SearchableSelect value={uploadForm.taskId || 'none'} onChange={e => setUploadForm(p => ({ ...p, taskId: e.target.value === 'none' ? null : e.target.value || null }))} options={[{ value: 'none', label: 'No task (Project document)' }, ...tasks.filter(t => t.projectId?._id === uploadForm.projectId || t.projectId === uploadForm.projectId).map(task => ({ value: String(task._id), label: task.title }))]} placeholder="Select task" style={{ fontSize: 13 }} ariaLabel="Task" />
                   </div>
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Document Name *</label>
@@ -1092,11 +1099,7 @@ export default function TasksPage() {
                   <div className="col-12">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Departments</label>
                     <div>
-                      <select className="form-select" value="" onChange={e => { const v = e.target.value; if (v && !projectForm.departments.includes(v)) setProjectForm(p => ({ ...p, departments: [...p.departments, v] })); }}>
-                        <option value="">Add department...</option>
-                        {departments.length === 0 && <option disabled>No departments — add in Settings</option>}
-                        {departments.filter(d => !projectForm.departments.includes(d)).map(d => <option key={d} value={d}>{d}</option>)}
-                      </select>
+                      <SearchableSelect value="" onChange={e => { const v = e.target.value; if (v && !projectForm.departments.includes(v)) setProjectForm(p => ({ ...p, departments: [...p.departments, v] })); }} options={departments.length === 0 ? [{ value: '', label: 'No departments — add in Settings', disabled: true }] : [{ value: '', label: 'Add department...' }, ...departments.filter(d => !projectForm.departments.includes(d)).map(d => ({ value: d, label: d }))]} placeholder="Add department..." style={{ fontSize: 13 }} ariaLabel="Add department" />
                       {projectForm.departments.length > 0 && (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                           {projectForm.departments.map(d => (
@@ -1114,7 +1117,7 @@ export default function TasksPage() {
                       <i className="bi bi-info-circle" />This project requires super admin/admin approval
                     </div>
                   )}
-                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *{loadingCandidates && <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 500, marginLeft: 6 }}>Loading...</span>}</label><select className="form-select" value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} disabled={projectForm.departments.length === 0}><option value="">{projectForm.departments.length ? 'Select responsible person' : 'Select department first'}</option>{responsibleOptions.map(employee => <option key={employee.userId || employee._id} value={employee.userId || employee._id}>{employee.name} ({employee.department} · {formatRole(employee.role)})</option>)}</select>
+                  <div className="col-12"><label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Project Responsible *{loadingCandidates && <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 500, marginLeft: 6 }}>Loading...</span>}</label><SearchableSelect value={projectForm.responsibleTo} onChange={e => setProjectForm(p => ({ ...p, responsibleTo: e.target.value }))} options={[{ value: '', label: projectForm.departments.length ? 'Select responsible person' : 'Select department first' }, ...responsibleOptions.map(employee => ({ value: String(employee.userId || employee._id), label: `${employee.name} (${employee.department} · ${formatRole(employee.role)})` }))]} placeholder={projectForm.departments.length ? 'Select responsible person' : 'Select department first'} disabled={projectForm.departments.length === 0} style={{ fontSize: 13 }} ariaLabel="Project responsible" />
                     {canSendRequest && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Responsible person from another department is included in the approval request and shown to the approver.</div>}
                   </div>
                   <div className="col-6">
@@ -1242,6 +1245,21 @@ export default function TasksPage() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!deleteDocTarget}
+        title="Delete Document"
+        confirmText="Delete"
+        variant="danger"
+        confirming={deletingDoc}
+        onConfirm={confirmDeleteDoc}
+        onClose={() => { if (!deletingDoc) setDeleteDocTarget(null); }}
+      >
+        <div style={{ fontSize: 14 }}>
+          <div style={{ fontWeight: 600, color: '#0f172a', marginBottom: 6, wordBreak: 'break-word' }}>{deleteDocTarget?.name || 'This document'}</div>
+          <p style={{ color: '#64748b', fontSize: 13, margin: 0, lineHeight: 1.5 }}>Are you sure you want to delete this document? This action cannot be undone.</p>
+        </div>
+      </ConfirmModal>
     </AppShell>
   );
 }

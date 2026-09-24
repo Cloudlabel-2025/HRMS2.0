@@ -8,7 +8,7 @@ import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
-import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
+import { getShiftEndMinutes, resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { publishAttendance } from '@/lib/sse';
 
@@ -39,58 +39,44 @@ export async function POST(req) {
     const now = await getTzTime();
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 
-    // Get all shifts
-    const shifts = await Shift.find({}).lean();
     const globalConfig = await getGlobalConfig();
     const autoLoggedOut = [];
 
-    for (const shift of shifts) {
-      if (!shift.startTime || !shift.endTime) continue;
+    // Criteria 5,6,8: close ALL forgotten clock-outs after the configured grace
+    // deadline (shift end + autoLogoutAfterShiftEnd). regularizationOutOpen only
+    // defers until the deadline — it does not permanently suppress. Overnight
+    // deadlines are shift-aware via getShiftEndMinutes (end +24h when crossing midnight).
+    // We query all open records directly so past forgotten sessions are not missed
+    // when the per-shift calendar gate would otherwise skip them.
+    const openRecords = await Attendance.find({
+      clockIn: { $ne: null },
+      clockOut: null,
+      autoLoggedOut: { $ne: true },
+    }).lean();
 
-      const endMinutes = parseTimeToMinutes(shift.endTime);
-      if (endMinutes === null) continue;
+    if (openRecords.length) {
+      const openUserIds = [...new Set(openRecords.map(r => String(r.userId)))];
+      const openUsers = await User.find({ _id: { $in: openUserIds } }).select('shift shiftId name').lean();
+      const usersById = new Map(openUsers.map(u => [String(u._id), u]));
 
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
-      // Check if 5 hours have passed since shift end
-      // For overnight shifts (end < start), add 24h to end time
-      const startMinutes = parseTimeToMinutes(shift.startTime);
-      let effectiveEndMinutes = endMinutes;
-      if (startMinutes !== null && endMinutes < startMinutes) {
-        effectiveEndMinutes = endMinutes + 24 * 60;
-      }
-
-      const effectiveNowMinutes = nowMinutes < effectiveEndMinutes ? nowMinutes + 24 * 60 : nowMinutes;
-      if (effectiveNowMinutes < effectiveEndMinutes) continue;
-
-      // Find users on this shift (by shiftId first, falling back to the shift
-      // name so a stale user.shift string still matches) who haven't clocked out
-      const users = await User.find({
-        $or: [{ shift: shift.name }, { shiftId: shift._id }],
-        status: 'active',
-        role: { $ne: 'super_admin' },
-      }).select('shift shiftId name').lean();
-      const userIds = users.map(u => u._id);
-      const usersById = new Map(users.map(u => [u._id.toString(), u]));
-
-      if (userIds.length === 0) continue;
-
-      const records = await Attendance.find({
-        userId: { $in: userIds },
-        clockIn: { $ne: null },
-        clockOut: null,
-        autoLoggedOut: { $ne: true },
-        regularizationOutOpen: { $ne: true },
-      }).lean();
-
-      for (const record of records) {
+      for (const record of openRecords) {
         const [ih, im] = record.clockIn.split(':').map(Number);
         const clockInMins = ih * 60 + im;
 
-        // Resolve the record owner's ACTUAL shift so a stale user.shift name can
-        // never trigger the wrong shift's deadline.
-        const recordUser = usersById.get(record.userId.toString());
-        const userShift = (await resolveShift(recordUser)) || shift;
+        const recordUser = usersById.get(String(record.userId));
+        // Use historical shift for past dates (criterion 2) so grace deadline matches that day's shift
+        let userShift = null;
+        try {
+          userShift = await resolveShiftForDate(recordUser, record.date);
+        } catch { userShift = null; }
+        if (!userShift) {
+          try { userShift = await resolveShift(recordUser); } catch { userShift = null; }
+        }
+        // Fallback to any shift if user has no resolvable shift (still allow past forgotten to close)
+        if (!userShift) {
+          const fallbackShift = await Shift.findOne({}).lean().catch(() => null);
+          userShift = fallbackShift;
+        }
         const recordShiftCfg = getShiftConfig(userShift, globalConfig);
         const endMins = getShiftEndMinutes(userShift, globalConfig);
         const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);

@@ -20,6 +20,7 @@ function syncLegacy(identity, profile, userStatus) {
       designation: profile.designation,
       shift: profile.shift,
       status: userStatus,
+      ...(identity.personalPhone ? { phone: identity.personalPhone } : {}),
     }) : null,
     Employee.findOneAndUpdate({ userId: identity.authUserId }, {
       name: identity.displayName || identity.legalName,
@@ -28,6 +29,7 @@ function syncLegacy(identity, profile, userStatus) {
       designation: profile.designation,
       shift: profile.shift,
       status: userStatus,
+      ...(identity.personalPhone ? { phone: identity.personalPhone } : {}),
     }),
   ]);
 }
@@ -168,6 +170,8 @@ async function applyApprovedRequest(request, reviewer) {
         const startTime = request.payload?.startTime || null;
         const endTime = request.payload?.endTime || null;
         const granted = Number(request.payload?.duration || 0) || null;
+        const existingPermRec = await Attendance.findOne({ userId: identity.authUserId, date: permDate }).select('permission').lean().catch(() => null);
+        const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
         await Attendance.findOneAndUpdate(
           { userId: identity.authUserId, date: permDate },
           {
@@ -187,6 +191,7 @@ async function applyApprovedRequest(request, reviewer) {
                 status: 'approved',
                 approvedBy: reviewer._id,
                 approvedAt: new Date(),
+                ...keepEnded,
               },
               note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}`,
             },

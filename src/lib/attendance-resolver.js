@@ -45,22 +45,18 @@ export function resolveDayStatus({
     return {
       status: nonWorkingDayType !== 'none' ? 'holiday' : 'leave',
       lateFlag: false,
+      halfDayThresholdExceeded: false,
       permissionApplied: false,
       isMidDayPermission: false,
     };
   }
   if (approvedHalfDayLeave) {
-    // Half-day leave + clock-in is a half working day (0.5 presence in
-    // payroll when lopConfig.countHalfDay is true), never late.
-    return { status: 'half_day', lateFlag: false, permissionApplied: false, isMidDayPermission: false };
+    return { status: 'half_day', lateFlag: false, halfDayThresholdExceeded: false, permissionApplied: false, isMidDayPermission: false };
   }
   if (permission?.endTime && clockIn) {
     const nowMins = toMins(clockIn);
     const endMins = toMins(permission.endTime);
     const startMins = toMins(permission.startTime);
-    // Only a window covering the shift start acts as late-arrival cover.
-    // Mid-day windows (e.g. 14:00-16:00 for a 09:00 shift) fall through to
-    // normal late evaluation and only consume allowance.
     const lateThreshold = Number(cfg?.lateThreshold ?? 15);
     const coversShiftStart =
       startMins !== null && shiftStartMins !== null && shiftStartMins !== undefined
@@ -71,10 +67,8 @@ export function resolveDayStatus({
       return { ...result, permissionApplied: false, isMidDayPermission: true };
     }
     if (nowMins !== null && endMins !== null && nowMins <= endMins) {
-      return { status: 'present', lateFlag: false, permissionApplied: true, isMidDayPermission: false };
+      return { status: 'present', lateFlag: false, halfDayThresholdExceeded: false, permissionApplied: true, isMidDayPermission: false };
     }
-    // Arrival after the window: still evaluate normal lateness, but flag that
-    // a late-arrival permission existed (consumed, no refund).
     if (nowMins !== null && endMins !== null && nowMins > endMins) {
       const result = determineStatus(minutesSinceShiftStart, cfg);
       return { ...result, permissionApplied: false, isMidDayPermission: false };

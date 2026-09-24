@@ -231,6 +231,7 @@ export async function POST(req) {
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
       let lateFlag = false;
       let status = 'present';
+      let halfDayThresholdExceeded = false;
       let permissionApplied = false;
       let isMidDayPermission = false;
 
@@ -250,10 +251,7 @@ export async function POST(req) {
         });
         status = result.status;
         lateFlag = result.lateFlag;
-        // Resolver says applied when arrival is inside a covering window;
-        // usage calc says applied when time was actually consumed.
-        // Trust the stricter of the two so early arrivals (used=0) don't
-        // claim applied status.
+        halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
         permissionApplied = result.permissionApplied && permissionUsage.applied;
         // Early arrival before shift start is on time and consumes nothing.
         const actualMins = h * 60 + m;
@@ -271,13 +269,12 @@ export async function POST(req) {
         if (isMidDayPermission) permissionApplied = false;
       }
 
-      // Approved half-day leave plus a clock-in is a half working day:
-      // half_day status (0.5 presence in payroll) + half-day leave credit,
-      // with no late/absence consequence.
       if (onLeave?.halfDay) {
         status = 'half_day';
         lateFlag = false;
+        halfDayThresholdExceeded = false;
       }
+      if (permissionApplied) halfDayThresholdExceeded = false;
 
       // Wraparound-aware: early = clocked before shift start within the same
       // shift day (e.g. shift 22:00, clock 21:00 → early; clock 01:00 next
@@ -287,6 +284,12 @@ export async function POST(req) {
       const earlyGap = (shiftStartMinsForEarly - clockMinsForEarly + 1440) % 1440;
       const isEarlyLogin = shiftFound && earlyGap > 0 && earlyGap < 720;
 
+      let keepEndedForClock = {};
+      if (clockInPermission) {
+        const existingRecForClock = await Attendance.findOne({ userId: user._id, date: today }).select('permission').lean().catch(() => null);
+        if (existingRecForClock?.permission?.endedAt) keepEndedForClock = { endedAt: existingRecForClock.permission.endedAt, endedEarly: !!existingRecForClock.permission.endedEarly };
+      }
+
       record = await Attendance.findOneAndUpdate(
         { userId: user._id, date: today },
         {
@@ -294,6 +297,7 @@ export async function POST(req) {
             clockIn: attendanceClockIn,
             status,
             lateFlag,
+            halfDayThresholdExceeded,
             earlyLogin: isEarlyLogin,
             note: clockInPermission
               ? `Clocked in at ${timeStr}${permissionApplied ? ` with approved permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} (used ${permissionUsage.used}/${Number(clockInPermission.payload?.duration || 0)} mins)` : isMidDayPermission ? ` (mid-day permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} on file; late judged by shift)` : ` (arrived outside permission window ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''})`}${body.reason ? ` Early login reason: ${body.reason}` : ''}`
@@ -301,28 +305,23 @@ export async function POST(req) {
             approvedHalfDayLeave: !!onLeave?.halfDay,
             relatedLeaveId: onLeave?._id || null,
             nonWorkingDayType,
-            ...(clockInPermission ? (() => {
-              const granted = Number(clockInPermission.payload?.duration || 0) || null;
-              const effectiveClockIn = permissionApplied
-                ? `${String(shiftHour).padStart(2, '0')}:${String(shiftMin).padStart(2, '0')}`
-                : timeStr;
-              return {
-                permission: {
-                  requestId: clockInPermission._id,
-                  startTime: clockInPermission.payload?.startTime || null,
-                  endTime: clockInPermission.payload?.endTime || null,
-                  duration: granted,
-                  grantedDuration: granted,
-                  usedDuration: permissionUsage.used,
-                  refundedDuration: permissionUsage.refunded,
-                  actualClockIn: timeStr,
-                  effectiveClockIn,
-                  applied: permissionApplied,
-                  isMidDay: isMidDayPermission,
-                  status: 'approved',
-                },
-              };
-            })() : {}),
+            ...(clockInPermission ? {
+              permission: {
+                requestId: clockInPermission._id,
+                startTime: clockInPermission.payload?.startTime || null,
+                endTime: clockInPermission.payload?.endTime || null,
+                duration: Number(clockInPermission.payload?.duration || 0) || null,
+                grantedDuration: Number(clockInPermission.payload?.duration || 0) || null,
+                usedDuration: permissionUsage.used,
+                refundedDuration: permissionUsage.refunded,
+                actualClockIn: timeStr,
+                effectiveClockIn: permissionApplied ? `${String(shiftHour).padStart(2, '0')}:${String(shiftMin).padStart(2, '0')}` : timeStr,
+                applied: permissionApplied,
+                isMidDay: isMidDayPermission,
+                status: 'approved',
+                ...keepEndedForClock,
+              },
+            } : {}),
             ...(geo ? { geoLocation: geo } : {}),
           },
           $setOnInsert: {

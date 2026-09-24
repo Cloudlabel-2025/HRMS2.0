@@ -9,7 +9,9 @@ import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rb
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
+import { getAttendanceDate } from '@/lib/attendance-date';
+import { getTzTime } from '@/lib/timezone';
 import { isEmployer } from '@/lib/permissions';
 
 export async function GET(req) {
@@ -104,6 +106,21 @@ export async function POST(req) {
     }
 
     const { date, requestedIn, requestedOut, requestedOutNotYet, requestedBreaks, reason } = validation.data;
+
+    // Criteria 3 & 4: future dates and past "not yet" guards (timezone-aware)
+    const _nowTz = await getTzTime();
+    const _calendarToday = _nowTz.getFullYear() + '-' + String(_nowTz.getMonth()+1).padStart(2,'0') + '-' + String(_nowTz.getDate()).padStart(2,'0');
+    if (date > _calendarToday) {
+      return fail('Cannot request regularization for a future date', 400);
+    }
+    if (requestedOutNotYet) {
+      const _reqUserTz = await User.findById(user._id).select('shift shiftId').lean();
+      const _reqShiftTz = await resolveShift(_reqUserTz);
+      const _shiftAwareToday = getAttendanceDate(_nowTz, _reqShiftTz?.startTime || null, _reqShiftTz?.endTime || null);
+      if (date !== _shiftAwareToday) {
+        return fail('"Not yet logged out" is only available for today\'s shift date', 400);
+      }
+    }
 
     const countToday = await AttendanceRegularization.countDocuments({ userId: user._id, date: validation.data.date });
     if (countToday >= 4) {
@@ -212,6 +229,18 @@ export async function PUT(req) {
 
     const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
 
+    // Criteria 3: future dates cannot create attendance — check before claiming
+    const _nowForCheck = await getTzTime();
+    const _calendarTodayForCheck = _nowForCheck.getFullYear() + '-' + String(_nowForCheck.getMonth()+1).padStart(2,'0') + '-' + String(_nowForCheck.getDate()).padStart(2,'0');
+    if (reg.date > _calendarTodayForCheck) {
+      return fail('Cannot approve regularization for a future date', 400);
+    }
+
+    // Determine shift-aware today for this employee (overnight correctness, criterion 8)
+    const _currentShiftForAware = await resolveShift(empUser);
+    const _shiftAwareToday = getAttendanceDate(_nowForCheck, _currentShiftForAware?.startTime || null, _currentShiftForAware?.endTime || null);
+    const _isTodayShiftAware = reg.date === _shiftAwareToday;
+
     // STEP 1: Atomically claim the regulation FIRST
     const updated = await AttendanceRegularization.findOneAndUpdate(
       { _id: id, status: 'pending' },
@@ -238,27 +267,46 @@ export async function PUT(req) {
         });
       }
 
+      // Criteria 1,4,7: past "not yet" must not reopen past sessions / hijack today's worksheet.
+      // Only today's shift-aware date may use regularizationOutOpen (current-day "not yet" still works).
       if (reg.requestedOutNotYet) {
-        const oldClockOut = attendance.clockOut;
-        attendance.clockOut = null;
-        attendance.autoLoggedOut = false;
-        attendance.regularizationOutOpen = true;
-        attendance.lateLogoutReason = '';
-        attendance.lateLogoutReasonProvidedAt = null;
-        attendance.hoursWorked = 0;
-        attendance.breakDeduction = 0;
-        attendance.status = 'present';
-        if (oldClockOut) {
-          attendance.workProgress = (attendance.workProgress || []).map(w =>
-            w.endTime === oldClockOut
-              ? { ...w, endTime: null, status: 'work_in_progress', duration: null, carriedForward: false }
-              : w
-          );
-          attendance.breaks = (attendance.breaks || []).map(b =>
-            b.end === oldClockOut
-              ? { ...b, end: null }
-              : b
-          );
+        if (_isTodayShiftAware) {
+          const oldClockOut = attendance.clockOut;
+          attendance.clockOut = null;
+          attendance.autoLoggedOut = false;
+          attendance.regularizationOutOpen = true;
+          attendance.lateLogoutReason = '';
+          attendance.lateLogoutReasonProvidedAt = null;
+          attendance.hoursWorked = 0;
+          attendance.breakDeduction = 0;
+          attendance.status = 'present';
+          if (oldClockOut) {
+            attendance.workProgress = (attendance.workProgress || []).map(w =>
+              w.endTime === oldClockOut
+                ? { ...w, endTime: null, status: 'work_in_progress', duration: null, carriedForward: false }
+                : w
+            );
+            attendance.breaks = (attendance.breaks || []).map(b =>
+              b.end === oldClockOut
+                ? { ...b, end: null }
+                : b
+            );
+          }
+        } else {
+          // Past date with "not yet" — convert to concrete historical clock-out (criterion 4)
+          // Use historical shift's endTime so past approval uses past shift's hours (criterion 2)
+          const _histShiftForPast = await resolveShiftForDate(empUser, reg.date) || await resolveShift(empUser);
+          const _concreteOut = reg.requestedOut || reg.requestedOutTime || _histShiftForPast?.endTime || null;
+          if (!_concreteOut) {
+            return fail('Cannot resolve historical shift end time for past date', 400);
+          }
+          // Do NOT set regularizationOutOpen — past must not remain open (criteria 1,6)
+          attendance.regularizationOutOpen = false;
+          attendance.autoLoggedOut = false;
+          attendance.lateLogoutReason = '';
+          attendance.lateLogoutReasonProvidedAt = null;
+          // Store concrete for clockOut assignment below (avoid being cleared by !requestedOutNotYet guard)
+          reg._concretePastOut = _concreteOut;
         }
       }
 
@@ -277,7 +325,9 @@ export async function PUT(req) {
           end:   b.end   ? shiftTime(b.end, delta)   : b.end,
         }));
       }
-      if (reg.requestedOut && !reg.requestedOutNotYet) attendance.clockOut = reg.requestedOut;
+      if (reg._concretePastOut) {
+        attendance.clockOut = reg._concretePastOut;
+      } else if (reg.requestedOut && !reg.requestedOutNotYet) attendance.clockOut = reg.requestedOut;
 
       // Apply requested breaks from regularization
       const attendanceBreaks = attendance.breaks ? [...attendance.breaks] : [];
@@ -367,8 +417,8 @@ export async function PUT(req) {
       attendance.breaks = attendanceBreaks;
       attendance.workProgress = attendanceWorkProgress;
 
-      // Recalculate hours worked
-      regShiftDoc = await resolveShift(empUser);
+      // Recalculate hours worked using historical shift (criterion 2)
+      regShiftDoc = await resolveShiftForDate(empUser, reg.date) || await resolveShift(empUser);
       const config = await getGlobalConfig();
       const regCfg = getShiftConfig(regShiftDoc, config);
 
@@ -385,9 +435,9 @@ export async function PUT(req) {
         attendance.shortHours = hasRegPermission ? false : rawShortHours;
         attendance.status = 'present';
 
-        // Recalculate lateFlag based on shift start
+        // Recalculate lateFlag based on historical shift start (criterion 2)
         if (empUser?.shift) {
-          const lateShiftDoc = regShiftDoc || await resolveShift(empUser);
+          const lateShiftDoc = regShiftDoc || await resolveShiftForDate(empUser, reg.date) || await resolveShift(empUser);
           if (lateShiftDoc?.startTime) {
             const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
             const shiftStartMins = sH * 60 + sM;
