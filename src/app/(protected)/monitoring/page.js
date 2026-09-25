@@ -63,10 +63,15 @@ export default function MonitoringPage() {
       const yesterday = new Date(now); yesterday.setDate(yesterday.getDate() - 1);
       const calYesterday = yesterday.getFullYear() + '-' + String(yesterday.getMonth()+1).padStart(2,'0') + '-' + String(yesterday.getDate()).padStart(2,'0');
 
-      const [deptData, shiftData] = await Promise.all([
+      // allSettled: one flaky settings call must never blank the board.
+      const [deptRes, shiftRes] = await Promise.allSettled([
         api.get('/api/settings?type=departments'),
         api.get('/api/settings?type=shifts'),
       ]);
+      const deptData = deptRes.status === 'fulfilled' ? deptRes.value : [];
+      const shiftData = shiftRes.status === 'fulfilled' ? shiftRes.value : [];
+      if (deptRes.status !== 'fulfilled') console.warn('Monitoring: departments fetch failed, continuing with defaults');
+      if (shiftRes.status !== 'fulfilled') console.warn('Monitoring: shifts fetch failed, continuing with defaults');
       setDepartments(Array.isArray(deptData) ? deptData.map(d => d.name) : []);
       const allShifts = Array.isArray(shiftData) ? shiftData : [];
 
@@ -98,13 +103,20 @@ export default function MonitoringPage() {
 
       const empMap = {};
       const empList = Array.isArray(employees) ? employees : [];
+      const DEFAULT_SHIFT = { name: 'Default (9AM-6PM)', startTime: '09:00', endTime: '18:00', halfDayThreshold: 180, breaks: [] };
+      const norm = v => String(v || '').trim().toLowerCase();
       for (const emp of empList) {
+        try {
         const uid = emp.userId?.toString() || emp._id?.toString();
         if (!uid) continue;
 
-        // Determine this employee's shift-aware today
+        // Determine this employee's shift-aware today. Tolerant match
+        // (id, then case-insensitive name); fall back to a default shift so
+        // one employee with a renamed/deleted shift can never crash the board.
         const empShiftName = emp.shift || 'Morning (9AM-6PM)';
-        const matchedShift = allShifts.find(s => (emp.shiftId && s._id === emp.shiftId) || s.name === empShiftName);
+        const foundShift = allShifts.find(s => (emp.shiftId && String(s._id) === String(emp.shiftId)) || norm(s.name) === norm(empShiftName));
+        if (!foundShift) console.warn(`Monitoring: no shift match for ${emp.name || uid} (shift="${empShiftName}" shiftId="${emp.shiftId || ''}"), using default 09:00-18:00`);
+        const matchedShift = foundShift || DEFAULT_SHIFT;
         const empToday = (matchedShift?.startTime && matchedShift?.endTime)
           ? getAttendanceDate(now, matchedShift.startTime, matchedShift.endTime)
           : calToday;
@@ -164,7 +176,7 @@ export default function MonitoringPage() {
           let elapsedSinceStart = now.getHours() * 60 + now.getMinutes() - (shiftHour * 60 + shiftMinute);
           if (elapsedSinceStart < -720) elapsedSinceStart += 1440;
           if (elapsedSinceStart > 720) elapsedSinceStart -= 1440;
-          if (elapsedSinceStart >= (matchedShift.halfDayThreshold ?? 180)) status = 'absent';
+          if (elapsedSinceStart >= (matchedShift?.halfDayThreshold ?? 180)) status = 'absent';
         }
 
         const hasClockOut = clockOut !== '—' && clockOut !== null;
@@ -192,6 +204,10 @@ export default function MonitoringPage() {
           pendingPermission,
           approvedPermission,
         };
+        } catch (rowErr) {
+          console.warn('Monitoring: skipping employee row', emp?.name || emp?.userId, rowErr?.message);
+          continue;
+        }
       }
 
       const teamArr = Object.values(empMap);
