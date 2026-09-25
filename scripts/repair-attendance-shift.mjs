@@ -33,13 +33,6 @@ const FROM = argVal('--from') || '1970-01-01';
 const TO = argVal('--to') || '2999-12-31';
 const LIMIT = Number(argVal('--limit') || '0') || 0;
 
-function toMins(t) {
-  if (!t || typeof t !== 'string') return null;
-  const [h, m] = t.split(':').map(Number);
-  if (Number.isNaN(h) || Number.isNaN(m)) return null;
-  return h * 60 + m;
-}
-
 // Mirror of determineStatus in src/lib/attendance-constants.js
 function determineStatus(minsSinceStart, lateThreshold, halfDayThreshold) {
   if (minsSinceStart > lateThreshold) {
@@ -122,16 +115,15 @@ async function main() {
       if (curId && shiftById.has(curId)) {
         const s = shiftById.get(curId);
         shiftDoc = s;
-        confident = walked || relevant.length > 0;
-        source = walked ? 'lineage' : 'current-fallback';
-        if (!walked) confident = false;
-      } else if (curName && shiftByName.has(curName)) {
+        confident = walked || relevant.length === 0;
+        source = walked ? 'lineage' : (relevant.length === 0 ? 'current-no-later-change' : 'current-uncertain');
+      } else if (!curId && curName && shiftByName.has(curName)) {
         shiftDoc = shiftByName.get(curName);
-        confident = false;
-        source = 'name-fallback';
+        confident = relevant.length === 0;
+        source = relevant.length === 0 ? 'current-no-later-change' : 'name-uncertain';
       } else if (user?.shiftId && shiftById.has(String(user.shiftId))) {
         shiftDoc = shiftById.get(String(user.shiftId));
-        confident = relevant.length === 0; // no later change => current was active then
+        confident = relevant.length === 0;
         source = relevant.length === 0 ? 'current-no-later-change' : 'current-uncertain';
       }
     }

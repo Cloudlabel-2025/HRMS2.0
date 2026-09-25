@@ -37,6 +37,7 @@ export async function POST(req) {
     // No effective date, or today or earlier → apply immediately BUT keep
     // a ShiftChange history row (status applied) so past attendance can be
     // judged per-day via resolveShiftForDate instead of current shift.
+    // Timezone-aware: Vercel runs UTC, app days are Asia/Kolkata.
     const today = await todayStrTz().catch(() => todayStr());
     if (!effectiveDate || effectiveDate <= today) {
       const applied = await applyShiftToUsers(userIds, shiftDoc, user, ip, reason);

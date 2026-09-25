@@ -14,12 +14,11 @@ export async function resolveShift(user, { asLean = true } = {}) {
   }
   return null;
 }
-
 /**
  * Resolve the shift effective on a historical attendance date.
  * Walks applied ShiftChange history backwards from today to reconstruct
  * the shift that was active on dateStr. Best-effort: changes that were
- * applied immediately (no ShiftChange record) or without fromShiftId
+ * applied immediately without a ShiftChange record or without fromShiftId
  * fall back to the current shift.
  *
  * @param {Object} user - lean user with _id, shift, shiftId
@@ -35,8 +34,6 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
     if (!uidStr) return resolveShift(user, { asLean });
 
     // All applied changes that took effect AFTER the target date and affect this user.
-    // Scheduled changes are stored with effectiveDate; immediate applies have no record
-    // and are intentionally unrecoverable — we fall back to current shift.
     const changes = await ShiftChange.find({
       status: 'applied',
       effectiveDate: { $gt: dateStr },
@@ -49,28 +46,16 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
     let curShiftName = user.shift || null;
 
     for (const ch of changes) {
-      // This change moved the user to ch.targetShiftId on ch.effectiveDate.
-      // To reverse it, the shift BEFORE it was ch.fromShiftId (when recorded).
       const appliesToUser = (ch.userIds || []).some(id => String(id) === uidStr);
       if (!appliesToUser) continue;
 
       const isCurrentTarget =
         (curShiftId && ch.targetShiftId && String(ch.targetShiftId) === curShiftId) ||
         (!curShiftId && curShiftName && ch.targetShiftName && ch.targetShiftName === curShiftName) ||
-        // If we already stepped back and cur is from a previous step, still reverse if this
-        // earlier change's target matches current step's from (chain).
-        false;
+        // Chain case: current step's from matches this earlier change's target
+        (curShiftId && ch.targetShiftId && String(ch.targetShiftId) === curShiftId);
 
-      // Only reverse if the current shift matches this change's target — otherwise
-      // the change is not on the lineage that produced the current shift.
-      // When fromShiftId is null (bulk change without from filter) we cannot
-      // reverse precisely; fall back to current resolver.
-      if (!isCurrentTarget) {
-        // Chain case: if we have no curShiftId but change has relevant user,
-        // the lineage is ambiguous — skip this change (conservative).
-        // Only step back when we can positively match target.
-        continue;
-      }
+      if (!isCurrentTarget) continue;
 
       if (ch.fromShiftId) {
         curShiftId = String(ch.fromShiftId);
@@ -80,9 +65,8 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
             : await Shift.findById(ch.fromShiftId);
           if (fromShift) curShiftName = fromShift.name;
         } catch { /* ignore */ }
-      } else if (ch.fromShiftId === null) {
-        // No from recorded — lineage break. Best-effort fallback to current shift.
-        // We cannot know the prior shift, so stop reverse walk.
+      } else if (ch.fromShiftId === null || ch.fromShiftId === undefined) {
+        // No from recorded — lineage break. Stop reverse walk.
         break;
       }
     }
