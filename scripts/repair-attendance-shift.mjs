@@ -6,10 +6,16 @@
  *   node scripts/repair-attendance-shift.mjs --dry --from=2026-09-01 --to=2026-09-25
  *   node scripts/repair-attendance-shift.mjs --apply --from=2026-09-01 --to=2026-09-25
  *
+ * Cutover mode (generic — works for ANY shift change, no names hardcoded):
+ *   node scripts/repair-attendance-shift.mjs --dry --cutover=2026-09-25 --beforeShift="Evening"
+ *   node scripts/repair-attendance-shift.mjs --dry --cutover=2026-09-25 --beforeStart=14:00 --beforeEnd=22:00
+ * Rows with date < --cutover that have no snapshot/lineage are judged by the
+ * before-shift (resolved by name, or synthetic from --beforeStart/--beforeEnd).
+ *
  * Default is --dry (no writes). --apply performs bulkWrite.
  * Rows where the historical shift cannot be determined confidently
- * (no snapshot, no ShiftChange lineage) are reported as needs-review and
- * are NEVER overwritten.
+ * (no snapshot, no ShiftChange lineage, outside cutover rule) are reported
+ * as needs-review and are NEVER overwritten.
  */
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -32,6 +38,17 @@ const APPLY = process.argv.includes('--apply');
 const FROM = argVal('--from') || '1970-01-01';
 const TO = argVal('--to') || '2999-12-31';
 const LIMIT = Number(argVal('--limit') || '0') || 0;
+// Cutover mode: --cutover=YYYY-MM-DD (first day of the NEW shift) plus
+// --beforeShift="Name" (resolved from shifts collection) or
+// --beforeStart=HH:MM [--beforeEnd=HH:MM] (synthetic, no doc needed).
+const CUTOVER = argVal('--cutover') || null;
+const BEFORE_SHIFT = argVal('--beforeShift') || null;
+const BEFORE_START = argVal('--beforeStart') || null;
+const BEFORE_END = argVal('--beforeEnd') || null;
+if (CUTOVER && !/^\d{4}-\d{2}-\d{2}$/.test(CUTOVER)) {
+  console.error('--cutover must be YYYY-MM-DD');
+  process.exit(1);
+}
 
 // Mirror of determineStatus in src/lib/attendance-constants.js
 function determineStatus(minsSinceStart, lateThreshold, halfDayThreshold) {
@@ -59,6 +76,20 @@ async function main() {
   const allShifts = await shifts.find({}).toArray();
   for (const s of allShifts) shiftById.set(String(s._id), s);
   const shiftByName = new Map(allShifts.map((s) => [s.name, s]));
+
+  // Cutover before-shift (generic): named doc wins, else synthetic times.
+  let cutoverShift = null;
+  if (CUTOVER && (BEFORE_SHIFT || BEFORE_START)) {
+    if (BEFORE_SHIFT && shiftByName.has(BEFORE_SHIFT)) {
+      cutoverShift = shiftByName.get(BEFORE_SHIFT);
+      console.log(`Cutover rule: date < ${CUTOVER} -> "${cutoverShift.name}" (${cutoverShift.startTime}-${cutoverShift.endTime})`);
+    } else if (BEFORE_START) {
+      cutoverShift = { _id: null, name: BEFORE_SHIFT || `before-${BEFORE_START}`, startTime: BEFORE_START, endTime: BEFORE_END || '', lateThreshold: 15 };
+      console.log(`Cutover rule: date < ${CUTOVER} -> synthetic ${cutoverShift.name} (${cutoverShift.startTime}-${cutoverShift.endTime || '?'})`);
+    } else {
+      console.log(`Cutover rule IGNORED: "${BEFORE_SHIFT}" not found in shifts collection — use --beforeStart=HH:MM instead.`);
+    }
+  }
 
   // Applied shift changes ordered for reverse-walk per user
   const hist = await changes.find({ status: 'applied' }).sort({ effectiveDate: -1 }).toArray();
@@ -126,6 +157,14 @@ async function main() {
         confident = relevant.length === 0;
         source = relevant.length === 0 ? 'current-no-later-change' : 'current-uncertain';
       }
+    }
+
+    // Cutover fallback (generic, any shift change): pre-cutover rows with no
+    // snapshot/lineage are judged by the declared before-shift.
+    if (!confident && cutoverShift && CUTOVER && rec.date < CUTOVER) {
+      shiftDoc = cutoverShift;
+      confident = true;
+      source = `cutover:${cutoverShift.name}`;
     }
 
     if (!shiftDoc?.startTime) { skip++; continue; }
