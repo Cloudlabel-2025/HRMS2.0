@@ -35,6 +35,13 @@ const AttendanceSchema = new mongoose.Schema({
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
+  // Frozen per-day shift snapshot (written at clock-in). Past rows are judged
+  // by these values and are immune to later shift edits. Nullable for back-compat.
+  shiftId:             { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+  shiftName:           { type: String, default: null },
+  shiftStartTime:      { type: String, default: null },
+  shiftEndTime:        { type: String, default: null },
+  shiftLateThreshold:  { type: Number, default: null },
   halfDayThresholdExceeded: { type: Boolean, default: false },
   note:       { type: String, default: '' },
   absenceReason: { type: String, default: '' },
@@ -83,7 +90,8 @@ if (mongoose.models.Attendance) {
   const hasEndedAt = !!existing.schema.path('permission.endedAt');
   const hasPermReqId = !!existing.schema.path('workProgress.permissionRequestId');
   const hasResumedAfter = !!existing.schema.path('workProgress.resumedAfter');
-  if (!hasEndedAt || !hasPermReqId || !hasResumedAfter) {
+  const hasShiftSnap = !!existing.schema.path('shiftStartTime');
+  if (!hasEndedAt || !hasPermReqId || !hasResumedAfter || !hasShiftSnap) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

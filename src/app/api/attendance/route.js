@@ -120,8 +120,17 @@ export async function GET(req) {
       if (!rec.clockIn || rec.clockOut) continue;
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
       let shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
-      // Historical shift for past dates so grace deadline matches that day's config
-      if (rec.date && rec.date !== _calTodayForAuto && rec.userId?._id) {
+      // Frozen snapshot first, then historical shift for past dates so grace
+      // deadline matches that day's config
+      if (rec.shiftStartTime) {
+        shiftDoc = {
+          _id: rec.shiftId || null,
+          name: rec.shiftName || rec.userId?.shift || '',
+          startTime: rec.shiftStartTime,
+          endTime: rec.shiftEndTime || '',
+          lateThreshold: rec.shiftLateThreshold ?? null,
+        };
+      } else if (rec.date && rec.date !== _calTodayForAuto && rec.userId?._id) {
         try {
           const hist = await resolveShiftForDate(rec.userId, rec.date);
           if (hist) shiftDoc = hist;
@@ -157,18 +166,44 @@ export async function GET(req) {
       }
     }
 
-    // Recompute lateFlag/status based on actual shift start time
-    // so that records created by previous buggy clock logic get corrected.
-    // Future-records-only guard: never overwrite explicit leave/holiday
-    // decisions (rejected overrides). Permission rows are recomputed with
-    // the permission window (actual clockIn is preserved, never faked),
-    // and shortHours is suppressed on permission days.
+    // Recompute lateFlag/status using the shift effective ON rec.date
+    // (per-day rule). Snapshot on the record wins, then historical
+    // ShiftChange lineage, then current shift as last resort. Never
+    // overwrite explicit leave/holiday decisions (rejected overrides).
+    const _histShiftCache = new Map();
+    const resolveShiftForRow = async (rec) => {
+      const uid = rec.userId?._id?.toString() || '';
+      // 1. Frozen snapshot written at clock-in (future-proof, immune to later edits)
+      if (rec.shiftStartTime) {
+        return {
+          _id: rec.shiftId || null,
+          name: rec.shiftName || rec.userId?.shift || '',
+          startTime: rec.shiftStartTime,
+          endTime: rec.shiftEndTime || '',
+          lateThreshold: rec.shiftLateThreshold ?? null,
+        };
+      }
+      // 2. Historical lineage for past dates
+      if (rec.date && rec.date !== _calTodayForAuto && rec.userId?._id) {
+        const key = uid + '|' + rec.date;
+        if (!_histShiftCache.has(key)) {
+          try {
+            const hist = await resolveShiftForDate(rec.userId, rec.date);
+            _histShiftCache.set(key, hist || null);
+          } catch { _histShiftCache.set(key, null); }
+        }
+        const hist = _histShiftCache.get(key);
+        if (hist) return hist;
+      }
+      // 3. Current shift fallback
+      return shiftByUserId[uid] || null;
+    };
     for (const rec of raw) {
       if (!rec.clockIn) continue;
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
       if (['leave', 'holiday'].includes(rec.status)) continue;
       if (rec.leaveOverride?.status === 'rejected') continue;
-      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      const shiftDoc = await resolveShiftForRow(rec);
       const cfg = getShiftConfig(shiftDoc, config);
 
       let shiftHour = 9, shiftMin = 0;
@@ -379,8 +414,11 @@ export async function GET(req) {
       } catch (e) { console.error('Lazy leave materialize failed:', e?.message || e); }
     }
 
+    // READ-SAFE: never persist recomputed status/lateFlag for past dates.
+    // Past rows are judged per-day in memory; only today's rows may be
+    // corrected in DB (plus open-record workProgress/permission churn).
     const bulkOps = raw
-      .filter(rec => rec.clockIn && rec._id)
+      .filter(rec => rec.clockIn && rec._id && rec.date === _calTodayForAuto)
       .map(rec => {
         const set = { status: rec.status, lateFlag: rec.lateFlag, halfDayThresholdExceeded: !!rec.halfDayThresholdExceeded, shortHours: !!rec.shortHours };
         if (permissionDirtyIds.has(String(rec._id))) {

@@ -3,13 +3,17 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { applyDueShiftChanges } from '@/lib/shift-assign';
 
-export async function POST(req) {
+async function handleApplyDue(req) {
   try {
-    // Auth: support either super_admin/admin_full JWT or valid CRON_SECRET header
+    // Auth: support CRON_SECRET via x-cron-secret header (Vercel cron),
+    // Authorization: Bearer <secret> (external schedulers), or admin JWT.
     const cronSecret = req.headers.get('x-cron-secret');
+    const authHeader = req.headers.get('authorization') || '';
     const envCronSecret = process.env.CRON_SECRET;
+    const bearerOk = envCronSecret && authHeader === `Bearer ${envCronSecret}`;
+    const headerOk = envCronSecret && cronSecret === envCronSecret;
 
-    if (cronSecret !== envCronSecret) {
+    if (!headerOk && !bearerOk) {
       const { user, error } = await requireAuth(req);
       if (error) return error;
       if (!['super_admin', 'admin_full'].includes(user.role)) {
@@ -23,4 +27,14 @@ export async function POST(req) {
   } catch (e) {
     return fail(e.message, 500);
   }
+}
+
+export async function POST(req) {
+  return handleApplyDue(req);
+}
+
+// Vercel Cron invokes GET by default — same handler so the 00:05 IST
+// schedule in vercel.json actually flips due shift changes.
+export async function GET(req) {
+  return handleApplyDue(req);
 }
