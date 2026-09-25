@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { Absence, Employee, Leave, Holiday, Shift, SelfServiceRequest } from '@/lib/models/index';
+import { Absence, Employee, Leave, Holiday, Shift, ShiftChange, SelfServiceRequest } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
 import { requireAuth } from '@/lib/middleware';
@@ -100,7 +100,7 @@ export async function GET(req) {
 
     // ── Batch loads (no N+1) ──
     const config = await getGlobalConfig().catch(() => ({}));
-    const [attendanceRows, leaveRows, permRows, legacyAbsences, holidays, shifts] = await Promise.all([
+    const [attendanceRows, leaveRows, permRows, legacyAbsences, holidays, shifts, shiftHistory] = await Promise.all([
       Attendance.find({ userId: { $in: rosterIdObjs }, date: { $gte: from, $lte: to } }).lean(),
       Leave.find({ userId: { $in: rosterIdObjs }, status: 'approved', from: { $lte: to }, to: { $gte: from } })
         .select('userId type typeCode from to halfDay').lean(),
@@ -115,18 +115,65 @@ export async function GET(req) {
         .catch(() => []),
       Holiday.find({ date: { $gte: from, $lte: to } }).lean().catch(() => []),
       Shift.find({}).lean().catch(() => []),
+      ShiftChange.find({ status: 'applied', userIds: { $in: rosterIdObjs } }).sort({ effectiveDate: -1 }).lean().catch(() => []),
     ]);
 
     const shiftById = new Map((shifts || []).map((s) => [String(s._id), s]));
     const shiftByName = new Map((shifts || []).map((s) => [s.name, s]));
-    const shiftFor = (r) => {
+    const currentShiftFor = (r) => {
       if (r.shiftId && shiftById.has(String(r.shiftId))) return shiftById.get(String(r.shiftId));
       if (r.shift && shiftByName.has(r.shift)) return shiftByName.get(r.shift);
       return null;
     };
+    // Per-user applied history (newest first) for reverse-walk per date.
+    const historyByUser = new Map();
+    for (const ch of shiftHistory || []) {
+      for (const uid of (ch.userIds || []).map(String)) {
+        if (!historyByUser.has(uid)) historyByUser.set(uid, []);
+        historyByUser.get(uid).push(ch);
+      }
+    }
 
     const attByKey = new Map();
     for (const a of attendanceRows || []) attByKey.set(`${String(a.userId)}|${a.date}`, a);
+
+    // Per-day shift (per-day rule): frozen attendance snapshot first, then
+    // reverse-walk of applied ShiftChanges effective AFTER `date` starting
+    // from the roster (current) shift, then current shift. Single batched
+    // history load above — no per-cell queries (Vercel-safe).
+    const shiftForDate = (r, date) => {
+      const att = attByKey.get(`${r.uid}|${date}`);
+      if (att?.shiftStartTime) {
+        return {
+          _id: att.shiftId || null,
+          name: att.shiftName || r.shift || '',
+          startTime: att.shiftStartTime,
+          endTime: att.shiftEndTime || '',
+          halfDayThreshold: 180,
+          lateThreshold: att.shiftLateThreshold ?? 15,
+        };
+      }
+      const changes = historyByUser.get(r.uid) || [];
+      const relevant = changes.filter((c) => c.effectiveDate > date);
+      if (!relevant.length) return currentShiftFor(r);
+      let curId = r.shiftId ? String(r.shiftId) : null;
+      let curName = r.shift || null;
+      for (const ch of relevant) {
+        const target = ch.targetShiftId ? String(ch.targetShiftId) : null;
+        const matches = (curId && target && curId === target) || (!curId && curName && ch.targetShiftName === curName);
+        if (!matches) continue;
+        if (ch.fromShiftId) {
+          curId = String(ch.fromShiftId);
+          const fs = shiftById.get(curId);
+          if (fs) curName = fs.name;
+        } else {
+          return currentShiftFor(r); // lineage break — safest fallback
+        }
+      }
+      if (curId && shiftById.has(curId)) return shiftById.get(curId);
+      if (curName && shiftByName.has(curName)) return shiftByName.get(curName);
+      return currentShiftFor(r);
+    };
 
     const leaveByKey = new Map();
     for (const l of leaveRows || []) {
@@ -176,9 +223,9 @@ export async function GET(req) {
     const seen = new Set(); // `${uid}|${date}` dedupe
 
     for (const r of roster) {
-      const shiftDoc = shiftFor(r);
       for (const date of dates) {
         if (date > calToday) continue; // future dates are never absent/not-arrived
+        const shiftDoc = shiftForDate(r, date);
         if (!isWorkingDay(date, config, holidays || [])) continue;
         const key = `${r.uid}|${date}`;
         const attendance = attByKey.get(key) || null;

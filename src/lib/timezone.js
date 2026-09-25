@@ -50,6 +50,22 @@ export async function getTzTime() {
   }
 }
 
+export function formatDateStr(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '-' + String(date.getDate()).padStart(2, '0');
+}
+
+// Timezone-aware YYYY-MM-DD for date comparisons (IST by default).
+// Falls back to host local date if timezone resolution fails.
+export async function getTzDateStr() {
+  try {
+    const now = await getTzTime();
+    return formatDateStr(now);
+  } catch {
+    const d = new Date();
+    return formatDateStr(d);
+  }
+}
+
 // Convert an arbitrary instant (e.g. a client-provided ISO timestamp) into the
 // configured timezone's wall-clock components.
 export async function toTzLocal(instant) {

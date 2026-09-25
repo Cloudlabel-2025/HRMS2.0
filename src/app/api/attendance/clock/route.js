@@ -58,9 +58,18 @@ export async function POST(req) {
 
     // Lazy fallback: apply any due scheduled shift changes for this user before
     // resolving their shift, so a missed cron never leaves the user on a stale shift.
+    // Re-fetch afterwards: the applier writes via updateMany, so the
+    // JWT-decoded `user` would otherwise stay stale and this clock-in would
+    // still be judged by the old shift.
     try {
       const { applyDueShiftChangesForUser } = await import('@/lib/shift-assign');
-      await applyDueShiftChangesForUser(user);
+      const n = await applyDueShiftChangesForUser(user);
+      if (n > 0) {
+        try {
+          const fresh = await User.findById(user._id).select('shift shiftId').lean();
+          if (fresh) { user.shift = fresh.shift; user.shiftId = fresh.shiftId; }
+        } catch { /* fallback to stale user */ }
+      }
     } catch (e) {
       /* non-fatal */
     }
@@ -295,6 +304,13 @@ export async function POST(req) {
             status,
             lateFlag,
             earlyLogin: isEarlyLogin,
+            // Frozen per-day shift snapshot — past rows stay judged by this
+            // shift even if the employee's shift is changed later.
+            shiftId: shiftDoc?._id || null,
+            shiftName: shiftDoc?.name || user.shift || null,
+            shiftStartTime: shiftDoc?.startTime || null,
+            shiftEndTime: shiftDoc?.endTime || null,
+            shiftLateThreshold: cfg?.lateThreshold ?? null,
             note: clockInPermission
               ? `Clocked in at ${timeStr}${permissionApplied ? ` with approved permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} (used ${permissionUsage.used}/${Number(clockInPermission.payload?.duration || 0)} mins)` : isMidDayPermission ? ` (mid-day permission ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''} on file; late judged by shift)` : ` (arrived outside permission window ${clockInPermission.payload?.startTime || ''}-${clockInPermission.payload?.endTime || ''})`}${body.reason ? ` Early login reason: ${body.reason}` : ''}`
               : body.reason ? `Early login reason: ${body.reason}` : '',

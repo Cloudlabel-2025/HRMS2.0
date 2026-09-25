@@ -8,7 +8,7 @@ import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { matchBreakRule } from '@/lib/attendance-breaks';
@@ -112,11 +112,42 @@ export async function GET(req) {
       if (sd) shiftByUserId[u._id.toString()] = sd;
     }
 
-    // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer)
+    const _calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+    // Per-day shift resolver: frozen snapshot first, then historical
+    // ShiftChange lineage for past dates, then current shift fallback.
+    // Cached per user+date to avoid N+1 query blowup on Vercel.
+    const _histShiftCache = new Map();
+    const resolveShiftForRow = async (rec) => {
+      const uid = rec.userId?._id?.toString() || '';
+      if (rec.shiftStartTime) {
+        return {
+          _id: rec.shiftId || null,
+          name: rec.shiftName || rec.userId?.shift || '',
+          startTime: rec.shiftStartTime,
+          endTime: rec.shiftEndTime || '',
+          lateThreshold: rec.shiftLateThreshold ?? null,
+        };
+      }
+      if (rec.date && rec.date !== _calToday && rec.userId?._id) {
+        const key = uid + '|' + rec.date;
+        if (!_histShiftCache.has(key)) {
+          try {
+            const hist = await resolveShiftForDate(rec.userId, rec.date);
+            _histShiftCache.set(key, hist || null);
+          } catch { _histShiftCache.set(key, null); }
+        }
+        const hist = _histShiftCache.get(key);
+        if (hist) return hist;
+      }
+      return shiftByUserId[uid] || null;
+    };
+
+    // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer).
+    // Past dates use the historical shift so the grace deadline matches that day's config.
     for (const rec of raw) {
       if (!rec.clockIn || rec.clockOut) continue;
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
-      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      const shiftDoc = await resolveShiftForRow(rec);
       const cfg = getShiftConfig(shiftDoc, config);
       if (await checkAndApplyAutoLogout(rec, now, cfg, shiftDoc, employerIdSet.has(rec.userId?._id?.toString()))) {
         await Attendance.findByIdAndUpdate(rec._id, {
@@ -147,10 +178,9 @@ export async function GET(req) {
       }
     }
 
-    // Recompute lateFlag/status based on actual shift start time
-    // so that records created by previous buggy clock logic get corrected.
-    // Future-records-only guard: never overwrite explicit leave/holiday
-    // decisions (rejected overrides). Permission rows are recomputed with
+    // Recompute lateFlag/status using the shift effective ON rec.date
+    // (per-day rule). Never overwrite explicit leave/holiday decisions
+    // (rejected overrides). Permission rows are recomputed with
     // the permission window (actual clockIn is preserved, never faked),
     // and shortHours is suppressed on permission days.
     for (const rec of raw) {
@@ -158,7 +188,7 @@ export async function GET(req) {
       if (employerIdSet.has(rec.userId?._id?.toString())) continue;
       if (['leave', 'holiday'].includes(rec.status)) continue;
       if (rec.leaveOverride?.status === 'rejected') continue;
-      const shiftDoc = shiftByUserId[rec.userId?._id?.toString()] || null;
+      const shiftDoc = await resolveShiftForRow(rec);
       const cfg = getShiftConfig(shiftDoc, config);
 
       let shiftHour = 9, shiftMin = 0;
@@ -277,9 +307,11 @@ export async function GET(req) {
       console.error('Pending permission join failed:', e?.message || e);
     }
 
-    // Persist corrected status/lateFlag/shortHours for all recalculated records
+    // READ-SAFE: never persist recomputed status/lateFlag for past dates.
+    // Past rows are judged per-day in memory; only today's rows may be
+    // corrected in DB (plus open-record workProgress churn handled above).
     const bulkOps = raw
-      .filter(rec => rec.clockIn && rec._id)
+      .filter(rec => rec.clockIn && rec._id && rec.date === _calToday)
       .map(rec => ({
         updateOne: {
           filter: { _id: rec._id },

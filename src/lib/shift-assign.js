@@ -18,6 +18,18 @@ export function todayStr(now = new Date()) {
   return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 }
 
+// Timezone-aware today (Asia/Kolkata by default via SystemConfig).
+// Falls back to host-local todayStr() when TZ resolution fails so
+// scheduled changes still apply rather than stalling.
+export async function todayStrTz() {
+  try {
+    const { getTzDateStr } = await import('@/lib/timezone');
+    return await getTzDateStr();
+  } catch {
+    return todayStr();
+  }
+}
+
 function parseList(str) {
   return String(str || '').split(',').map(s => s.trim()).filter(Boolean);
 }
@@ -204,7 +216,7 @@ export async function applyShiftChange(changeId, actorUser = null, ip = '') {
  */
 export async function applyDueShiftChanges() {
   await connectDB();
-  const today = todayStr();
+  const today = await todayStrTz();
   const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } });
   let total = 0;
   for (const change of due) {
@@ -227,7 +239,7 @@ export async function applyDueShiftChangesForUser(user) {
     if (!user?._id) return 0;
     await connectDB();
 
-    const today = todayStr();
+    const today = await todayStrTz();
     const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } });
     let appliedForUser = 0;
 

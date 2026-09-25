@@ -9,7 +9,7 @@ import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rb
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
 
 export async function GET(req) {
@@ -367,8 +367,24 @@ export async function PUT(req) {
       attendance.breaks = attendanceBreaks;
       attendance.workProgress = attendanceWorkProgress;
 
-      // Recalculate hours worked
-      regShiftDoc = await resolveShift(empUser);
+      // Recalculate hours worked using the shift effective ON reg.date
+      // (per-day rule): frozen snapshot first, then ShiftChange lineage.
+      // A later shift change must never re-judge this regularization.
+      if (attendance.shiftStartTime) {
+        regShiftDoc = {
+          _id: attendance.shiftId || null,
+          name: attendance.shiftName || empUser?.shift || '',
+          startTime: attendance.shiftStartTime,
+          endTime: attendance.shiftEndTime || '',
+          lateThreshold: attendance.shiftLateThreshold ?? null,
+        };
+      } else {
+        try {
+          regShiftDoc = (await resolveShiftForDate(empUser, reg.date)) || await resolveShift(empUser);
+        } catch {
+          regShiftDoc = await resolveShift(empUser);
+        }
+      }
       const config = await getGlobalConfig();
       const regCfg = getShiftConfig(regShiftDoc, config);
 
@@ -385,8 +401,8 @@ export async function PUT(req) {
         attendance.shortHours = hasRegPermission ? false : rawShortHours;
         attendance.status = 'present';
 
-        // Recalculate lateFlag based on shift start
-        if (empUser?.shift) {
+        // Recalculate lateFlag based on shift start (same per-day shift)
+        if (empUser?.shift || regShiftDoc?.startTime) {
           const lateShiftDoc = regShiftDoc || await resolveShift(empUser);
           if (lateShiftDoc?.startTime) {
             const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
@@ -400,6 +416,16 @@ export async function PUT(req) {
             }
           }
         }
+      }
+
+      // Freeze the per-day shift snapshot so later shift changes can never
+      // re-judge this regularization.
+      if (regShiftDoc?.startTime && !attendance.shiftStartTime) {
+        attendance.shiftId = regShiftDoc._id || attendance.shiftId || null;
+        attendance.shiftName = regShiftDoc.name || empUser?.shift || null;
+        attendance.shiftStartTime = regShiftDoc.startTime || null;
+        attendance.shiftEndTime = regShiftDoc.endTime || null;
+        attendance.shiftLateThreshold = regCfg?.lateThreshold ?? null;
       }
 
       finalClockOut = attendance.clockOut || null;

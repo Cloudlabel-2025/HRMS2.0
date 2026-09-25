@@ -8,7 +8,7 @@ import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
-import { getShiftEndMinutes, resolveShift } from '@/lib/shift-utils';
+import { getShiftEndMinutes, resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { publishAttendance } from '@/lib/sse';
 
@@ -87,10 +87,27 @@ export async function POST(req) {
         const [ih, im] = record.clockIn.split(':').map(Number);
         const clockInMins = ih * 60 + im;
 
-        // Resolve the record owner's ACTUAL shift so a stale user.shift name can
-        // never trigger the wrong shift's deadline.
+        // Resolve the record owner's shift effective ON record.date (per-day
+        // rule): frozen snapshot first, then ShiftChange lineage, then
+        // current shift. A later shift change must never move this deadline.
         const recordUser = usersById.get(record.userId.toString());
-        const userShift = (await resolveShift(recordUser)) || shift;
+        let userShift = null;
+        if (record.shiftStartTime) {
+          userShift = {
+            _id: record.shiftId || null,
+            name: record.shiftName || recordUser?.shift || '',
+            startTime: record.shiftStartTime,
+            endTime: record.shiftEndTime || '',
+            lateThreshold: record.shiftLateThreshold ?? null,
+          };
+        } else {
+          try {
+            userShift = (await resolveShiftForDate(recordUser, record.date)) || (await resolveShift(recordUser)) || shift;
+          } catch {
+            userShift = (await resolveShift(recordUser)) || shift;
+          }
+        }
+        if (!userShift) userShift = shift;
         const recordShiftCfg = getShiftConfig(userShift, globalConfig);
         const endMins = getShiftEndMinutes(userShift, globalConfig);
         const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);

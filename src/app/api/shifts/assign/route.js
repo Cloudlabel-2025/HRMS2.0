@@ -3,7 +3,7 @@ import { Shift, ShiftChange } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ShiftAssignSchema, validateRequest } from '@/lib/validation';
-import { computeTargetUserIds, applyShiftToUsers, todayStr } from '@/lib/shift-assign';
+import { computeTargetUserIds, applyShiftToUsers, todayStr, todayStrTz } from '@/lib/shift-assign';
 
 export async function POST(req) {
   try {
@@ -34,11 +34,37 @@ export async function POST(req) {
 
     if (!userIds.length) return fail('No matching employees found for the selected filters', 400);
 
-    // No effective date, or today or earlier → apply immediately
-    if (!effectiveDate || effectiveDate <= todayStr()) {
+    // No effective date, or today or earlier → apply immediately BUT keep
+    // a ShiftChange history row (status applied) so past attendance can be
+    // judged per-day via resolveShiftForDate instead of current shift.
+    // Timezone-aware: Vercel runs UTC, app days are Asia/Kolkata.
+    const today = await todayStrTz().catch(() => todayStr());
+    if (!effectiveDate || effectiveDate <= today) {
       const applied = await applyShiftToUsers(userIds, shiftDoc, user, ip, reason);
-      await auditLog('Shift Assigned (Bulk)', 'Shifts', user._id, `Applied shift "${shiftDoc.name}" to ${applied} user(s). Reason: ${reason}`, 'medium', ip, null, null);
-      return ok({ applied, shiftName: shiftDoc.name });
+      const histDate = (effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) ? effectiveDate : today;
+      let histId = null;
+      try {
+        const hist = await ShiftChange.create({
+          targetShiftId: shiftDoc._id,
+          targetShiftName: shiftDoc.name,
+          fromShiftId: targets?.fromShiftId || null,
+          departments: (targets?.departments || []).join(', '),
+          roles: (targets?.roles || []).join(', '),
+          userIds,
+          exactUserIds: !!targets?.exactUserIds,
+          effectiveDate: histDate,
+          reason: reason.trim(),
+          createdBy: user._id,
+          status: 'applied',
+          appliedAt: new Date(),
+          appliedCount: applied,
+        });
+        histId = hist._id;
+      } catch (e) {
+        console.error('Shift history record failed (non-fatal):', e.message);
+      }
+      await auditLog('Shift Assigned (Bulk)', 'Shifts', user._id, `Applied shift "${shiftDoc.name}" to ${applied} user(s). Reason: ${reason}`, 'medium', ip, null, histId);
+      return ok({ applied, shiftName: shiftDoc.name, historyId: histId, effectiveDate: histDate });
     }
 
     // Future effective date → schedule
