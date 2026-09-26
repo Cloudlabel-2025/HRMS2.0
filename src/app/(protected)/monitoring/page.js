@@ -106,7 +106,10 @@ export default function MonitoringPage() {
       const norm = v => String(v || '').trim().toLowerCase();
       for (const emp of empList) {
         try {
-        const uid = emp.userId?.toString() || emp._id?.toString();
+        // Employer accounts carry no shift/attendance — never evaluate them
+        // (they may hold stale legacy shift strings like "Evening Shift").
+        if (emp.role === 'super_admin' || emp.userId?.role === 'super_admin') continue;
+        const uid = emp.userId?.toString() || emp._id?.toString() || emp.userId?._id?.toString();
         if (!uid) continue;
 
         // Determine this employee's shift-aware today. Tolerant match
