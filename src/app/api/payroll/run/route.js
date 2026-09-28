@@ -91,8 +91,10 @@ export async function POST(req) {
         // Any clocked working day is present. Short hours, late arrival and
         // permission are deliberately informational and never become LOP.
         // Half-day leave + clock-in credits 0.5 via classifyPresence.
+        // Admin-imported presence (bulk attendance import, no clock-in)
+        // also counts — classifyPresence credits it a full day.
         presentDays = records
-          .filter(r => workingDateSet.has(r.date) && r.clockIn && ['present', 'late', 'half_day'].includes(r.status))
+          .filter(r => workingDateSet.has(r.date) && (r.clockIn || r.importedPresence) && ['present', 'late', 'half_day'].includes(r.status))
           .reduce((sum, r) => sum + classifyPresence(r, lopConfig), 0);
 
         const { default: Leave } = await import('@/lib/models/Leave');

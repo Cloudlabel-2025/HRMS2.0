@@ -154,6 +154,31 @@ appear in Pending Approvals for managers.
 
 ---
 
+## 6b. Attendance tab — step by step
+
+For employees who were physically in office but never clocked in (biometric failure,
+forgotten punch). One row per day — no leave type, no leave record, no balance movement.
+
+**What the columns mean (Attendance template):**
+
+| Column | What to fill |
+|---|---|
+| employeeEmail / employeeCode | Same as Balance (one of them is enough) |
+| date | The worked day in `YYYY-MM-DD` format. Cannot be in the future |
+| clockIn / clockOut | Optional `HH:MM` (24-hour). Leave blank when the exact times are unknown — the day still counts as a full present day for payroll |
+| reason | Why the clock-in is missing, e.g. "Biometric reader failed" (required, minimum 5 characters) |
+
+**What happens on Confirm:** each valid day is marked **present** immediately. Days that
+already have a real clock-in or an approved leave are rejected — only absent or empty days
+can be corrected. The attendance CSV shows these rows as `present` with a `Correction`
+column carrying your reason. No approvals run; the import is recorded in the audit log.
+
+**After Confirm:** the day stops showing as absent on the Absence board and earns a full
+payroll day in the next payroll run. Corrections to a month whose payroll is already
+closed do not change that closed run.
+
+---
+
 ## 7. Reading the preview and fixing errors
 
 Fix the red rows in your Excel and press **Check file** again. The most common messages:
@@ -171,6 +196,10 @@ Fix the red rows in your Excel and press **Check file** again. The most common m
 | carriedForward exceeds max N for X | More carried days than the policy allows | Reduce to the allowed maximum |
 | Dates contain only holidays/weekends | The range has zero working days | Check the dates |
 | reason is required (min 5 characters) | Reason too short or empty | Write a proper reason |
+| Date X already has a clock-in (HH:MM) | Real punch exists — attendance only fixes missing punches | Use Attendance Regularization for that day instead |
+| Date X is covered by an approved leave | Leave and present-day correction conflict | Remove the row, or cancel the leave first |
+| Overlaps approved X (from–to) | An approved leave covers that date | Remove the row, or cancel the leave first |
+| date cannot be in the future | Correction is for days already worked | Fix the date |
 
 ---
 

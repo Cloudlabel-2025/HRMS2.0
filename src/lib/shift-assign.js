@@ -38,6 +38,21 @@ function toIdStr(id) {
   return id && typeof id.toString === 'function' ? id.toString() : String(id || '');
 }
 
+/** Return the prior shift only when every targeted user shares one shift. */
+export async function inferCommonFromShiftId(userIds = []) {
+  const ids = (userIds || []).map(toIdStr).filter(Boolean);
+  if (!ids.length) return null;
+  const users = await User.find({ _id: { $in: ids } }).select('shiftId shift').lean();
+  if (users.length !== ids.length) return null;
+  const shiftKeys = new Set(users.map(u => u.shiftId ? `id:${toIdStr(u.shiftId)}` : `name:${u.shift || ''}`));
+  if (shiftKeys.size !== 1) return null;
+  const only = users[0];
+  if (only.shiftId) return only.shiftId;
+  if (!only.shift) return null;
+  const shift = await Shift.findOne({ name: only.shift }).select('_id').lean().catch(() => null);
+  return shift?._id || null;
+}
+
 /**
  * Resolve the target User _ids for a set of filters.
  * Base set: active, non-super_admin users. Filters are AND-ed, then explicit
@@ -199,6 +214,12 @@ export async function applyShiftChange(changeId, actorUser = null, ip = '') {
     fromShiftId: change.fromShiftId || null,
     exactUserIds: !!change.exactUserIds,
   });
+
+  // Keep usable lineage even when the assignment form omitted its optional
+  // source-shift filter. Infer it only for a homogeneous target group.
+  if (!change.fromShiftId) {
+    change.fromShiftId = await inferCommonFromShiftId(userIds);
+  }
 
   const count = await applyShiftToUsers(userIds, shiftDoc, actorUser, ip, change.reason);
 

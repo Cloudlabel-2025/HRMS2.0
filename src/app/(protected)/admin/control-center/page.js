@@ -1,7 +1,9 @@
 'use client';
 import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import DevAdminNav, { devNavBtnStyle } from '@/components/dev-admin/DevAdminNav';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 
@@ -163,83 +165,58 @@ export default function ControlCenterPage() {
       )}
 
       {/* Instance Header Banner */}
-      <div style={{
-        background: 'linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%)',
-        borderRadius: 16,
-        padding: '24px 28px',
-        color: '#fff',
-        marginBottom: 24,
-        boxShadow: '0 10px 25px -5px rgba(67, 56, 202, 0.3)',
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-              <span className="badge" style={{ background: '#6366f1', color: '#fff', fontSize: 11, padding: '4px 10px', textTransform: 'uppercase', tracking: '0.05em' }}>
-                Phase 1 Testing Instance
-              </span>
-              <span className="badge" style={{ background: 'rgba(255,255,255,0.15)', color: '#e0e7ff', fontSize: 11, padding: '4px 10px' }}>
-                <i className="bi bi-shield-check me-1" />Dev Admin Authorized
-              </span>
-            </div>
-            <h3 style={{ fontWeight: 700, margin: 0, fontSize: 22, color: '#ffffff' }}>
-              Policy Control & Live Sandbox Portal
-            </h3>
-            <p style={{ margin: '6px 0 0', color: '#c7d2fe', fontSize: 13 }}>
-              Configure leave policies, rules engine, and test "what-if" simulations in real time.
-            </p>
-          </div>
-          <div style={{ background: 'rgba(255, 255, 255, 0.1)', padding: '10px 16px', borderRadius: 12, backdropFilter: 'blur(8px)', border: '1px solid rgba(255,255,255,0.15)', textAlign: 'right' }}>
-            <div style={{ fontSize: 11, color: '#a5b4fc', textTransform: 'uppercase', fontWeight: 600 }}>Active Session</div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>{user?.email || 'kavin.dev01@gmail.com'}</div>
-            <div style={{ fontSize: 11, color: '#cbd5e1' }}>Role: Super Admin</div>
-          </div>
-        </div>
-
+      <DevAdminNav
+        title="Policy Control & Live Sandbox Portal"
+        subtitle='Configure leave policies, rules engine, and test "what-if" simulations in real time.'
+      >
         {/* Tab Selection Navigation */}
-        <div style={{ display: 'flex', gap: 12, marginTop: 24, borderTop: '1px solid rgba(255,255,255,0.15)', paddingTop: 16 }}>
-          <button
-            onClick={() => setActiveTab('policy')}
-            style={{
-              padding: '10px 20px',
-              borderRadius: 10,
-              fontSize: 13,
-              fontWeight: 600,
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              transition: 'all 0.2s',
-              background: activeTab === 'policy' ? '#ffffff' : 'rgba(255,255,255,0.1)',
-              color: activeTab === 'policy' ? '#312e81' : '#ffffff',
-            }}
-          >
-            <i className="bi bi-gear-wide-connected" />
-            1. Leave Policy Control & Rules
-          </button>
+        <button
+          onClick={() => setActiveTab('policy')}
+          style={{
+            padding: '10px 20px',
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 600,
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s',
+            background: activeTab === 'policy' ? '#ffffff' : 'rgba(255,255,255,0.1)',
+            color: activeTab === 'policy' ? '#312e81' : '#ffffff',
+          }}
+        >
+          <i className="bi bi-gear-wide-connected" />
+          1. Leave Policy Control & Rules
+        </button>
 
-          <button
-            onClick={() => setActiveTab('sandbox')}
-            style={{
-              padding: '10px 20px',
-              borderRadius: 10,
-              fontSize: 13,
-              fontWeight: 600,
-              border: 'none',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              transition: 'all 0.2s',
-              background: activeTab === 'sandbox' ? '#ffffff' : 'rgba(255,255,255,0.1)',
-              color: activeTab === 'sandbox' ? '#312e81' : '#ffffff',
-            }}
-          >
-            <i className="bi bi-[#10b981] bi-play-circle-fill" style={{ color: activeTab === 'sandbox' ? '#059669' : '#34d399' }} />
-            2. Live Sandbox Simulator Console
-          </button>
-        </div>
-      </div>
+        <button
+          onClick={() => setActiveTab('sandbox')}
+          style={{
+            padding: '10px 20px',
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 600,
+            border: 'none',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            transition: 'all 0.2s',
+            background: activeTab === 'sandbox' ? '#ffffff' : 'rgba(255,255,255,0.1)',
+            color: activeTab === 'sandbox' ? '#312e81' : '#ffffff',
+          }}
+        >
+          <i className="bi bi-[#10b981] bi-play-circle-fill" style={{ color: activeTab === 'sandbox' ? '#059669' : '#34d399' }} />
+          2. Live Sandbox Simulator Console
+        </button>
+
+        <Link href="/admin/dev-admin" style={{ ...devNavBtnStyle(false), marginLeft: 'auto' }}>
+          <i className="bi bi-terminal" />
+          Dev Admin Portal
+        </Link>
+      </DevAdminNav>
 
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center' }}>

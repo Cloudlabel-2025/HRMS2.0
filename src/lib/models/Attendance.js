@@ -59,6 +59,18 @@ const AttendanceSchema = new mongoose.Schema({
   },
   approvedHalfDayLeave: { type: Boolean, default: false },
   relatedLeaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null },
+  // Admin-imported presence correction (bulk attendance import). A day the
+  // employee physically worked but never clocked in. The status stays
+  // 'present' and payroll credits a full day via this flag — clockIn is NOT
+  // required for credit, so never fake clock times to force it.
+  importedPresence: {
+    source:   { type: String, enum: ['bulk_upload'], default: null },
+    reason:   { type: String, default: '' },
+    by:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    byEmail:  { type: String, default: '' },
+    at:       { type: Date, default: null },
+    batchRef: { type: String, default: '' },
+  },
   nonWorkingDayType: { type: String, enum: ['none', 'holiday', 'weekly_off'], default: 'none' },
   permission: {
     requestId: { type: mongoose.Schema.Types.ObjectId, ref: 'SelfServiceRequest', default: null },
@@ -82,7 +94,7 @@ AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 
 if (mongoose.models.Attendance) {
   const existing = mongoose.models.Attendance;
-  if (!existing.schema.path('shiftStartTime')) {
+  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence')) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

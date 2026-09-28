@@ -6,6 +6,8 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import ConfirmModal from '@/components/ConfirmModal';
+import ShiftMaster from '@/components/dev-admin/ShiftMaster';
+import ShiftFormModal, { DEFAULT_SHIFT_FORM, validateShiftForm } from '@/components/dev-admin/ShiftFormModal';
 
 const NOTIFICATION_RULES = [
   ['Late Login Alert',       'Send alert when employee logs in after threshold', true],
@@ -61,16 +63,6 @@ const getDefaultPayrollEndDate = () => {
   const day = Math.min(25, lastDay);
   return `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 };
-
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-function minutesToHrMin(totalMins) {
-  const m = Number(totalMins) || 0;
-  return { hours: Math.floor(m / 60), minutes: m % 60 };
-}
-function hrMinToMinutes(hours, minutes) {
-  return (Number(hours) || 0) * 60 + (Number(minutes) || 0);
-}
 
 export default function SettingsPage() {
   const { user } = useAuth();
@@ -211,11 +203,7 @@ export default function SettingsPage() {
   };
 
   const saveShift = () => {
-    const errs = {};
-    if (!modalForm.startTime) errs.startTime = 'Start time is required';
-    else if (!TIME_RE.test(modalForm.startTime)) errs.startTime = 'Start time must be in HH:MM (24-hour) format';
-    if (!modalForm.endTime) errs.endTime = 'End time is required';
-    else if (!TIME_RE.test(modalForm.endTime)) errs.endTime = 'End time must be in HH:MM (24-hour) format';
+    const errs = validateShiftForm(modalForm);
     setShiftErrs(errs);
     if (Object.keys(errs).length > 0) return;
     saveItem('shifts', modalForm);
@@ -545,50 +533,16 @@ export default function SettingsPage() {
 
           {/* SHIFTS */}
           {tab === 'shifts' && (
-            <div className="card p-3 p-md-4">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
-                <div className="section-title" style={{ margin: 0 }}>Shift Management</div>
-                <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', startTime: '', endTime: '', expectedHours: 480, absentThreshold: 240, lateThreshold: 15, earlyLoginWindow: 120, autoLogoutAfterShiftEnd: 360, halfDayThreshold: 180, breaks: [{ name: 'Break', type: 'break', maxDuration: 30, maxCount: 1 }, { name: 'Lunch', type: 'lunch', maxDuration: 60, maxCount: 1 }] }); setShiftErrs({}); setShowModal('shift'); }}>
-                  <i className="bi bi-plus-lg me-1" />Add Shift
-                </button>
-              </div>
-              {loading ? (
-                <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
-              ) : (
-                <div className="row g-3">
-                  {shifts.length === 0 && <div className="col-12"><div className="empty-state" style={{ padding: 20 }}><i className="bi bi-clock" /><h6>No shifts defined</h6></div></div>}
-                  {shifts.map(s => (
-                    <div key={s._id} className="col-md-6">
-                      <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: 16 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                          <span style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</span>
-                          <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => endShiftSessions(s)} disabled={endingSessions}>End Session</button>
-                            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...s }); setShiftErrs({}); setShowModal('shift'); }}>Edit</button>
-                            <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('shifts', s._id)}>Delete</button>
-                          </div>
-                        </div>
-                        <div style={{ fontSize: 13, color: '#64748b' }}>
-                          <i className="bi bi-clock me-2" />
-                          {s.startTime && s.endTime ? `${formatTime(s.startTime)} – ${formatTime(s.endTime)}` : 'No timing set'}
-                        </div>
-                        {Array.isArray(s.breaks) && s.breaks.length > 0 && (
-                          <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
-                            <i className="bi bi-cup me-2" />
-                            {s.breaks.map(b => {
-                              const hrs = Math.floor((b.maxDuration || 0) / 60);
-                              const mins = (b.maxDuration || 0) % 60;
-                              const durStr = hrs > 0 ? (mins > 0 ? `${hrs}h ${mins}m` : `${hrs}h`) : `${mins}m`;
-                              return `${b.name || b.type || 'Break'} ${b.maxCount || 1}x ${durStr}`;
-                            }).join(', ')}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <ShiftMaster
+              shifts={shifts}
+              loading={loading}
+              endingSessions={endingSessions}
+              formatTime={formatTime}
+              onAdd={() => { setModalForm({ ...DEFAULT_SHIFT_FORM }); setShiftErrs({}); setShowModal('shift'); }}
+              onEdit={(s) => { setModalForm({ ...s }); setShiftErrs({}); setShowModal('shift'); }}
+              onDelete={(id) => deleteItem('shifts', id)}
+              onEndSession={endShiftSessions}
+            />
           )}
 
           {/* HOLIDAYS */}
@@ -909,180 +863,15 @@ export default function SettingsPage() {
 
       {/* SHIFT MODAL */}
       {showModal === 'shift' && (
-        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 720 }}>
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">{modalForm._id ? 'Edit' : 'Add'} Shift</h5>
-                <button className="btn-close" onClick={() => setShowModal(null)} />
-              </div>
-              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-                <div className="row g-3">
-                  <div className="col-md-6">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Shift Name *</label>
-                    <input className="form-control form-control-sm" value={modalForm.name || ''} onChange={e => setModalForm(p => ({ ...p, name: e.target.value }))} />
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Start Time</label>
-                    <input type="time" className={`form-control form-control-sm${shiftErrs.startTime ? ' is-invalid' : ''}`} value={modalForm.startTime || ''} onChange={e => { setModalForm(p => ({ ...p, startTime: e.target.value })); setShiftErrs(p => ({ ...p, startTime: '' })); }} />
-                    {shiftErrs.startTime && <div className="invalid-feedback d-block" style={{ fontSize: 12 }}>{shiftErrs.startTime}</div>}
-                  </div>
-                  <div className="col-md-3">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>End Time</label>
-                    <input type="time" className={`form-control form-control-sm${shiftErrs.endTime ? ' is-invalid' : ''}`} value={modalForm.endTime || ''} onChange={e => { setModalForm(p => ({ ...p, endTime: e.target.value })); setShiftErrs(p => ({ ...p, endTime: '' })); }} />
-                    {shiftErrs.endTime && <div className="invalid-feedback d-block" style={{ fontSize: 12 }}>{shiftErrs.endTime}</div>}
-                  </div>
-
-                  <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Work Hours Policy</span>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Expected Work Hours</label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.expectedHours ?? 480).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.expectedHours ?? 480); setModalForm(p => ({ ...p, expectedHours: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.expectedHours ?? 480).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.expectedHours ?? 480); setModalForm(p => ({ ...p, expectedHours: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Absent Threshold <span className="text-muted" style={{ fontSize: 10 }}>(below = absent)</span></label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.absentThreshold ?? 240).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.absentThreshold ?? 240); setModalForm(p => ({ ...p, absentThreshold: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.absentThreshold ?? 240).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.absentThreshold ?? 240); setModalForm(p => ({ ...p, absentThreshold: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Half Day Threshold <span className="text-muted" style={{ fontSize: 10 }}>(below = half-day)</span></label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.halfDayThreshold ?? 180).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.halfDayThreshold ?? 180); setModalForm(p => ({ ...p, halfDayThreshold: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.halfDayThreshold ?? 180).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.halfDayThreshold ?? 180); setModalForm(p => ({ ...p, halfDayThreshold: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-                  <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Attendance Rules</span>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Late After</label>
-                    <span className="text-muted" style={{ fontSize: 10, display: 'block', marginTop: 2, marginBottom: 4 }}>from shift start</span>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.lateThreshold ?? 15).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.lateThreshold ?? 15); setModalForm(p => ({ ...p, lateThreshold: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.lateThreshold ?? 15).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.lateThreshold ?? 15); setModalForm(p => ({ ...p, lateThreshold: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Early Login Window <span className="text-muted" style={{ fontSize: 10 }}>(before start)</span></label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.earlyLoginWindow ?? 120).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.earlyLoginWindow ?? 120); setModalForm(p => ({ ...p, earlyLoginWindow: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.earlyLoginWindow ?? 120).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.earlyLoginWindow ?? 120); setModalForm(p => ({ ...p, earlyLoginWindow: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-                  <div className="col-md-4">
-                    <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Auto-Logout After Shift End</label>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                      <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.autoLogoutAfterShiftEnd ?? 360).hours}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.autoLogoutAfterShiftEnd ?? 360); setModalForm(p => ({ ...p, autoLogoutAfterShiftEnd: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                      <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                        value={minutesToHrMin(modalForm.autoLogoutAfterShiftEnd ?? 360).minutes}
-                        onChange={e => { const cur = minutesToHrMin(modalForm.autoLogoutAfterShiftEnd ?? 360); setModalForm(p => ({ ...p, autoLogoutAfterShiftEnd: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                      <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
-                    </div>
-                  </div>
-
-                  <div className="col-12" style={{ marginTop: 8, marginBottom: -4, paddingTop: 12, borderTop: '1px solid #f1f5f9' }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Break Configuration</span>
-                  </div>
-                  <div className="col-12">
-                    {(modalForm.breaks || []).map((br, idx) => (
-                      <div key={idx} style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '12px 14px', marginBottom: 8 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flex: 1 }}>
-                            <input className="form-control form-control-sm" style={{ fontSize: 13, fontWeight: 600, maxWidth: 160 }}
-                              value={br.name || ''} placeholder="Break name"
-                              onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], name: e.target.value }; setModalForm({ ...modalForm, breaks }); }} />
-                            <input className="form-control form-control-sm" style={{ fontSize: 12, maxWidth: 120 }}
-                              value={br.type || ''} placeholder="Type (e.g. tea, snack)"
-                              onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], type: e.target.value }; setModalForm({ ...modalForm, breaks }); }} />
-                          </div>
-                          <button className="btn btn-sm btn-outline-danger" style={{ fontSize: 12, padding: '4px 8px' }}
-                            onClick={() => { const breaks = [...(modalForm.breaks || [])]; breaks.splice(idx, 1); setModalForm({ ...modalForm, breaks }); }}>
-                            <i className="bi bi-trash3" />
-                          </button>
-                        </div>
-                        <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end' }}>
-                          <div>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>Max Duration</span>
-                            <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-                              {(() => { const { hours: bh, minutes: bm } = minutesToHrMin(br.maxDuration || 0); return (
-                                <>
-                                  <input type="number" min="0" max="23" className="form-control form-control-sm"
-                                    style={{ fontSize: 13, width: 52, height: 34, textAlign: 'center', padding: '0 6px' }}
-                                    value={bh} onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], maxDuration: hrMinToMinutes(e.target.value, bm) }; setModalForm({ ...modalForm, breaks }); }} />
-                                  <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>h</span>
-                                  <input type="number" min="0" max="59" className="form-control form-control-sm"
-                                    style={{ fontSize: 13, width: 52, height: 34, textAlign: 'center', padding: '0 6px' }}
-                                    value={bm} onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], maxDuration: hrMinToMinutes(bh, e.target.value) }; setModalForm({ ...modalForm, breaks }); }} />
-                                  <span style={{ fontSize: 13, fontWeight: 600, color: '#475569' }}>m</span>
-                                </>
-                              ); })()}
-                            </div>
-                          </div>
-                          <div>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: '#64748b', display: 'block', marginBottom: 4 }}>Max Count</span>
-                            <input type="number" min="1" className="form-control form-control-sm"
-                              style={{ fontSize: 13, width: 52, height: 34, textAlign: 'center', padding: '0 6px' }}
-                              value={br.maxCount ?? 1} onChange={e => { const breaks = [...(modalForm.breaks || [])]; breaks[idx] = { ...breaks[idx], maxCount: parseInt(e.target.value, 10) || 1 }; setModalForm({ ...modalForm, breaks }); }} />
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                    <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12, padding: '8px 16px', borderRadius: 8, marginTop: 4 }}
-                      onClick={() => setModalForm({ ...modalForm, breaks: [...(modalForm.breaks || []), { name: '', type: '', maxDuration: 0, maxCount: 1 }] })}>
-                      <i className="bi bi-plus-lg me-1" />Add Break
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div className="modal-footer">
-                <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={saveShift} disabled={saving}>
-                  {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <ShiftFormModal
+          form={modalForm}
+          setForm={setModalForm}
+          errors={shiftErrs}
+          setErrors={setShiftErrs}
+          saving={saving}
+          onSave={saveShift}
+          onClose={() => setShowModal(null)}
+        />
       )}
 
       {/* HOLIDAY MODAL */}

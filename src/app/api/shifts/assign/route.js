@@ -3,7 +3,7 @@ import { Shift, ShiftChange } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { ShiftAssignSchema, validateRequest } from '@/lib/validation';
-import { computeTargetUserIds, applyShiftToUsers, todayStr, todayStrTz } from '@/lib/shift-assign';
+import { computeTargetUserIds, applyShiftToUsers, inferCommonFromShiftId, todayStr, todayStrTz } from '@/lib/shift-assign';
 
 export async function POST(req) {
   try {
@@ -40,6 +40,7 @@ export async function POST(req) {
     // Timezone-aware: Vercel runs UTC, app days are Asia/Kolkata.
     const today = await todayStrTz().catch(() => todayStr());
     if (!effectiveDate || effectiveDate <= today) {
+      const inferredFromShiftId = targets?.fromShiftId || await inferCommonFromShiftId(userIds);
       const applied = await applyShiftToUsers(userIds, shiftDoc, user, ip, reason);
       const histDate = (effectiveDate && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDate)) ? effectiveDate : today;
       let histId = null;
@@ -47,7 +48,7 @@ export async function POST(req) {
         const hist = await ShiftChange.create({
           targetShiftId: shiftDoc._id,
           targetShiftName: shiftDoc.name,
-          fromShiftId: targets?.fromShiftId || null,
+          fromShiftId: inferredFromShiftId || null,
           departments: (targets?.departments || []).join(', '),
           roles: (targets?.roles || []).join(', '),
           userIds,

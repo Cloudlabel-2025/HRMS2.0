@@ -1,5 +1,5 @@
 /**
- * Shared helpers for bulk leave import (balance + leave history).
+ * Shared helpers for bulk leave import (balance + leave history + attendance correction).
  * Pure parsing / coercion lives here; DB lookups stay in the API routes
  * except resolveEmployee which is shared by validate + commit.
  */
@@ -33,6 +33,17 @@ export const LEAVE_HEADERS = [
   'status',
   'paidDays',
   'unpaidDays',
+];
+
+// Attendance correction: one row per worked-but-not-clocked day. No leave
+// type, no balance movement — the day is marked present via importedPresence.
+export const ATTENDANCE_HEADERS = [
+  'employeeEmail',
+  'employeeCode',
+  'date',
+  'clockIn',
+  'clockOut',
+  'reason',
 ];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -89,8 +100,35 @@ const LEAVE_ALIASES = {
   unpaiddays: 'unpaidDays',
 };
 
+const ATTENDANCE_ALIASES = {
+  employeeemail: 'employeeEmail',
+  email: 'employeeEmail',
+  employeecode: 'employeeCode',
+  employeenumber: 'employeeCode',
+  employeeno: 'employeeCode',
+  empcode: 'employeeCode',
+  empnumber: 'employeeCode',
+  userid: 'employeeCode',
+  date: 'date',
+  attendancedate: 'date',
+  day: 'date',
+  clockin: 'clockIn',
+  in: 'clockIn',
+  timein: 'clockIn',
+  clockout: 'clockOut',
+  out: 'clockOut',
+  timeout: 'clockOut',
+  reason: 'reason',
+};
+
+const KIND_ALIASES = {
+  balance: BALANCE_ALIASES,
+  leaves: LEAVE_ALIASES,
+  attendance: ATTENDANCE_ALIASES,
+};
+
 export function mapHeaders(rawHeaders, kind) {
-  const aliases = kind === 'balance' ? BALANCE_ALIASES : LEAVE_ALIASES;
+  const aliases = KIND_ALIASES[kind] || LEAVE_ALIASES;
   return rawHeaders.map(h => aliases[normHeader(h)] || null);
 }
 

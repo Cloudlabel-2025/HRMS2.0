@@ -44,6 +44,7 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
 
     let curShiftId = user.shiftId ? String(user.shiftId) : null;
     let curShiftName = user.shift || null;
+    let lineageBroken = false;
 
     for (const ch of changes) {
       const appliesToUser = (ch.userIds || []).some(id => String(id) === uidStr);
@@ -51,9 +52,7 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
 
       const isCurrentTarget =
         (curShiftId && ch.targetShiftId && String(ch.targetShiftId) === curShiftId) ||
-        (!curShiftId && curShiftName && ch.targetShiftName && ch.targetShiftName === curShiftName) ||
-        // Chain case: current step's from matches this earlier change's target
-        (curShiftId && ch.targetShiftId && String(ch.targetShiftId) === curShiftId);
+        (!curShiftId && curShiftName && ch.targetShiftName && ch.targetShiftName === curShiftName);
 
       if (!isCurrentTarget) continue;
 
@@ -67,10 +66,12 @@ export async function resolveShiftForDate(user, dateStr, { asLean = true } = {})
         } catch { /* ignore */ }
       } else if (ch.fromShiftId === null || ch.fromShiftId === undefined) {
         // No from recorded — lineage break. Stop reverse walk.
+        lineageBroken = true;
         break;
       }
     }
 
+    if (lineageBroken) return resolveShift(user, { asLean });
     if (curShiftId && mongoose.Types.ObjectId.isValid(curShiftId)) {
       const byId = asLean ? await Shift.findById(curShiftId).lean() : await Shift.findById(curShiftId);
       if (byId) return byId;
