@@ -9,6 +9,8 @@
  * Cutover mode (generic — works for ANY shift change, no names hardcoded):
  *   node scripts/repair-attendance-shift.mjs --dry --cutover=2026-09-25 --beforeShift="Evening"
  *   node scripts/repair-attendance-shift.mjs --dry --cutover=2026-09-25 --beforeStart=14:00 --beforeEnd=22:00
+ *   node scripts/repair-attendance-shift.mjs --dry --changeId=<id> --beforeShiftId=<shiftId>
+ *   node scripts/repair-attendance-shift.mjs --apply --changeId=<id> --beforeShiftId=<shiftId>
  * Rows with date < --cutover that have no snapshot/lineage are judged by the
  * before-shift (resolved by name, or synthetic from --beforeStart/--beforeEnd).
  *
@@ -38,10 +40,13 @@ const APPLY = process.argv.includes('--apply');
 const FROM = argVal('--from') || '1970-01-01';
 const TO = argVal('--to') || '2999-12-31';
 const LIMIT = Number(argVal('--limit') || '0') || 0;
+const USER_ID = argVal('--userId') || null;
 // Cutover mode: --cutover=YYYY-MM-DD (first day of the NEW shift) plus
 // --beforeShift="Name" (resolved from shifts collection) or
 // --beforeStart=HH:MM [--beforeEnd=HH:MM] (synthetic, no doc needed).
-const CUTOVER = argVal('--cutover') || null;
+const CHANGE_ID = argVal('--changeId') || null;
+const BEFORE_SHIFT_ID = argVal('--beforeShiftId') || null;
+let CUTOVER = argVal('--cutover') || null;
 const BEFORE_SHIFT = argVal('--beforeShift') || null;
 const BEFORE_START = argVal('--beforeStart') || null;
 const BEFORE_END = argVal('--beforeEnd') || null;
@@ -66,7 +71,26 @@ async function main() {
   const shifts = db.collection('shifts');
   const changes = db.collection('shiftchanges');
 
+  let targetChange = null;
+  if (CHANGE_ID) {
+    if (!mongoose.Types.ObjectId.isValid(CHANGE_ID)) throw new Error('--changeId must be a valid MongoDB ObjectId');
+    targetChange = await changes.findOne({ _id: new mongoose.Types.ObjectId(CHANGE_ID), status: 'applied' });
+    if (!targetChange) throw new Error('Applied shift change not found');
+    CUTOVER = targetChange.effectiveDate;
+  }
+
   const query = { clockIn: { $ne: null }, date: { $gte: FROM, $lte: TO } };
+  if (targetChange) {
+    query.userId = { $in: targetChange.userIds || [] };
+    query.date.$lt = CUTOVER;
+  }
+  if (USER_ID) {
+    if (!mongoose.Types.ObjectId.isValid(USER_ID)) throw new Error('--userId must be a valid MongoDB ObjectId');
+    const uid = new mongoose.Types.ObjectId(USER_ID);
+    query.userId = targetChange
+      ? { $in: (targetChange.userIds || []).filter((id) => String(id) === String(uid)) }
+      : uid;
+  }
   let cursor = attendances.find(query).sort({ date: 1 });
   if (LIMIT) cursor = cursor.limit(LIMIT);
   const recs = await cursor.toArray();
@@ -90,6 +114,14 @@ async function main() {
       console.log(`Cutover rule IGNORED: "${BEFORE_SHIFT}" not found in shifts collection — use --beforeStart=HH:MM instead.`);
     }
   }
+  if (CUTOVER && BEFORE_SHIFT_ID) {
+    if (!mongoose.Types.ObjectId.isValid(BEFORE_SHIFT_ID)) throw new Error('--beforeShiftId must be a valid MongoDB ObjectId');
+    const prior = shiftById.get(BEFORE_SHIFT_ID);
+    if (!prior) throw new Error('Previous shift not found');
+    cutoverShift = prior;
+    console.log(`Cutover rule: date < ${CUTOVER} -> "${prior.name}" (${prior.startTime}-${prior.endTime})`);
+  }
+  if (targetChange && !cutoverShift) throw new Error('A previous shift is required with --changeId (use --beforeShiftId)');
 
   // Applied shift changes ordered for reverse-walk per user
   const hist = await changes.find({ status: 'applied' }).sort({ effectiveDate: -1 }).toArray();
@@ -109,7 +141,13 @@ async function main() {
     let confident = false;
     let source = '';
 
-    if (rec.shiftStartTime) {
+    if (targetChange && rec.date < CUTOVER) {
+      // The operator identified the old shift for this specific applied
+      // change; it supersedes any snapshot frozen from the new shift.
+      shiftDoc = cutoverShift;
+      confident = true;
+      source = `cutover:${cutoverShift.name}`;
+    } else if (rec.shiftStartTime) {
       shiftDoc = {
         _id: rec.shiftId || null,
         name: rec.shiftName || user?.shift || '',
@@ -184,7 +222,12 @@ async function main() {
     const r = determineStatus(mins, lateThreshold, halfDayThreshold);
 
     const needsFix = rec.status !== r.status || !!rec.lateFlag !== r.lateFlag;
-    const needsSnap = !rec.shiftStartTime;
+    const needsSnap = !rec.shiftStartTime ||
+      String(rec.shiftId || '') !== String(shiftDoc._id || '') ||
+      rec.shiftName !== (shiftDoc.name || user?.shift || null) ||
+      rec.shiftStartTime !== (shiftDoc.startTime || null) ||
+      rec.shiftEndTime !== (shiftDoc.endTime || null) ||
+      Number(rec.shiftLateThreshold ?? 15) !== lateThreshold;
     if (!needsFix && !needsSnap) { skip++; continue; }
 
     if (needsFix) fix++;
@@ -197,7 +240,7 @@ async function main() {
         set.halfDayThresholdExceeded = !!r.halfDayThresholdExceeded;
       }
       if (needsSnap) {
-        const sid = shiftDoc._id && mongoose.Types.ObjectId.isValid(String(shiftDoc._id)) ? shiftDoc._id : user?.shiftId || null;
+        const sid = shiftDoc._id && mongoose.Types.ObjectId.isValid(String(shiftDoc._id)) ? shiftDoc._id : null;
         set.shiftId = sid;
         set.shiftName = shiftDoc.name || user?.shift || null;
         set.shiftStartTime = shiftDoc.startTime || null;
@@ -220,6 +263,10 @@ async function main() {
     console.log('Nothing to apply.');
   } else {
     console.log('Dry run — no writes. Re-run with --apply to write.');
+  }
+  if (APPLY && targetChange && BEFORE_SHIFT_ID) {
+    await changes.updateOne({ _id: targetChange._id }, { $set: { fromShiftId: new mongoose.Types.ObjectId(BEFORE_SHIFT_ID) } });
+    console.log('Backfilled prior shift on the applied shift-change record.');
   }
   await mongoose.disconnect();
 }

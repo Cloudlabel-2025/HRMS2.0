@@ -16,14 +16,17 @@ import {
 } from '@/lib/leave/bulk-helpers';
 import { resolvePolicyForUser } from '@/app/api/leave/balance/route';
 import { Leave, Holiday, UserLeaveBalance } from '@/lib/models/index';
+import Attendance from '@/lib/models/Attendance';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { getGlobalConfig, countWorkingDaysInRange } from '@/lib/payroll-cycle';
+import { getGlobalConfig, countWorkingDaysInRange, isWorkingDay } from '@/lib/payroll-cycle';
 import { isEmployer } from '@/lib/permissions';
 import { uploadFile } from '@/lib/cloudinary';
 import { auditLog } from '@/lib/middleware';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 
 const BULK_FOLDER = process.env.CLOUDINARY_BULK_FOLDER || 'hrms_bulk_leaves';
+
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export async function POST(req) {
   try {
@@ -43,7 +46,7 @@ export async function POST(req) {
     if (skipEligibility) {
       await auditLog('Bulk Leave Validate Skip Eligibility', 'Leave', user._id, 'super_admin bypassed eligibilityRules on bulk validate preview', 'high', req.headers.get('x-forwarded-for') || '', null, null);
     }
-    if (!['balance', 'leaves'].includes(type)) return fail('type must be balance or leaves', 400);
+    if (!['balance', 'leaves', 'attendance'].includes(type)) return fail('type must be balance, leaves or attendance', 400);
     if (!file || typeof file.arrayBuffer !== 'function') return fail('Excel/CSV file is required', 400);
     if (file.size > BULK_MAX_BYTES) return fail('File must be under 3 MB (split into smaller files)', 400);
 
@@ -168,7 +171,7 @@ export async function POST(req) {
           warnings,
         });
       }
-    } else {
+    } else if (type === 'leaves') {
       // ── Leaves validation ──
       const config = await getGlobalConfig();
       const seenRanges = [];
@@ -383,6 +386,82 @@ export async function POST(req) {
           user: targetUser ? { _id: String(targetUser._id), name: targetUser.name, email: targetUser.email } : null,
           policyName: policy?.name || null,
           computedDays,
+          errors,
+          warnings,
+        });
+      }
+    } else {
+      // ── Attendance correction validation ──
+      // One row per worked-but-not-clocked day. No leave type, no balance
+      // movement — the day is marked present via importedPresence.
+      const config = await getGlobalConfig();
+      const seenDays = new Set();
+      const today0 = new Date(); today0.setHours(0, 0, 0, 0);
+      const todayStr = `${today0.getFullYear()}-${String(today0.getMonth() + 1).padStart(2, '0')}-${String(today0.getDate()).padStart(2, '0')}`;
+      for (const obj of objects) {
+        const errors = [];
+        const warnings = [];
+        const email = String(obj.employeeEmail ?? '').trim();
+        const code = String(obj.employeeCode ?? '').trim();
+        const reason = String(obj.reason ?? '').trim();
+
+        const resolved = await resolveBulkEmployee({ employeeEmail: email, employeeCode: code });
+        let targetUser = null;
+        if (resolved.error) {
+          errors.push(resolved.error);
+        } else {
+          targetUser = resolved.user;
+          if (targetUser.status !== 'active') warnings.push(`Employee is ${targetUser.status}`);
+          if (isEmployer(targetUser.role)) errors.push('Employer accounts do not track attendance');
+        }
+
+        const date = coerceDateStr(obj.date);
+        if (!isValidDateStr(date)) errors.push('date must be YYYY-MM-DD');
+        else if (date > todayStr) errors.push('date cannot be in the future');
+
+        const clockIn = String(obj.clockIn ?? '').trim();
+        const clockOut = String(obj.clockOut ?? '').trim();
+        if (clockIn && !TIME_RE.test(clockIn)) errors.push('clockIn must be HH:MM (24-hour)');
+        if (clockOut && !TIME_RE.test(clockOut)) errors.push('clockOut must be HH:MM (24-hour)');
+        if (TIME_RE.test(clockIn) && TIME_RE.test(clockOut) && clockIn > clockOut) errors.push('clockIn must be on or before clockOut');
+
+        if (!reason) errors.push('reason is required (min 5 characters)');
+        else if (reason.length < 5) errors.push('reason is required (min 5 characters)');
+        else if (reason.length > 500) errors.push('reason must be under 500 characters');
+
+        if (targetUser && isValidDateStr(date)) {
+          const dayKey = `${targetUser._id}|${date}`;
+          if (seenDays.has(dayKey)) {
+            errors.push(`Duplicate row for this employee and date in this file`);
+          } else {
+            seenDays.add(dayKey);
+          }
+          try {
+            const existing = await Attendance.findOne({ userId: targetUser._id, date }).lean();
+            if (existing?.clockIn) {
+              errors.push(`Date ${date} already has a clock-in (${existing.clockIn}) — use Attendance Regularization instead`);
+            } else if (existing && (existing.status === 'leave' || existing.status === 'half_day' || existing.relatedLeaveId)) {
+              errors.push(`Date ${date} is covered by an approved leave — cannot mark present`);
+            } else if (existing?.importedPresence?.at) {
+              warnings.push(`Date ${date} was already corrected by an earlier import — it will be refreshed`);
+            }
+            const leaveOverlap = await Leave.findOne({
+              userId: targetUser._id, status: 'approved', from: { $lte: date }, to: { $gte: date },
+            }).select('typeCode from to').lean();
+            if (leaveOverlap) errors.push(`Overlaps approved ${leaveOverlap.typeCode || 'leave'} (${leaveOverlap.from} to ${leaveOverlap.to})`);
+          } catch { /* non-fatal */ }
+          try {
+            const holidays = await Holiday.find({ date }).lean();
+            if (!isWorkingDay(date, config, holidays)) warnings.push('Date is a holiday or weekly-off — payroll will not credit it');
+          } catch { /* non-fatal */ }
+        }
+
+        results.push({
+          rowNum: obj.__rowNum,
+          data: { employeeEmail: email, employeeCode: code, date, clockIn, clockOut, reason },
+          user: targetUser ? { _id: String(targetUser._id), name: targetUser.name, email: targetUser.email } : null,
+          policyName: null,
+          computedDays: 1,
           errors,
           warnings,
         });

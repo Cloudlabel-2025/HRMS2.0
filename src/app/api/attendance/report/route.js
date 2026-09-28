@@ -35,10 +35,11 @@ export async function GET(req) {
     }
 
     const headers = ['Date', 'Employee', 'Department', 'Shift', 'Clock In', 'Clock Out',
-      'Status', 'Hours Worked', 'Break Deduction', 'Late Flag', 'Auto Logged Out'];
+      'Status', 'Hours Worked', 'Break Deduction', 'Late Flag', 'Auto Logged Out', 'Correction'];
     const csvRows = [headers.join(',')];
 
     records.forEach(r => {
+      const correction = r.importedPresence?.at ? `Imported: ${String(r.importedPresence.reason || '').replace(/"/g, '""')}` : '';
       csvRows.push([
         r.date,
         `"${r.userId?.name || ''}"`,
@@ -51,6 +52,7 @@ export async function GET(req) {
         r.breakDeduction ?? '',
         r.lateFlag ? 'Yes' : 'No',
         r.autoLoggedOut ? 'Yes' : 'No',
+        correction ? `"${correction}"` : '',
       ].join(','));
     });
 

@@ -2,6 +2,7 @@ import dbConnect from '@/lib/db';
 import LeavePolicy from '@/lib/models/LeavePolicy';
 import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
+import { isDevAdminEmail } from '@/lib/permissions';
 import { ok, fail } from '@/lib/jwt';
 
 export const ALL_MASTER_LEAVE_TYPES = [
@@ -20,7 +21,7 @@ export async function GET(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (user.email?.toLowerCase() !== 'kavin.dev01@gmail.com') {
+    if (!isDevAdminEmail(user.email)) {
       return fail('Access denied: Policy Control Portal is strictly restricted to designated Dev Admin', 403);
     }
 
@@ -80,7 +81,7 @@ export async function PUT(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (user.email?.toLowerCase() !== 'kavin.dev01@gmail.com') {
+    if (!isDevAdminEmail(user.email)) {
       return fail('Access denied: Policy Control Portal is strictly restricted to designated Dev Admin', 403);
     }
 
@@ -143,7 +144,7 @@ export async function POST(req) {
   try {
     const { user, error } = await requireAuth(req);
     if (error) return error;
-    if (user.email?.toLowerCase() !== 'kavin.dev01@gmail.com') {
+    if (!isDevAdminEmail(user.email)) {
       return fail('Access denied: Policy Control Portal is strictly restricted to designated Dev Admin', 403);
     }
 

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { useAuth } from '@/lib/auth';
+import { useAuth, isDevAdminEmail } from '@/lib/auth';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
 import { getWorkProgressExportJob } from '@/lib/work-progress-export';
@@ -62,11 +62,14 @@ export function PersistentAppShell({ children }) {
     if (!loading && !user) router.replace('/login');
     if (!loading && user?.portalAccess === 'alumni') router.replace('/alumni');
     if (!loading && user) {
-      if (user.email?.toLowerCase() === 'kavin.dev01@gmail.com') {
-        if (!pathname.startsWith('/admin/control-center')) {
+      // Dev lock: the dev-admin surfaces (/admin/control-center, /admin/dev-admin)
+      // are an island — the dev user is kept inside, everyone else is kept out.
+      const DEV_ALLOWED_PREFIXES = ['/admin/control-center', '/admin/dev-admin'];
+      if (isDevAdminEmail(user.email)) {
+        if (!DEV_ALLOWED_PREFIXES.some(p => pathname.startsWith(p))) {
           router.replace('/admin/control-center');
         }
-      } else if (pathname.startsWith('/admin/control-center')) {
+      } else if (pathname.startsWith('/admin/')) {
         router.replace('/dashboard');
       }
     }

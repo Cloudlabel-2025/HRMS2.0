@@ -1,7 +1,7 @@
 'use client';
 import { createContext, useContext, useState, useEffect } from 'react';
-import { hasAccess } from '@/lib/permissions';
-export { hasAccess };
+import { hasAccess, isDevAdminEmail, DEV_ADMIN_EMAILS } from '@/lib/permissions';
+export { hasAccess, isDevAdminEmail, DEV_ADMIN_EMAILS };
 
 const AuthContext = createContext(null);
 

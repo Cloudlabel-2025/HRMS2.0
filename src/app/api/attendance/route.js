@@ -307,9 +307,8 @@ export async function GET(req) {
       console.error('Pending permission join failed:', e?.message || e);
     }
 
-    // READ-SAFE: never persist recomputed status/lateFlag for past dates.
-    // Past rows are judged per-day in memory; only today's rows may be
-    // corrected in DB (plus open-record workProgress churn handled above).
+    // Persist today's status corrections only. Historical corrections are
+    // performed explicitly after the target database and shift are verified.
     const bulkOps = raw
       .filter(rec => rec.clockIn && rec._id && rec.date === _calToday)
       .map(rec => ({

@@ -41,7 +41,7 @@ async function saveBulkArchive({ type, mode, userId, cloudinary, fileName, commi
     const ext = String(fileName || '').split('.').pop()?.toLowerCase() || 'xlsx';
     const stamp = new Date().toISOString().slice(0, 10);
     const doc = await Document.create({
-      name: `Bulk Leave ${type === 'balance' ? 'Balance' : 'History'} (${mode}) — ${stamp}`,
+      name: `Bulk Leave ${type === 'balance' ? 'Balance' : type === 'attendance' ? 'Attendance Correction' : 'History'} (${mode}) — ${stamp}`,
       category: 'HR',
       fileUrl: cloudinary.url,
       fileType: ['xlsx', 'xls', 'csv'].includes(ext) ? ext : 'xlsx',
@@ -67,7 +67,7 @@ export async function POST(req) {
 
     const body = await req.json();
     const { type, mode, rows, cloudinary, fileName } = body || {};
-    if (!['balance', 'leaves'].includes(type)) return fail('type must be balance or leaves', 400);
+    if (!['balance', 'leaves', 'attendance'].includes(type)) return fail('type must be balance, leaves or attendance', 400);
     if (!Array.isArray(rows) || rows.length === 0) return fail('rows[] from a validate preview is required', 400);
     if (rows.length > BULK_MAX_ROWS) return fail(`Max ${BULK_MAX_ROWS} rows per commit`, 400);
     const ip = req.headers.get('x-forwarded-for') || '';
@@ -140,6 +140,110 @@ export async function POST(req) {
         'Bulk Leave Balances Imported',
         `${mode} — ${committed.length} succeeded, ${failed.length} failed${fileName ? ` — ${fileName}` : ''}`,
         'leave',
+        archive?.documentId || null
+      );
+      return ok({ committed: committed.length, failed: failed.length, results: committed, errors: failed, archive });
+    }
+
+    if (type === 'attendance') {
+      // ── Attendance correction commit ──
+      // Marks worked-but-not-clocked days as present via importedPresence.
+      // Never trusts the preview: every gate is re-run server-side.
+      const sorted = [...rows].sort((a, b) => String(a.data?.employeeEmail || a.data?.employeeCode || '').localeCompare(String(b.data?.employeeEmail || b.data?.employeeCode || '')));
+      const seenDays = new Set();
+      const config = await getGlobalConfig();
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+      for (const r of sorted) {
+        const d = r.data || {};
+        const rowNum = r.rowNum ?? '?';
+        try {
+          const resolved = await resolveBulkEmployee({ employeeEmail: d.employeeEmail, employeeCode: d.employeeCode });
+          if (resolved.error) throw new Error(resolved.error);
+          const fullUser = await User.findById(resolved.user._id);
+          if (!fullUser) throw new Error('Employee not found');
+          if (isEmployer(fullUser.role)) throw new Error('Employer accounts do not track attendance');
+
+          const date = String(d.date || '').trim();
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('date must be YYYY-MM-DD');
+          if (date > todayStr) throw new Error('date cannot be in the future');
+
+          const clockIn = String(d.clockIn || '').trim();
+          const clockOut = String(d.clockOut || '').trim();
+          const TIME_OK = /^([01]\d|2[0-3]):[0-5]\d$/;
+          if (clockIn && !TIME_OK.test(clockIn)) throw new Error('clockIn must be HH:MM (24-hour)');
+          if (clockOut && !TIME_OK.test(clockOut)) throw new Error('clockOut must be HH:MM (24-hour)');
+          if (clockIn && clockOut && clockIn > clockOut) throw new Error('clockIn must be on or before clockOut');
+
+          const reason = String(d.reason || '').trim();
+          if (!reason || reason.length < 5) throw new Error('reason is required (min 5 characters)');
+          if (reason.length > 500) throw new Error('reason must be under 500 characters');
+
+          const dayKey = `${fullUser._id}|${date}`;
+          if (seenDays.has(dayKey)) throw new Error('Duplicate row for this employee and date in this file');
+          seenDays.add(dayKey);
+
+          const existing = await Attendance.findOne({ userId: fullUser._id, date });
+          if (existing?.clockIn) throw new Error(`Date ${date} already has a clock-in (${existing.clockIn}) — use Attendance Regularization instead`);
+          if (existing && (existing.status === 'leave' || existing.status === 'half_day' || existing.relatedLeaveId)) {
+            throw new Error(`Date ${date} is covered by an approved leave — cannot mark present`);
+          }
+          const leaveOverlap = await Leave.findOne({
+            userId: fullUser._id, status: 'approved', from: { $lte: date }, to: { $gte: date },
+          }).select('typeCode from to').lean();
+          if (leaveOverlap) throw new Error(`Overlaps approved ${leaveOverlap.typeCode || 'leave'} (${leaveOverlap.from} to ${leaveOverlap.to})`);
+
+          // Hours only when both times are given; payroll credits the full day
+          // through importedPresence regardless.
+          let hoursWorked = 0, baseHoursWorked = 0, payableHours = 0, breakDeduction = 0;
+          if (clockIn && clockOut) {
+            const toMins = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+            baseHoursWorked = Math.max(0, toMins(clockOut) - toMins(clockIn));
+            hoursWorked = baseHoursWorked;
+            payableHours = baseHoursWorked;
+          }
+
+          await Attendance.findOneAndUpdate(
+            { userId: fullUser._id, date },
+            {
+              $set: {
+                userId: fullUser._id, date,
+                status: 'present',
+                lateFlag: false,
+                shortHours: false,
+                approvedHalfDayLeave: false,
+                absenceReason: '',
+                clockIn: clockIn || null,
+                clockOut: clockOut || null,
+                hoursWorked, baseHoursWorked, payableHours, breakDeduction,
+                importedPresence: {
+                  source: 'bulk_upload', reason,
+                  by: user._id, byEmail: user.email,
+                  at: new Date(), batchRef: String(fileName || ''),
+                },
+              },
+            },
+            { upsert: true, new: true }
+          );
+
+          committed.push({ rowNum, userId: String(fullUser._id), date });
+        } catch (e) {
+          failed.push({ rowNum, error: e.message || 'Failed' });
+        }
+      }
+
+      await auditLog(
+        'Attendance Bulk Correction Import', 'Attendance', user._id,
+        `present import: ${committed.length} succeeded, ${failed.length} failed (${rows.length} rows)${cloudinary?.publicId ? `, Cloudinary: ${cloudinary.publicId}` : ''}`,
+        'high', ip, null, null
+      );
+      const archive = await saveBulkArchive({ type, mode: 'present', userId: user._id, cloudinary, fileName, committed: committed.length });
+      await notifyBulkSafe(
+        user._id,
+        'Bulk Attendance Correction Imported',
+        `present — ${committed.length} succeeded, ${failed.length} failed${fileName ? ` — ${fileName}` : ''}`,
+        'attendance',
         archive?.documentId || null
       );
       return ok({ committed: committed.length, failed: failed.length, results: committed, errors: failed, archive });

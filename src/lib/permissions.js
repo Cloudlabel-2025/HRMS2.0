@@ -6,6 +6,13 @@ export const MANAGER_ROLES = ['super_admin', 'admin_full', 'team_lead', 'team_ad
 export const EMPLOYER_ROLES = ['super_admin'];
 export const isEmployer = role => EMPLOYER_ROLES.includes(role);
 
+// ── Dev admin allowlist ───────────────────────────────────────────────────────
+// The dev-only portal (/admin/control-center, /admin/dev-admin) is keyed off an
+// email allowlist, not roles. Import and compare against this — do not re-add
+// the literal elsewhere.
+export const DEV_ADMIN_EMAILS = ['kavin.dev01@gmail.com'];
+export const isDevAdminEmail = (email) => !!email && DEV_ADMIN_EMAILS.includes(String(email).toLowerCase());
+
 // ── Module access matrix ──────────────────────────────────────────────────────
 // Values: 'full' | 'limited' | 'self' | 'dept' | 'team' | 'assigned' | false
 export const MODULE_ACCESS = {
@@ -36,6 +43,7 @@ export const MODULE_ACCESS = {
   audit:         { super_admin:'full', admin_full:'view',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   sme:           { super_admin:'full', admin_full:false,   recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
   control_center:{ super_admin:'full', admin_full:'full',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
+  dev_admin:    { super_admin:'full', admin_full:'full',  recruiter:false,    team_lead:false,    team_admin:false,  employee:false,      intern:false,      sme:false },
 };
 
 /** Returns the access level string for a role+module or user object, or false if no access */
@@ -43,12 +51,12 @@ export function getAccess(userOrRole, module) {
   const email = typeof userOrRole === 'object' ? userOrRole?.email : null;
   const role = typeof userOrRole === 'object' ? userOrRole?.role : userOrRole;
 
-  if (email && email.toLowerCase() === 'kavin.dev01@gmail.com') {
-    return module === 'control_center' ? 'full' : false;
+  if (isDevAdminEmail(email)) {
+    return (module === 'control_center' || module === 'dev_admin') ? 'full' : false;
   }
 
-  if (module === 'control_center') {
-    return false; // Policy Control Portal is strictly restricted to kavin.dev01@gmail.com
+  if (module === 'control_center' || module === 'dev_admin') {
+    return false; // Dev admin surfaces are strictly restricted to the DEV_ADMIN_EMAILS allowlist
   }
 
   return MODULE_ACCESS[module]?.[role] ?? false;

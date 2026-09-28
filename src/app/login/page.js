@@ -1,7 +1,7 @@
 'use client';
 import { useState, useLayoutEffect, useRef } from 'react';
 import Link from 'next/link';
-import { useAuth } from '@/lib/auth';
+import { useAuth, isDevAdminEmail } from '@/lib/auth';
 
 export default function LoginPage() {
   const { login, user, loading: authLoading } = useAuth();
@@ -20,7 +20,7 @@ export default function LoginPage() {
 
   useLayoutEffect(() => {
     if (!authLoading && user && !justLoggedIn.current) {
-      if (user.email === 'kavin.dev01@gmail.com') {
+      if (isDevAdminEmail(user.email)) {
         window.location.replace('/admin/control-center');
       } else {
         window.location.replace(user.portalAccess === 'alumni' ? '/alumni' : '/dashboard');
@@ -59,7 +59,7 @@ export default function LoginPage() {
     setSubmittingReason(false);
     setShowLateLogoutModal(false);
     justLoggedIn.current = true;
-    if (user?.email === 'kavin.dev01@gmail.com') {
+    if (isDevAdminEmail(user?.email)) {
       window.location.replace('/admin/control-center');
     } else {
       window.location.replace('/dashboard');
@@ -74,7 +74,7 @@ export default function LoginPage() {
     setLoading(false);
     if (result.success) {
       justLoggedIn.current = true;
-      if (result.user?.email === 'kavin.dev01@gmail.com') {
+      if (isDevAdminEmail(result.user?.email)) {
         window.location.replace('/admin/control-center');
       } else if (result.user?.portalAccess === 'alumni') {
         window.location.replace('/alumni');

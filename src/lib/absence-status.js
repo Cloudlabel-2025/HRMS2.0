@@ -122,6 +122,20 @@ export function deriveAbsenceKind({
     };
   }
 
+  // 2b. Admin-imported presence correction (bulk attendance import) wins over
+  // the clock-in test below — the day was worked but never punched.
+  if (attendance?.importedPresence && ['present', 'late'].includes(attendance.status)) {
+    return {
+      kind: attendance.status === 'late' ? 'late' : 'present',
+      absent: false,
+      permissionStatus: permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null,
+      reason: 'Present (imported correction)',
+      halfDayThreshold,
+      elapsed: 0,
+      coversShift: false,
+    };
+  }
+
   // 3. Any clock-in means not absent — keep the attendance status semantics.
   if (attendance?.clockIn) {
     const st = attendance.status;
