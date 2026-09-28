@@ -53,6 +53,42 @@ export async function inferCommonFromShiftId(userIds = []) {
   return shift?._id || null;
 }
 
+export async function snapshotUserShiftAssignments(userIds = [], targetShift) {
+  await connectDB();
+  const ids = (userIds || []).map(toIdStr).filter(Boolean);
+  const users = await User.find({ _id: { $in: ids } }).select('_id shiftId shift').lean();
+  const idsByName = new Map();
+  const names = [...new Set(users.map(u => u.shift).filter(Boolean))];
+  const priorIds = users.map(u => u.shiftId).filter(Boolean);
+  if (names.length) {
+    const shifts = await Shift.find({ $or: [{ name: { $in: names } }, { _id: { $in: priorIds } }] }).lean();
+    for (const shift of shifts) {
+      idsByName.set(shift.name, shift._id);
+      idsByName.set(`id:${toIdStr(shift._id)}`, shift);
+    }
+  } else if (priorIds.length) {
+    const shifts = await Shift.find({ _id: { $in: priorIds } }).lean();
+    for (const shift of shifts) idsByName.set(`id:${toIdStr(shift._id)}`, shift);
+  }
+  const snapshot = (shift, name = '') => shift ? {
+    name: shift.name || name,
+    startTime: shift.startTime || '', endTime: shift.endTime || '',
+    expectedHours: shift.expectedHours ?? 480, absentThreshold: shift.absentThreshold ?? 240,
+    lateThreshold: shift.lateThreshold ?? 15, earlyLoginWindow: shift.earlyLoginWindow ?? 120,
+    breaks: shift.breaks || [], autoLogoutAfterShiftEnd: shift.autoLogoutAfterShiftEnd ?? 360,
+    halfDayThreshold: shift.halfDayThreshold ?? 180,
+  } : null;
+  return users.map(u => ({
+    userId: u._id,
+    fromShiftId: u.shiftId || idsByName.get(u.shift) || null,
+    fromShiftName: u.shift || '',
+    fromShiftSnapshot: snapshot(idsByName.get(`id:${toIdStr(u.shiftId)}`) || idsByName.get(u.shift), u.shift),
+    targetShiftId: targetShift._id,
+    targetShiftName: targetShift.name,
+    targetShiftSnapshot: snapshot(targetShift),
+  }));
+}
+
 /**
  * Resolve the target User _ids for a set of filters.
  * Base set: active, non-super_admin users. Filters are AND-ed, then explicit
@@ -215,6 +251,9 @@ export async function applyShiftChange(changeId, actorUser = null, ip = '') {
     exactUserIds: !!change.exactUserIds,
   });
 
+  change.userAssignments = await snapshotUserShiftAssignments(userIds, shiftDoc);
+  change.userIds = userIds;
+
   // Keep usable lineage even when the assignment form omitted its optional
   // source-shift filter. Infer it only for a homogeneous target group.
   if (!change.fromShiftId) {
@@ -238,7 +277,7 @@ export async function applyShiftChange(changeId, actorUser = null, ip = '') {
 export async function applyDueShiftChanges() {
   await connectDB();
   const today = await todayStrTz();
-  const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } });
+  const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } }).sort({ effectiveDate: 1, createdAt: 1 });
   let total = 0;
   for (const change of due) {
     try {
@@ -261,23 +300,15 @@ export async function applyDueShiftChangesForUser(user) {
     await connectDB();
 
     const today = await todayStrTz();
-    const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } });
+    const due = await ShiftChange.find({ status: 'pending', effectiveDate: { $lte: today } }).sort({ effectiveDate: 1, createdAt: 1 });
     let appliedForUser = 0;
 
     for (const change of due) {
       if (!(await userMatchesChange(user, change))) continue;
 
-      // Skip users already on the target shift (prevents repeat notifications)
-      if (
-        user.shiftId && change.targetShiftId &&
-        toIdStr(user.shiftId) === toIdStr(change.targetShiftId)
-      ) continue;
-      if (!user.shiftId && user.shift && user.shift === change.targetShiftName) continue;
-
-      const shiftDoc = await Shift.findById(change.targetShiftId).lean();
-      if (!shiftDoc) continue;
-
-      const count = await applyShiftToUsers([user._id], shiftDoc, null, '', change.reason);
+      // Apply the whole effective-dated change so the audit event and per-user
+      // before/after snapshots are recorded before clock-in uses the new shift.
+      const count = await applyShiftChange(change._id, null, '');
       if (count > 0) appliedForUser += count;
     }
 

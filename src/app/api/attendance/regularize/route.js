@@ -367,10 +367,12 @@ export async function PUT(req) {
       attendance.breaks = attendanceBreaks;
       attendance.workProgress = attendanceWorkProgress;
 
-      // Recalculate hours worked using the shift effective ON reg.date
-      // (per-day rule): frozen snapshot first, then ShiftChange lineage.
-      // A later shift change must never re-judge this regularization.
-      if (attendance.shiftStartTime) {
+      // Per-user effective-dated assignments are authoritative. Use the frozen
+      // snapshot only when no assignment history covers this date.
+      try {
+        regShiftDoc = await resolveShiftForDate(empUser, reg.date, { fallbackToCurrent: false });
+      } catch { regShiftDoc = null; }
+      if (!regShiftDoc && attendance.shiftStartTime) {
         regShiftDoc = {
           _id: attendance.shiftId || null,
           name: attendance.shiftName || empUser?.shift || '',
@@ -378,7 +380,7 @@ export async function PUT(req) {
           endTime: attendance.shiftEndTime || '',
           lateThreshold: attendance.shiftLateThreshold ?? null,
         };
-      } else {
+      } else if (!regShiftDoc) {
         try {
           regShiftDoc = (await resolveShiftForDate(empUser, reg.date)) || await resolveShift(empUser);
         } catch {
@@ -410,8 +412,11 @@ export async function PUT(req) {
             if (attendance.clockIn) {
               const [cH, cM] = attendance.clockIn.split(':').map(Number);
               const clockInMins = cH * 60 + cM;
-              const minutesLate = clockInMins - shiftStartMins;
+              let minutesLate = clockInMins - shiftStartMins;
+              if (minutesLate < -720) minutesLate += 1440;
+              if (minutesLate > 720) minutesLate -= 1440;
               attendance.lateFlag = minutesLate > (regCfg?.lateThreshold || 15);
+              attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate >= (regCfg?.halfDayThreshold || 180);
               if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
             }
           }

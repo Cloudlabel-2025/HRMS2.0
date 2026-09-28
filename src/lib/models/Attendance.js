@@ -33,6 +33,7 @@ const AttendanceSchema = new mongoose.Schema({
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
+  halfDayThresholdExceeded: { type: Boolean, default: false },
   // Frozen per-day shift snapshot (written at clock-in). Past rows are judged
   // by these values and are immune to later shift edits. Nullable for back-compat.
   shiftId:             { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
@@ -94,7 +95,7 @@ AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 
 if (mongoose.models.Attendance) {
   const existing = mongoose.models.Attendance;
-  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence')) {
+  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded')) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

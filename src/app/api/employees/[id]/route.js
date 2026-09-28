@@ -2,10 +2,11 @@ import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { Employee, Shift } from '@/lib/models/index';
+import { Employee, Shift, ShiftChange } from '@/lib/models/index';
 import { UpdateEmployeeSchema, validateRequest } from '@/lib/validation';
 import { canAccessDepartment } from '@/lib/rbac';
 import { notify } from '@/lib/notify';
+import { snapshotUserShiftAssignments, todayStrTz } from '@/lib/shift-assign';
 
 export async function GET(req, { params }) {
   const { id } = await params;
@@ -86,6 +87,26 @@ export async function PUT(req, { params }) {
       (validated.shift !== undefined && validated.shift !== existing.shift) ||
       (validated.shiftId && validated.shiftId.toString() !== existing.shiftId?.toString());
     if (shiftChanged) {
+      const targetShift = validated.shiftId
+        ? await Shift.findById(validated.shiftId).lean()
+        : await Shift.findOne({ name: validated.shift }).lean();
+      const priorUser = await User.findById(existing.userId).select('shift shiftId').lean();
+      if (targetShift && priorUser) {
+        await ShiftChange.create({
+          targetShiftId: targetShift._id,
+          targetShiftName: targetShift.name,
+          fromShiftId: priorUser.shiftId || null,
+          userIds: [existing.userId],
+          userAssignments: await snapshotUserShiftAssignments([existing.userId], targetShift),
+          exactUserIds: true,
+          effectiveDate: await todayStrTz(),
+          reason: 'Shift changed from employee profile',
+          status: 'applied',
+          appliedAt: new Date(),
+          appliedCount: 1,
+          createdBy: user._id,
+        });
+      }
       await notify(existing.userId, 'Shift Changed', `Your shift has been changed to ${validated.shift || 'the new shift'}.`, 'shift', existing.shiftId || validated.shiftId || null);
     }
   }

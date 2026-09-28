@@ -119,6 +119,17 @@ export async function GET(req) {
     const _histShiftCache = new Map();
     const resolveShiftForRow = async (rec) => {
       const uid = rec.userId?._id?.toString() || '';
+      if (rec.date && rec.userId?._id) {
+        const key = uid + '|' + rec.date;
+        if (!_histShiftCache.has(key)) {
+          try {
+            const hist = await resolveShiftForDate(rec.userId, rec.date, { fallbackToCurrent: false });
+            _histShiftCache.set(key, hist || null);
+          } catch { _histShiftCache.set(key, null); }
+        }
+        const hist = _histShiftCache.get(key);
+        if (hist) return hist;
+      }
       if (rec.shiftStartTime) {
         return {
           _id: rec.shiftId || null,
@@ -127,17 +138,6 @@ export async function GET(req) {
           endTime: rec.shiftEndTime || '',
           lateThreshold: rec.shiftLateThreshold ?? null,
         };
-      }
-      if (rec.date && rec.date !== _calToday && rec.userId?._id) {
-        const key = uid + '|' + rec.date;
-        if (!_histShiftCache.has(key)) {
-          try {
-            const hist = await resolveShiftForDate(rec.userId, rec.date);
-            _histShiftCache.set(key, hist || null);
-          } catch { _histShiftCache.set(key, null); }
-        }
-        const hist = _histShiftCache.get(key);
-        if (hist) return hist;
       }
       return shiftByUserId[uid] || null;
     };
@@ -228,6 +228,7 @@ export async function GET(req) {
         });
         rec.status = result.status;
         rec.lateFlag = result.lateFlag;
+        rec.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
       }
       // Permission day: highlight real hours but never mark shortHours.
       // Per product decision: ANY approved permission forces Present (even mid-day).

@@ -91,10 +91,14 @@ export function resolveDayStatus({
 export function classifyPresence(rec, lopConfig = {}) {
   // Admin-imported presence correction (bulk attendance import): a full
   // present day with no clock-in. Must come before the clockIn guard.
-  if (rec?.importedPresence && ['present', 'late'].includes(rec.status)) return 1;
+  if (rec?.importedPresence && ['present', 'late'].includes(rec.status)) {
+    if (rec.status === 'late' && rec.halfDayThresholdExceeded && lopConfig.countHalfDay !== false) return 0.5;
+    return 1;
+  }
   if (!rec?.clockIn) return 0;
   if (rec.approvedHalfDayLeave) return 0.5;
   if (rec.status === 'half_day') return lopConfig.countHalfDay === false ? 1 : 0.5;
+  if (rec.status === 'late' && rec.halfDayThresholdExceeded) return lopConfig.countHalfDay === false ? 1 : 0.5;
   if (['present', 'late'].includes(rec.status)) return 1;
   return 0;
 }

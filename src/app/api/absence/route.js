@@ -8,6 +8,7 @@ import { getDepartmentUserIds, getAccessibleDepartments } from '@/lib/rbac';
 import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 import { getTzTime } from '@/lib/timezone';
 import { deriveAbsenceKind } from '@/lib/absence-status';
+import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 
 function lastDayOfMonth(month) {
   const [y, m] = month.split('-').map(Number);
@@ -137,12 +138,32 @@ export async function GET(req) {
     const attByKey = new Map();
     for (const a of attendanceRows || []) attByKey.set(`${String(a.userId)}|${a.date}`, a);
 
-    // Per-day shift (per-day rule): frozen attendance snapshot first, then
-    // reverse-walk of applied ShiftChanges effective AFTER `date` starting
-    // from the roster (current) shift, then current shift. Single batched
-    // history load above — no per-cell queries (Vercel-safe).
+    // Per-day shift: resolve the latest effective assignment event first so
+    // an old/stale attendance snapshot cannot override a later correction.
+    // Fall back to a frozen snapshot, then the current roster shift.
     const shiftForDate = (r, date) => {
       const att = attByKey.get(`${r.uid}|${date}`);
+      const changes = historyByUser.get(r.uid) || [];
+      const applied = changes.filter(c => c.effectiveDate <= date);
+      if (applied.length) {
+        const ch = applied.reduce((best, c) => !best || c.effectiveDate > best.effectiveDate || (c.effectiveDate === best.effectiveDate && String(c.appliedAt || c.createdAt) > String(best.appliedAt || best.createdAt)) ? c : best, null);
+        const assignment = (ch.userAssignments || []).find(a => String(a.userId) === r.uid);
+        const sid = assignment?.targetShiftId || ch.targetShiftId;
+        const sname = assignment?.targetShiftName || ch.targetShiftName;
+        if (assignment?.targetShiftSnapshot?.startTime) return { ...assignment.targetShiftSnapshot, _id: sid || null };
+        if (sid && shiftById.has(String(sid))) return shiftById.get(String(sid));
+        if (sname && shiftByName.has(sname)) return shiftByName.get(sname);
+      } else {
+        const future = changes.filter(c => c.effectiveDate > date).sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate))[0];
+        if (future) {
+          const assignment = (future.userAssignments || []).find(a => String(a.userId) === r.uid);
+          const sid = assignment?.fromShiftId || future.fromShiftId;
+          const sname = assignment?.fromShiftName || '';
+          if (assignment?.fromShiftSnapshot?.startTime) return { ...assignment.fromShiftSnapshot, _id: sid || null };
+          if (sid && shiftById.has(String(sid))) return shiftById.get(String(sid));
+          if (sname && shiftByName.has(sname)) return shiftByName.get(sname);
+        }
+      }
       if (att?.shiftStartTime) {
         return {
           _id: att.shiftId || null,
@@ -153,25 +174,6 @@ export async function GET(req) {
           lateThreshold: att.shiftLateThreshold ?? 15,
         };
       }
-      const changes = historyByUser.get(r.uid) || [];
-      const relevant = changes.filter((c) => c.effectiveDate > date);
-      if (!relevant.length) return currentShiftFor(r);
-      let curId = r.shiftId ? String(r.shiftId) : null;
-      let curName = r.shift || null;
-      for (const ch of relevant) {
-        const target = ch.targetShiftId ? String(ch.targetShiftId) : null;
-        const matches = (curId && target && curId === target) || (!curId && curName && ch.targetShiftName === curName);
-        if (!matches) continue;
-        if (ch.fromShiftId) {
-          curId = String(ch.fromShiftId);
-          const fs = shiftById.get(curId);
-          if (fs) curName = fs.name;
-        } else {
-          return currentShiftFor(r); // lineage break — safest fallback
-        }
-      }
-      if (curId && shiftById.has(curId)) return shiftById.get(curId);
-      if (curName && shiftByName.has(curName)) return shiftByName.get(curName);
       return currentShiftFor(r);
     };
 
@@ -228,7 +230,18 @@ export async function GET(req) {
         const shiftDoc = shiftForDate(r, date);
         if (!isWorkingDay(date, config, holidays || [])) continue;
         const key = `${r.uid}|${date}`;
-        const attendance = attByKey.get(key) || null;
+        const storedAttendance = attByKey.get(key) || null;
+        let attendance = storedAttendance;
+        if (storedAttendance?.clockIn && shiftDoc?.startTime && !['leave', 'holiday'].includes(storedAttendance.status) && storedAttendance.leaveOverride?.status !== 'rejected' && !storedAttendance.approvedHalfDayLeave && !storedAttendance.permission?.requestId && !storedAttendance.permission?.startTime) {
+          const cfg = getShiftConfig(shiftDoc, config);
+          const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+          const [h, m] = storedAttendance.clockIn.split(':').map(Number);
+          let minutes = (h - sh) * 60 + (m - sm);
+          if (minutes < -720) minutes += 1440;
+          if (minutes > 720) minutes -= 1440;
+          const result = determineStatus(minutes, cfg);
+          attendance = { ...storedAttendance, status: result.status, lateFlag: result.lateFlag, halfDayThresholdExceeded: !!result.halfDayThresholdExceeded };
+        }
         const leave = leaveByKey.get(key) || null;
         const permission = permByKey.get(key) || null;
 

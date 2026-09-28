@@ -11,6 +11,8 @@ import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
+import { resolveShiftForDate } from '@/lib/shift-utils';
+import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 
 /** Fire-and-forget bell — summaries only, never blocks the import result. */
 async function notifyBulkSafe(...args) {
@@ -204,18 +206,39 @@ export async function POST(req) {
             payableHours = baseHoursWorked;
           }
 
+          const shiftDoc = await resolveShiftForDate(fullUser.toObject ? fullUser.toObject() : fullUser, date);
+          let status = 'present', lateFlag = false, halfDayThresholdExceeded = false;
+          if (clockIn && shiftDoc?.startTime) {
+            const cfg = getShiftConfig(shiftDoc, config);
+            const [sh, sm] = shiftDoc.startTime.split(':').map(Number);
+            const [h, m] = clockIn.split(':').map(Number);
+            let minutesSinceShiftStart = (h - sh) * 60 + (m - sm);
+            if (minutesSinceShiftStart < -720) minutesSinceShiftStart += 1440;
+            if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
+            const result = determineStatus(minutesSinceShiftStart, cfg);
+            status = result.status;
+            lateFlag = result.lateFlag;
+            halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
+          }
+
           await Attendance.findOneAndUpdate(
             { userId: fullUser._id, date },
             {
               $set: {
                 userId: fullUser._id, date,
-                status: 'present',
-                lateFlag: false,
+                status,
+                lateFlag,
+                halfDayThresholdExceeded,
                 shortHours: false,
                 approvedHalfDayLeave: false,
                 absenceReason: '',
                 clockIn: clockIn || null,
                 clockOut: clockOut || null,
+                shiftId: shiftDoc?._id || null,
+                shiftName: shiftDoc?.name || null,
+                shiftStartTime: shiftDoc?.startTime || null,
+                shiftEndTime: shiftDoc?.endTime || null,
+                shiftLateThreshold: shiftDoc?.lateThreshold ?? null,
                 hoursWorked, baseHoursWorked, payableHours, breakDeduction,
                 importedPresence: {
                   source: 'bulk_upload', reason,

@@ -26,63 +26,57 @@ export async function resolveShift(user, { asLean = true } = {}) {
  * @param {{asLean?: boolean}} opts
  * @returns {Promise<Object|null>} shift doc or null
  */
-export async function resolveShiftForDate(user, dateStr, { asLean = true } = {}) {
-  if (!user || !dateStr) return resolveShift(user, { asLean });
+export async function resolveShiftForDate(user, dateStr, { asLean = true, fallbackToCurrent = true } = {}) {
+  if (!user || !dateStr) return fallbackToCurrent ? resolveShift(user, { asLean }) : null;
   try {
     const { ShiftChange } = await import('./models/index');
     const uidStr = String(user._id || user.id || '');
-    if (!uidStr) return resolveShift(user, { asLean });
+    if (!uidStr) return fallbackToCurrent ? resolveShift(user, { asLean }) : null;
 
-    // All applied changes that took effect AFTER the target date and affect this user.
+    // Per-user effective-dated assignment history is authoritative. It stores
+    // each employee's own before/after shift, including mixed-target groups.
     const changes = await ShiftChange.find({
       status: 'applied',
-      effectiveDate: { $gt: dateStr },
+      effectiveDate: { $lte: dateStr },
       userIds: user._id,
-    }).sort({ effectiveDate: -1 }).lean().catch(() => []);
+    }).sort({ effectiveDate: -1, appliedAt: -1, createdAt: -1 }).lean().catch(() => []);
 
-    if (!changes.length) return resolveShift(user, { asLean });
-
-    let curShiftId = user.shiftId ? String(user.shiftId) : null;
-    let curShiftName = user.shift || null;
-    let lineageBroken = false;
-
-    for (const ch of changes) {
-      const appliesToUser = (ch.userIds || []).some(id => String(id) === uidStr);
-      if (!appliesToUser) continue;
-
-      const isCurrentTarget =
-        (curShiftId && ch.targetShiftId && String(ch.targetShiftId) === curShiftId) ||
-        (!curShiftId && curShiftName && ch.targetShiftName && ch.targetShiftName === curShiftName);
-
-      if (!isCurrentTarget) continue;
-
-      if (ch.fromShiftId) {
-        curShiftId = String(ch.fromShiftId);
-        try {
-          const fromShift = asLean
-            ? await Shift.findById(ch.fromShiftId).lean()
-            : await Shift.findById(ch.fromShiftId);
-          if (fromShift) curShiftName = fromShift.name;
-        } catch { /* ignore */ }
-      } else if (ch.fromShiftId === null || ch.fromShiftId === undefined) {
-        // No from recorded — lineage break. Stop reverse walk.
-        lineageBroken = true;
-        break;
+    const assignmentFor = (change) => (change.userAssignments || []).find(a => String(a.userId) === uidStr);
+    let shiftId = null;
+    let shiftName = '';
+    let shiftSnapshot = null;
+    const latest = changes.find(c => c.effectiveDate <= dateStr);
+    if (latest) {
+      const assignment = assignmentFor(latest);
+      shiftId = assignment?.targetShiftId || latest.targetShiftId;
+      shiftName = assignment?.targetShiftName || latest.targetShiftName;
+      shiftSnapshot = assignment?.targetShiftSnapshot || null;
+    } else {
+      // Before the first recorded change, use that change's employee-specific
+      // prior shift (legacy rows use the group-level fromShiftId).
+      const firstFuture = await ShiftChange.findOne({
+        status: 'applied', effectiveDate: { $gt: dateStr }, userIds: user._id,
+      }).sort({ effectiveDate: 1, appliedAt: 1, createdAt: 1 }).lean().catch(() => null);
+      if (firstFuture) {
+        const assignment = assignmentFor(firstFuture);
+        shiftId = assignment?.fromShiftId || firstFuture.fromShiftId || null;
+        shiftName = assignment?.fromShiftName || '';
+        shiftSnapshot = assignment?.fromShiftSnapshot || null;
       }
     }
 
-    if (lineageBroken) return resolveShift(user, { asLean });
-    if (curShiftId && mongoose.Types.ObjectId.isValid(curShiftId)) {
-      const byId = asLean ? await Shift.findById(curShiftId).lean() : await Shift.findById(curShiftId);
-      if (byId) return byId;
+    if (shiftSnapshot?.startTime) return { ...shiftSnapshot, _id: shiftId || null };
+    if (shiftId) {
+      const shift = asLean ? await Shift.findById(shiftId).lean() : await Shift.findById(shiftId);
+      if (shift) return shift;
     }
-    if (curShiftName) {
-      const byName = asLean ? await Shift.findOne({ name: curShiftName }).lean() : await Shift.findOne({ name: curShiftName });
-      if (byName) return byName;
+    if (shiftName) {
+      const shift = asLean ? await Shift.findOne({ name: shiftName }).lean() : await Shift.findOne({ name: shiftName });
+      if (shift) return shift;
     }
-    return resolveShift(user, { asLean });
+    return fallbackToCurrent ? resolveShift(user, { asLean }) : null;
   } catch {
-    return resolveShift(user, { asLean });
+    return fallbackToCurrent ? resolveShift(user, { asLean }) : null;
   }
 }
 export function getShiftEndMinutes(shiftDoc, config) {

@@ -23,6 +23,8 @@ import { isEmployer } from '@/lib/permissions';
 import { uploadFile } from '@/lib/cloudinary';
 import { auditLog } from '@/lib/middleware';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
+import { resolveShiftForDate } from '@/lib/shift-utils';
+import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 
 const BULK_FOLDER = process.env.CLOUDINARY_BULK_FOLDER || 'hrms_bulk_leaves';
 
@@ -396,6 +398,7 @@ export async function POST(req) {
       // movement — the day is marked present via importedPresence.
       const config = await getGlobalConfig();
       const seenDays = new Set();
+      const timingPreviewByRow = new Map();
       const today0 = new Date(); today0.setHours(0, 0, 0, 0);
       const todayStr = `${today0.getFullYear()}-${String(today0.getMonth() + 1).padStart(2, '0')}-${String(today0.getDate()).padStart(2, '0')}`;
       for (const obj of objects) {
@@ -454,6 +457,21 @@ export async function POST(req) {
             const holidays = await Holiday.find({ date }).lean();
             if (!isWorkingDay(date, config, holidays)) warnings.push('Date is a holiday or weekly-off — payroll will not credit it');
           } catch { /* non-fatal */ }
+          if (clockIn && TIME_RE.test(clockIn)) {
+            try {
+              const shift = await resolveShiftForDate(targetUser, date);
+              if (shift?.startTime) {
+                const cfg = getShiftConfig(shift, config);
+                const [sh, sm] = shift.startTime.split(':').map(Number);
+                const [h, m] = clockIn.split(':').map(Number);
+                let minutes = (h - sh) * 60 + (m - sm);
+                if (minutes < -720) minutes += 1440;
+                if (minutes > 720) minutes -= 1440;
+                const status = determineStatus(minutes, cfg);
+                timingPreviewByRow.set(obj.__rowNum, { shiftName: shift.name, shiftStartTime: shift.startTime, status: status.status, lateFlag: status.lateFlag, halfDayThresholdExceeded: !!status.halfDayThresholdExceeded });
+              }
+            } catch { /* status preview is best-effort */ }
+          }
         }
 
         results.push({
@@ -462,6 +480,7 @@ export async function POST(req) {
           user: targetUser ? { _id: String(targetUser._id), name: targetUser.name, email: targetUser.email } : null,
           policyName: null,
           computedDays: 1,
+          attendancePreview: timingPreviewByRow.get(obj.__rowNum) || null,
           errors,
           warnings,
         });

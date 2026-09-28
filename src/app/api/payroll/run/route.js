@@ -11,6 +11,8 @@ import { requireAuth, auditLog } from '@/lib/middleware';
 import { notify } from '@/lib/notify';
 import { ok, fail } from '@/lib/jwt';
 import { isEmployer } from '@/lib/permissions';
+import { resolveShiftForDate } from '@/lib/shift-utils';
+import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 
 export async function POST(req) {
   try {
@@ -93,8 +95,24 @@ export async function POST(req) {
         // Half-day leave + clock-in credits 0.5 via classifyPresence.
         // Admin-imported presence (bulk attendance import, no clock-in)
         // also counts — classifyPresence credits it a full day.
-        presentDays = records
-          .filter(r => workingDateSet.has(r.date) && (r.clockIn || r.importedPresence) && ['present', 'late', 'half_day'].includes(r.status))
+        const eligibleRecords = records.filter(r => workingDateSet.has(r.date) && (r.clockIn || r.importedPresence));
+        for (const record of eligibleRecords) {
+          if (!record.clockIn || record.approvedHalfDayLeave || record.permission?.requestId || record.permission?.startTime || ['leave', 'holiday'].includes(record.status)) continue;
+          const shift = await resolveShiftForDate(emp, record.date).catch(() => null);
+          if (!shift?.startTime) continue;
+          const cfg = getShiftConfig(shift, config);
+          const [sh, sm] = shift.startTime.split(':').map(Number);
+          const [h, m] = record.clockIn.split(':').map(Number);
+          let minutes = (h - sh) * 60 + (m - sm);
+          if (minutes < -720) minutes += 1440;
+          if (minutes > 720) minutes -= 1440;
+          const result = determineStatus(minutes, cfg);
+          record.status = result.status;
+          record.lateFlag = result.lateFlag;
+          record.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
+        }
+        presentDays = eligibleRecords
+          .filter(r => ['present', 'late', 'half_day'].includes(r.status))
           .reduce((sum, r) => sum + classifyPresence(r, lopConfig), 0);
 
         const { default: Leave } = await import('@/lib/models/Leave');

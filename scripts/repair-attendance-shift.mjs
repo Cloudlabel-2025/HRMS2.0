@@ -41,6 +41,7 @@ const FROM = argVal('--from') || '1970-01-01';
 const TO = argVal('--to') || '2999-12-31';
 const LIMIT = Number(argVal('--limit') || '0') || 0;
 const USER_ID = argVal('--userId') || null;
+const ORACLE_HISTORY = process.argv.includes('--oracle-history');
 // Cutover mode: --cutover=YYYY-MM-DD (first day of the NEW shift) plus
 // --beforeShift="Name" (resolved from shifts collection) or
 // --beforeStart=HH:MM [--beforeEnd=HH:MM] (synthetic, no doc needed).
@@ -71,6 +72,14 @@ async function main() {
   const shifts = db.collection('shifts');
   const changes = db.collection('shiftchanges');
 
+  const oracleUserIds = [
+    '6a4d93486fe260561f2afeb7',
+    '6a4d941ce24a8defc8412f93',
+    '6a4d957aad9303fc59a455a0',
+    '6a4d9194c7a6804a76e88289',
+    '6a4d967bc11d5996900e4993',
+  ];
+
   let targetChange = null;
   if (CHANGE_ID) {
     if (!mongoose.Types.ObjectId.isValid(CHANGE_ID)) throw new Error('--changeId must be a valid MongoDB ObjectId');
@@ -80,6 +89,15 @@ async function main() {
   }
 
   const query = { clockIn: { $ne: null }, date: { $gte: FROM, $lte: TO } };
+  if (ORACLE_HISTORY) {
+    if (CHANGE_ID || USER_ID) throw new Error('--oracle-history cannot be combined with --changeId or --userId');
+    if (argVal('--from') || argVal('--to') || CUTOVER || BEFORE_SHIFT_ID || BEFORE_SHIFT || BEFORE_START) {
+      throw new Error('--oracle-history uses a fixed, reviewed date range and cannot be combined with other date/shift overrides');
+    }
+    query.date = { $gte: '2026-07-08', $lte: '2026-08-17' };
+    query.userId = { $in: oracleUserIds.map((id) => new mongoose.Types.ObjectId(id)) };
+    console.log('Oracle history scope: five specified Oracle users, 2026-07-08 through 2026-08-17 only');
+  }
   if (targetChange) {
     query.userId = { $in: targetChange.userIds || [] };
     query.date.$lt = CUTOVER;
@@ -91,6 +109,7 @@ async function main() {
       ? { $in: (targetChange.userIds || []).filter((id) => String(id) === String(uid)) }
       : uid;
   }
+  if (USER_ID && CUTOVER) query.date.$lt = CUTOVER;
   let cursor = attendances.find(query).sort({ date: 1 });
   if (LIMIT) cursor = cursor.limit(LIMIT);
   const recs = await cursor.toArray();
@@ -100,6 +119,15 @@ async function main() {
   const allShifts = await shifts.find({}).toArray();
   for (const s of allShifts) shiftById.set(String(s._id), s);
   const shiftByName = new Map(allShifts.map((s) => [s.name, s]));
+
+  let oracleAfternoon = null;
+  let oracleNight = null;
+  if (ORACLE_HISTORY) {
+    oracleAfternoon = shiftById.get('6a4d8e80c7a6804a76e88285');
+    oracleNight = shiftById.get('6a75d6d1f36f9765105ca559');
+    if (!oracleAfternoon || !oracleNight) throw new Error('Required historical Oracle shift document was not found');
+    console.log('Oracle mapping: After Noon 2026-07-08..2026-08-06; Night 2026-08-07..2026-08-17');
+  }
 
   // Cutover before-shift (generic): named doc wins, else synthetic times.
   let cutoverShift = null;
@@ -129,6 +157,7 @@ async function main() {
   let fix = 0, snap = 0, skip = 0, review = 0;
   const ops = [];
   const reviewRows = [];
+  const oraclePreviewRows = [];
 
   for (const rec of recs) {
     if (['leave', 'holiday'].includes(rec.status)) { skip++; continue; }
@@ -141,7 +170,11 @@ async function main() {
     let confident = false;
     let source = '';
 
-    if (targetChange && rec.date < CUTOVER) {
+    if (ORACLE_HISTORY) {
+      shiftDoc = rec.date < '2026-08-07' ? oracleAfternoon : oracleNight;
+      confident = true;
+      source = `oracle-history:${shiftDoc.name}`;
+    } else if ((targetChange || USER_ID) && CUTOVER && rec.date < CUTOVER) {
       // The operator identified the old shift for this specific applied
       // change; it supersedes any snapshot frozen from the new shift.
       shiftDoc = cutoverShift;
@@ -221,8 +254,12 @@ async function main() {
     const halfDayThreshold = 180;
     const r = determineStatus(mins, lateThreshold, halfDayThreshold);
 
+    if (ORACLE_HISTORY && ['2026-08-13', '2026-08-14'].includes(rec.date)) {
+      oraclePreviewRows.push({ date: rec.date, userId: String(rec.userId), clockIn: rec.clockIn, storedStatus: rec.status, calculatedStatus: r.status, shift: shiftDoc.name, shiftStart: shiftDoc.startTime });
+    }
+
     const needsFix = rec.status !== r.status || !!rec.lateFlag !== r.lateFlag;
-    const needsSnap = !rec.shiftStartTime ||
+    const needsSnap = ORACLE_HISTORY || !rec.shiftStartTime ||
       String(rec.shiftId || '') !== String(shiftDoc._id || '') ||
       rec.shiftName !== (shiftDoc.name || user?.shift || null) ||
       rec.shiftStartTime !== (shiftDoc.startTime || null) ||
@@ -248,12 +285,16 @@ async function main() {
         set.shiftLateThreshold = lateThreshold;
       }
       ops.push({ updateOne: { filter: { _id: rec._id }, update: { $set: set } } });
-    } else if (fix + snap <= 20) {
-      console.log(` would fix ${rec.date} user=${String(rec.userId)} clock=${rec.clockIn} ${rec.status}${rec.lateFlag ? '(late)' : ''} -> ${r.status} via ${source}(${shiftDoc.name} ${shiftDoc.startTime}) snap=${needsSnap}`);
+    } else if (ORACLE_HISTORY || fix + snap <= 20) {
+    console.log(` would fix ${rec.date} user=${String(rec.userId)} clock=${rec.clockIn} ${rec.status}${rec.lateFlag ? '(late)' : ''} -> ${r.status} via ${source}(${shiftDoc.name} ${shiftDoc.startTime}) snap=${needsSnap}`);
     }
   }
 
   console.log(`Result: toFix=${fix} toSnap=${snap} skipped=${skip} needsReview=${review}`);
+  if (ORACLE_HISTORY) {
+    console.log(`Selected Aug 13-14 clocked records: ${oraclePreviewRows.length}`);
+    for (const row of oraclePreviewRows) console.log(' oracle-check:', JSON.stringify(row));
+  }
   for (const r of reviewRows) console.log(' review:', JSON.stringify(r));
 
   if (APPLY && ops.length) {

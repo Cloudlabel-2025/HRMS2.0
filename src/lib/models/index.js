@@ -381,6 +381,19 @@ const NotificationSchema = new mongoose.Schema({
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 // ── Scheduled / Bulk Shift Assignment ────────────────────────────────────────
+const ShiftRuleSnapshotSchema = new mongoose.Schema({
+  name: { type: String, default: '' },
+  startTime: { type: String, default: '' },
+  endTime: { type: String, default: '' },
+  expectedHours: { type: Number, default: 480 },
+  absentThreshold: { type: Number, default: 240 },
+  lateThreshold: { type: Number, default: 15 },
+  earlyLoginWindow: { type: Number, default: 120 },
+  breaks: { type: [mongoose.Schema.Types.Mixed], default: [] },
+  autoLogoutAfterShiftEnd: { type: Number, default: 360 },
+  halfDayThreshold: { type: Number, default: 180 },
+}, { _id: false });
+
 const ShiftChangeSchema = new mongoose.Schema({
   targetShiftId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', required: true },
   targetShiftName: { type: String, required: true },
@@ -388,6 +401,15 @@ const ShiftChangeSchema = new mongoose.Schema({
   departments:     { type: String, default: '' },
   roles:           { type: String, default: '' },
   userIds:         [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  userAssignments: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    fromShiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+    fromShiftName: { type: String, default: '' },
+    fromShiftSnapshot: { type: ShiftRuleSnapshotSchema, default: null },
+    targetShiftId: { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', required: true },
+    targetShiftName: { type: String, required: true },
+    targetShiftSnapshot: { type: ShiftRuleSnapshotSchema, default: null },
+  }],
   exactUserIds:    { type: Boolean, default: false },
   effectiveDate:   { type: String, required: true },
   reason:          { type: String, required: true, trim: true },
