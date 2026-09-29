@@ -50,17 +50,37 @@ export function isWorkingDay(dateStr, config, holidays) {
 }
 
 /**
+ * Full calendar classification for a range. Every date is exactly one of
+ * 'working' | 'holiday' | 'weekly_off' — the single source the attendance
+ * register, the absence grid and payroll all share.
+ */
+export function buildCalendarMap(fromDate, toDate, config = {}, holidays = []) {
+  const holidaySet = new Set((holidays || []).map(h => (typeof h === 'string' ? h : h.date)));
+  const working = new Set();
+  const holidayDates = new Set();
+  const weeklyOff = new Set();
+  const byDate = new Map();
+  for (let cursor = new Date(`${fromDate}T00:00:00`), end = new Date(`${toDate}T00:00:00`); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const date = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
+    let kind;
+    if (holidaySet.has(date)) kind = 'holiday';
+    else if (!isWorkingDay(date, config, holidays)) kind = 'weekly_off';
+    else kind = 'working';
+    byDate.set(date, kind);
+    if (kind === 'working') working.add(date);
+    else if (kind === 'holiday') holidayDates.add(date);
+    else weeklyOff.add(date);
+  }
+  return { working, holidays: holidayDates, weeklyOff, byDate };
+}
+
+/**
  * Single-source working-date set for a cycle. Leave, attendance and payroll
  * must all use this (or isWorkingDay directly) so Saturday/holiday handling
  * agrees and phantom LOP disappears.
  */
 export function buildWorkingDateSet(fromDate, toDate, config = {}, holidays = []) {
-  const set = new Set();
-  for (let cursor = new Date(`${fromDate}T00:00:00`), end = new Date(`${toDate}T00:00:00`); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
-    const date = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
-    if (isWorkingDay(date, config, holidays)) set.add(date);
-  }
-  return set;
+  return buildCalendarMap(fromDate, toDate, config, holidays).working;
 }
 
 /**

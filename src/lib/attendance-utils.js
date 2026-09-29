@@ -194,7 +194,10 @@ export async function markAbsentEmployees(dateStr, options = {}) {
 
     await Attendance.findOneAndUpdate(
       { userId: uid, date: dateStr },
-      { $set: { userId: uid, date: dateStr, status: 'absent' } },
+      {
+        $set: { userId: uid, date: dateStr, status: 'absent', nonWorkingDayType: 'none' },
+        $setOnInsert: { absentMarkedAt: new Date(), absentSource: 'system' },
+      },
       { upsert: true, new: true }
     );
 

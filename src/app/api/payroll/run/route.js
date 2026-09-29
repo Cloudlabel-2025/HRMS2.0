@@ -4,9 +4,11 @@ import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import PayrollRule from '@/lib/models/PayrollRule';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, isWorkingDay, buildWorkingDateSet } from '@/lib/payroll-cycle';
+import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, isWorkingDay, buildWorkingDateSet, buildCalendarMap } from '@/lib/payroll-cycle';
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { classifyPresence } from '@/lib/attendance-resolver';
+import { isWorkedDay } from '@/lib/attendance-stats';
+import { syncEmployeeCalendarRows } from '@/lib/attendance-sync';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { notify } from '@/lib/notify';
 import { ok, fail } from '@/lib/jwt';
@@ -39,6 +41,11 @@ export async function POST(req) {
     const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
     const workingDays = workingCalendar.workingDays;
     const holidayDocs = workingCalendar.holidays.map(date => ({ date }));
+    // Full calendar classification for the cycle: every date is exactly one
+    // of working | holiday | weekly_off. The attendance register is
+    // materialised against this same map (see syncEmployeeCalendarRows), so
+    // payroll, attendance and the absence grid always agree.
+    const calMap = buildCalendarMap(fromDate, toDate, config, holidayDocs);
     // Single source for working dates: buildWorkingDateSet uses the same
     // isWorkingDay (Saturday policy + holidays) as getWorkingDayCalendar,
     // so payroll, leave and attendance agree. No duplicate iteration logic.
@@ -79,23 +86,57 @@ export async function POST(req) {
 
       let presentDays;
       let lopDays;
+      let absentDaysVal = 0;
+      let daysWorkedVal = 0;
+      let paidLeaveDaysVal = 0;
+      let unpaidLeaveDaysVal = 0;
+      let holidayDaysVal = 0;
+      let weeklyOffDaysVal = 0;
       let retroLopDaysVal = 0;
       let retroLeaveIdsVal = [];
 
       if (isEmployer(emp.role)) {
         presentDays = workingDays;
+        daysWorkedVal = workingDays;
         lopDays = 0;
       } else {
+        const { default: Leave } = await import('@/lib/models/Leave');
+        const approvedLeaves = await Leave.find({
+          userId: emp._id,
+          status: 'approved',
+          from: { $lte: toDate },
+          to: { $gte: fromDate },
+        });
+
+        // Materialise the calendar register first: every elapsed date gets a
+        // row (missing working days become absent, non-working days become
+        // holiday, approved-leave days become leave). Clocked rows are never
+        // touched, so this is a pure backfill — the LOP below counts real rows.
+        await syncEmployeeCalendarRows({
+          userId: emp._id,
+          fromDate,
+          toDate,
+          config,
+          holidays: holidayDocs,
+          todayStr,
+          allowTodayAbsent: !isMidCycle,
+          leaves: approvedLeaves,
+        });
+
         const records = await Attendance.find({
           userId: emp._id,
           date: { $gte: fromDate, $lte: toDate },
         });
-        // Any clocked working day is present. Short hours, late arrival and
+        // Any clocked working day is present. Late arrival always credits a
+        // full day (late is display-only, never LOP); short hours and
         // permission are deliberately informational and never become LOP.
         // Half-day leave + clock-in credits 0.5 via classifyPresence.
         // Admin-imported presence (bulk attendance import, no clock-in)
         // also counts — classifyPresence credits it a full day.
-        const eligibleRecords = records.filter(r => workingDateSet.has(r.date) && (r.clockIn || r.importedPresence));
+        // Source-aware: only real clock-ins (or a real bulk-import source)
+        // enter the present-day pool — the schema's empty importedPresence
+        // object must not qualify.
+        const eligibleRecords = records.filter(r => workingDateSet.has(r.date) && isWorkedDay(r));
         for (const record of eligibleRecords) {
           if (!record.clockIn || record.approvedHalfDayLeave || record.permission?.requestId || record.permission?.startTime || ['leave', 'holiday'].includes(record.status)) continue;
           const shift = await resolveShiftForDate(emp, record.date).catch(() => null);
@@ -111,34 +152,57 @@ export async function POST(req) {
           record.lateFlag = result.lateFlag;
           record.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
         }
-        presentDays = eligibleRecords
-          .filter(r => ['present', 'late', 'half_day'].includes(r.status))
-          .reduce((sum, r) => sum + classifyPresence(r, lopConfig), 0);
 
-        const { default: Leave } = await import('@/lib/models/Leave');
-        const approvedLeaves = await Leave.find({
-          userId: emp._id,
-          status: 'approved',
-          from: { $lte: toDate },
-          to: { $gte: fromDate },
-        });
+        // Explicit day counting from the stored register — no gap arithmetic.
+        // A working date with no row at this point is a safety-net absent
+        // (the sync above should have written it).
+        const byDate = new Map(records.map(r => [r.date, r]));
+        presentDays = 0;
+        absentDaysVal = 0;
+        let daysWorkedVal = 0;
+        for (const d of workingDateSet) {
+          const r = byDate.get(d);
+          if (!r) { absentDaysVal += 1; continue; }
+          if (r.status === 'absent' && !r.clockIn) { absentDaysVal += 1; continue; }
+          // Days Worked: integer count of working dates actually turned up
+          // (same definition as the Team report card — not the fractional
+          // payroll credit, which lives in presentDays).
+          if (isWorkedDay(r)) daysWorkedVal += 1;
+          presentDays += classifyPresence(r, lopConfig);
+        }
+        // Elapsed-only calendar counts for the payslip breakdown.
+        holidayDaysVal = [...calMap.holidays].filter(d => d <= todayStr).length;
+        weeklyOffDaysVal = [...calMap.weeklyOff].filter(d => d <= todayStr).length;
 
-        const paidLeaveDays = approvedLeaves.reduce((sum, leave) => {
-          if (leave.typeCode === 'LOP' || leave.type === 'Loss of Pay') return sum;
+        // Paid vs unpaid leave overlap on elapsed working days. A day the
+        // employee actually worked (clock-in) is already credited via
+        // presence, so the leave overlap skips it — except half-day leave,
+        // where 0.5 presence + 0.5 leave correctly make a full day.
+        const clockedDates = new Set(records.filter(r => r.clockIn).map(r => r.date));
+        let paidLeaveDays = 0;
+        let unpaidLeaveDays = 0;
+        for (const leave of approvedLeaves) {
+          const isLopLeave = leave.typeCode === 'LOP' || leave.type === 'Loss of Pay';
           const totalRequested = Number(leave.days) || 0;
           const totalPaid = leave.paidDays == null ? totalRequested : Number(leave.paidDays);
-          const paidRatio = totalRequested > 0 ? Math.min(1, Math.max(0, totalPaid / totalRequested)) : 0;
-          let overlap = 0;
+          const paidRatio = isLopLeave ? 0 : (totalRequested > 0 ? Math.min(1, Math.max(0, totalPaid / totalRequested)) : 0);
           const start = leave.from < fromDate ? fromDate : leave.from;
           const end = leave.to > toDate ? toDate : leave.to;
           for (let cursor = new Date(`${start}T00:00:00`), last = new Date(`${end}T00:00:00`); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
             const d = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
-            if (workingDateSet.has(d)) overlap += leave.halfDay ? 0.5 : 1;
+            if (!workingDateSet.has(d)) continue;
+            if (clockedDates.has(d) && !leave.halfDay) continue;
+            const credit = leave.halfDay ? 0.5 : 1;
+            paidLeaveDays += credit * paidRatio;
+            unpaidLeaveDays += credit * (1 - paidRatio);
           }
-          return sum + (overlap * paidRatio);
-        }, 0);
+        }
+        paidLeaveDaysVal = Math.round(paidLeaveDays * 100) / 100;
+        unpaidLeaveDaysVal = Math.round(unpaidLeaveDays * 100) / 100;
 
-        lopDays = Math.max(0, effectiveWorkingDays - (presentDays + paidLeaveDays));
+        // LOP = stored absent days + unpaid leave days. Nothing is inferred
+        // from a residual gap, so the figure always matches the register.
+        lopDays = Math.max(0, absentDaysVal + unpaidLeaveDaysVal);
 
         // Retroactive Leave Adjustments for prior locked cycles
         const retroLeaves = await Leave.find({
@@ -191,8 +255,14 @@ export async function POST(req) {
           totalEarnings:       result.totalEarnings,
           totalBonuses:        result.totalBonuses,
           ruleSnapshot:        { name: rule?.name || 'Default', ruleId: rule?._id || null },
-          // Attendance
+          // Attendance — explicit day-breakdown from the stored register
           presentDays,
+          daysWorked: daysWorkedVal,
+          absentDays: absentDaysVal,
+          paidLeaveDays: paidLeaveDaysVal,
+          unpaidLeaveDays: unpaidLeaveDaysVal,
+          holidayDays: holidayDaysVal,
+          weeklyOffDays: weeklyOffDaysVal,
           lopDays,
           effectiveLopDays: result.effectiveLopDays,
           graceDaysApplied: result.graceDaysApplied,

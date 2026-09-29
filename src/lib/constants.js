@@ -5,6 +5,7 @@ export const STATUS_STYLE = {
   half_day:{ bg: '#ffedd5', color: '#ea580c', label: 'Half Day' },
   leave:   { bg: '#dbeafe', color: '#2563eb', label: 'Leave' },
   holiday: { bg: '#f1f5f9', color: '#64748b', label: 'Holiday' },
+  not_arrived: { bg: '#fef3c7', color: '#b45309', label: 'Not Arrived' },
   sunday:  { bg: '#f8fafc', color: '#94a3b8', label: 'Sunday' },
 };
 

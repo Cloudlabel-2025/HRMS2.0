@@ -34,6 +34,11 @@ const AttendanceSchema = new mongoose.Schema({
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
   halfDayThresholdExceeded: { type: Boolean, default: false },
+  // Absent-row provenance: written by the calendar sync / daily sweep when an
+  // elapsed working day has no clock-in and no approved leave. Manual edits
+  // (admin marking absent with a reason) set source 'manual'.
+  absentMarkedAt: { type: Date, default: null },
+  absentSource:   { type: String, enum: ['system', 'manual', 'import'], default: null },
   // Frozen per-day shift snapshot (written at clock-in). Past rows are judged
   // by these values and are immune to later shift edits. Nullable for back-compat.
   shiftId:             { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
@@ -95,7 +100,7 @@ AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 
 if (mongoose.models.Attendance) {
   const existing = mongoose.models.Attendance;
-  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded')) {
+  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded') || !existing.schema.path('absentMarkedAt')) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

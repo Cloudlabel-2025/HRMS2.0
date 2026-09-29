@@ -1,4 +1,5 @@
 import { determineStatus } from '@/lib/attendance-constants';
+import { hasImportedPresence } from '@/lib/attendance-stats';
 
 function toMins(timeStr) {
   if (!timeStr || typeof timeStr !== 'string') return null;
@@ -12,13 +13,17 @@ function toMins(timeStr) {
  *
  * Priority:
  *  1. rejected leaveOverride / explicit holiday -> 'holiday' | 'leave'
+ *  1b. non-working calendar day (holiday / weekly_off) -> 'holiday'.
+ *      The calendar is authoritative: a clock-in on a holiday is tracked
+ *      (hours) but the day is labelled holiday, never present/late.
  *  2. approved half-day leave -> 'half_day' (0.5 presence, no late)
  *  3. approved late-arrival permission window (covers shift start),
  *     strict end-inclusive (grace 0):
  *     actualMins <= permEndMins -> 'present' (permissionApplied: true)
  *     Mid-day permissions (window does not include shift start) never
  *     affect late — they only consume the monthly allowance.
- *  4. lateThreshold from shift -> 'late' | 'present'
+ *  4. lateThreshold from shift -> 'late' | 'present'.
+ *     Late is display-only: payroll always credits a full day for it.
  *
  * @param {Object} params
  * @param {string|null} params.clockIn - HH:MM actually clocked (wall time, never faked)
@@ -44,6 +49,18 @@ export function resolveDayStatus({
   if (leaveOverrideStatus === 'rejected') {
     return {
       status: nonWorkingDayType !== 'none' ? 'holiday' : 'leave',
+      lateFlag: false,
+      halfDayThresholdExceeded: false,
+      permissionApplied: false,
+      isMidDayPermission: false,
+    };
+  }
+  // Calendar-authoritative: a non-working day is labelled holiday even when
+  // someone clocks in. Hours are still recorded; payroll excludes the date
+  // from the working set so it can never become LOP.
+  if (nonWorkingDayType && nonWorkingDayType !== 'none') {
+    return {
+      status: 'holiday',
       lateFlag: false,
       halfDayThresholdExceeded: false,
       permissionApplied: false,
@@ -82,7 +99,12 @@ export function resolveDayStatus({
  * Single payroll day classifier shared by payroll/run and absence marking.
  * Priority: approved half-day (0.5) > clocked present/late (1, half_day 0.5)
  * > approved paid leave (overlap handled by caller) > permission/shortHours
- * informational (never LOP) > absent/missing (0, LOP via gap).
+ * informational (never LOP) > absent/missing (0, LOP via stored record).
+ *
+ * Late NEVER reduces pay: any clocked-in late day credits a full day.
+ * `halfDayThresholdExceeded` is display-only (absence grid "Half Day" badge)
+ * and no longer feeds the payroll credit path. `countHalfDay` now governs
+ * only the approved half-day-leave case.
  *
  * @param {Object} rec - Attendance record (lean or doc)
  * @param {Object} lopConfig - { countHalfDay }
@@ -90,15 +112,16 @@ export function resolveDayStatus({
  */
 export function classifyPresence(rec, lopConfig = {}) {
   // Admin-imported presence correction (bulk attendance import): a full
-  // present day with no clock-in. Must come before the clockIn guard.
-  if (rec?.importedPresence && ['present', 'late'].includes(rec.status)) {
-    if (rec.status === 'late' && rec.halfDayThresholdExceeded && lopConfig.countHalfDay !== false) return 0.5;
+  // present day with no clock-in. Must come before the clockIn guard, and
+  // must require a real source — the schema materialises an empty
+  // importedPresence object (all nulls) on every row, which is truthy.
+  if (hasImportedPresence(rec) && ['present', 'late'].includes(rec.status)) {
     return 1;
   }
   if (!rec?.clockIn) return 0;
   if (rec.approvedHalfDayLeave) return 0.5;
   if (rec.status === 'half_day') return lopConfig.countHalfDay === false ? 1 : 0.5;
-  if (rec.status === 'late' && rec.halfDayThresholdExceeded) return lopConfig.countHalfDay === false ? 1 : 0.5;
+  // Late always credits a full day — late is never LOP.
   if (['present', 'late'].includes(rec.status)) return 1;
   return 0;
 }

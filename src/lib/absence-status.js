@@ -1,5 +1,6 @@
 import { permissionCoversShiftStart } from './permission-allowance';
 import { getAttendanceDate } from './attendance-date';
+import { hasImportedPresence } from './attendance-stats';
 
 /**
  * Central absence-day classifier.
@@ -123,8 +124,9 @@ export function deriveAbsenceKind({
   }
 
   // 2b. Admin-imported presence correction (bulk attendance import) wins over
-  // the clock-in test below — the day was worked but never punched.
-  if (attendance?.importedPresence && ['present', 'late'].includes(attendance.status)) {
+  // the clock-in test below — the day was worked but never punched. Requires
+  // a real source: the schema materialises an empty object on every row.
+  if (hasImportedPresence(attendance) && ['present', 'late'].includes(attendance.status)) {
     return {
       kind: attendance.status === 'late' ? 'late' : 'present',
       absent: false,

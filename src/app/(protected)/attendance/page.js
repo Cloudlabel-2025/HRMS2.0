@@ -10,6 +10,7 @@ import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, MANAGER_ROLES } from '@/lib/constants';
+import { computeAttendanceStats, reconciliationLine, displayStatusOf, showsAsPresentViaPermission } from '@/lib/attendance-stats';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
@@ -2697,11 +2698,9 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
       .finally(() => setLoading(false));
   }, [query, uid]);
 
-  const present = records.filter(r => r.status === 'present').length;
-  const absent = records.filter(r => r.status === 'absent').length;
-  const leave = records.filter(r => r.status === 'leave' || r.status === 'half_day').length;
-  const late = records.filter(r => r.status === 'late').length;
-  const shortHours = records.filter(r => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length;
+  // Single shared stat set (same function the Excel/PDF export uses) so the
+  // cards and the downloaded report can never disagree.
+  const stats = useMemo(() => computeAttendanceStats(records), [records]);
 
   if (loading) {
     return <div style={{ textAlign: 'center', padding: 40 }}><div className="spinner-border text-primary" /></div>;
@@ -2725,14 +2724,13 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
 
   return (
     <>
-      {/* Stat cards */}
+      {/* Stat cards — totals first, Days Worked breakdown beneath */}
       <div className="row g-3 mb-3">
         {[
-          { label: 'Days Present', value: present, color: '#10b981' },
-          { label: 'Days Absent', value: absent, color: '#ef4444' },
-          { label: 'Days of Leave', value: leave, color: '#3b82f6' },
-          { label: 'Late Clock-ins', value: late, color: '#f59e0b' },
-          { label: 'Short-hour Days', value: shortHours, color: '#7c3aed' },
+          { label: 'Working Days', value: stats.workingDays, color: '#0f172a' },
+          { label: 'Days Worked', value: stats.daysWorked, color: '#059669' },
+          { label: 'Days Absent', value: stats.absent, color: '#ef4444' },
+          { label: 'Days of Leave', value: stats.leave, color: '#3b82f6' },
         ].map((s, i) => (
           <div key={i} className="col-6 col-md-3">
             <div className="stat-card" style={{ textAlign: 'center' }}>
@@ -2741,6 +2739,39 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
             </div>
           </div>
         ))}
+      </div>
+      <div className="card mb-3" style={{ padding: '10px 16px', background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
+        <div style={{ fontSize: 12, color: '#065f46' }}>
+          <strong>Days Worked breakdown:</strong>
+          <span style={{ marginLeft: 8 }}>Present {stats.present}</span>
+          <span style={{ marginLeft: 12 }}>·</span>
+          <span style={{ marginLeft: 12 }}>Late {stats.late}{stats.latePastThreshold > 0 ? ` (${stats.latePastThreshold} past half-day)` : ''}</span>
+          <span style={{ marginLeft: 12 }}>·</span>
+          <span style={{ marginLeft: 12 }}>Short-hours {stats.shortHours}</span>
+          <span style={{ marginLeft: 12 }}>·</span>
+          <span style={{ marginLeft: 12 }}>Permission {stats.permission}</span>
+          {stats.workedOffDays > 0 && (<><span style={{ marginLeft: 12 }}>·</span><span style={{ marginLeft: 12 }}>Off-day work {stats.workedOffDays}</span></>)}
+        </div>
+      </div>
+      <div className="row g-3 mb-3">
+        {[
+          { label: 'Not Arrived', value: stats.notArrived, color: '#b45309' },
+          { label: 'Holidays / Off', value: stats.offDays, color: '#64748b' },
+        ].map((s, i) => (
+          <div key={i} className="col-6 col-md-3">
+            <div className="stat-card" style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{s.label}</div>
+            </div>
+          </div>
+        ))}
+        <div className="col-12">
+          <div style={{ fontSize: 12, color: stats.reconciles ? '#64748b' : '#dc2626', textAlign: 'center' }}>
+            <i className={`bi ${stats.reconciles ? 'bi-check-circle' : 'bi-exclamation-triangle'} me-1`} />
+            {reconciliationLine(stats)}
+            {!stats.reconciles && stats.other > 0 && ` — ${stats.other} unclassified row(s), investigate`}
+          </div>
+        </div>
       </div>
 
       {/* Desktop table */}
@@ -2751,21 +2782,27 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
             <tbody>
               {records.slice((recordsPage - 1) * pageSize, recordsPage * pageSize).map(row => {
                 const d = new Date(row.date + 'T00:00:00');
-                const isApprovedPerm = !!((row.permission?.requestId || row.permission?.startTime) || row._permissionStatus === 'approved');
+                // Shared display rules (same as the export): permission forces
+                // Present only on a worked day; unworked half-day leave shows
+                // Leave; worked half-day shows Half Day.
+                const isApprovedPerm = showsAsPresentViaPermission(row);
                 const isPendingPerm = !isApprovedPerm && (!!row.pendingPermission || row._permissionStatus === 'pending');
-                const isHalfDayLeave = !!(row.approvedHalfDayLeave || row.status === 'half_day');
-                const displayStatus = isApprovedPerm ? 'present' : isHalfDayLeave ? 'leave' : row.status;
+                const isNotArrivedRow = !!(row.notArrived || row.displayStatus === 'not_arrived');
+                const isOffDayRow = row.status === 'holiday';
+                const displayStatus = displayStatusOf(row);
                 const s = STATUS_STYLE[displayStatus] || STATUS_STYLE.present;
+                const offDayLabel = isOffDayRow ? (row.nonWorkingDayType === 'weekly_off' ? 'Week-off' : (row.holidayName ? `Holiday · ${row.holidayName}` : 'Holiday')) : null;
+                const muted = isOffDayRow ? { color: '#94a3b8', fontStyle: 'italic' } : {};
                 return (
-                  <tr key={row._id}>
-                    <td style={{ fontSize: 13 }}>{formatDate(row.date)}</td>
-                    <td style={{ fontSize: 13, color: '#64748b' }}>{DAYS[d.getDay()]}</td>
-                    <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span></td>
-                    <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
-                    <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
+                  <tr key={row._id} style={isOffDayRow ? { background: '#f8fafc' } : undefined}>
+                    <td style={{ fontSize: 13, ...muted }}>{formatDate(row.date)}</td>
+                    <td style={{ fontSize: 13, color: '#64748b', ...muted }}>{DAYS[d.getDay()]}</td>
+                    <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>{offDayLabel && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{offDayLabel}</div>}</td>
+                    <td style={{ fontSize: 13, ...muted }}><Time value={row.clockIn} fallback="—" /></td>
+                    <td style={{ fontSize: 13, ...muted }}><Time value={row.clockOut} fallback="—" /></td>
                     <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
                     <td style={{ fontSize: 13, maxWidth: 160 }}>
-                      {isAdmin && (row.status === 'absent' || row.status === 'late') ? (
+                      {isAdmin && (row.status === 'absent' || row.status === 'late') && !row._virtual && !isNotArrivedRow ? (
                         <input className="form-control form-control-sm" style={{ fontSize: 11 }}
                           defaultValue={row.absenceReason || ''} placeholder="Add reason..."
                           onBlur={e => { handleAbsenceReasonChange(row._id, e.target.value); }} />

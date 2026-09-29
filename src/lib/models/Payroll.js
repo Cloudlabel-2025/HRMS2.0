@@ -43,8 +43,18 @@ const PayrollSchema = new mongoose.Schema({
   totalDeductions: { type: Number },
   netPay:     { type: Number },
 
-  // Attendance
+  // Attendance — explicit day-breakdown from the stored register.
+  // lopDays is derived, never gap arithmetic: lopDays = absentDays + unpaidLeaveDays.
   presentDays:{ type: Number },
+  // Integer count of working dates actually turned up (clock-in or real
+  // bulk-import source). Distinct from presentDays, the fractional payroll
+  // credit (half-day leave = 0.5). Same definition as the Team report card.
+  daysWorked: { type: Number, default: 0 },
+  absentDays: { type: Number, default: 0 },
+  paidLeaveDays: { type: Number, default: 0 },
+  unpaidLeaveDays: { type: Number, default: 0 },
+  holidayDays:{ type: Number, default: 0 },
+  weeklyOffDays:{ type: Number, default: 0 },
   lopDays:    { type: Number, default: 0 },
   effectiveLopDays: { type: Number, default: 0 },
   graceDaysApplied: { type: Number, default: 0 },

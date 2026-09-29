@@ -2,6 +2,7 @@
 
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE } from '@/lib/constants';
+import { computeAttendanceStats, displayStatusOf, remarksOf, reconciliationLine } from '@/lib/attendance-stats';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -38,17 +39,9 @@ function getCalendarDays(teamMonth, teamFromDate, teamToDate, sorted) {
   return 0;
 }
 
-function computeStats(sorted) {
-  return {
-    present: sorted.filter((r) => r.status === 'present').length,
-    onLeave: sorted.filter((r) => r.status === 'leave' || r.status === 'half_day').length,
-    absent: sorted.filter((r) => r.status === 'absent').length,
-    late: sorted.filter((r) => r.status === 'late' && !r.halfDayThresholdExceeded).length,
-    halfDayLeaveCount: sorted.filter((r) => r.status === 'half_day' || r.approvedHalfDayLeave).length,
-    permission: sorted.filter((r) => !!(r.permission?.requestId || r.permission?.startTime || r._permissionStatus === 'approved')).length,
-    shortHours: sorted.filter((r) => r.shortHours && !(r.permission?.requestId || r.permission?.startTime)).length,
-  };
-}
+// Stats come from the single shared module (same function the Team report
+// UI cards use) so the screen and the download can never disagree.
+const computeStats = computeAttendanceStats;
 
 function statusChip(status) {
   // ARGB colors mirroring STATUS_STYLE for Excel fills
@@ -63,6 +56,8 @@ function statusChip(status) {
       return { fill: 'FFFFEDD5', font: 'FFEA580C', label: 'Half Day', bold: false };
     case 'late':
       return { fill: 'FFFEF3C7', font: 'FFD97706', label: 'Late', bold: false };
+    case 'not_arrived':
+      return { fill: 'FFFEF3C7', font: 'FFB45309', label: 'Not Arrived', bold: false };
     case 'holiday':
       return { fill: 'FFF1F5F9', font: 'FF64748B', label: 'Holiday', bold: false };
     default:
@@ -144,11 +139,11 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   summary.views = [{ showGridLines: false }];
   summary.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } };
   summary.columns = [
-    { width: 26 }, { width: 16 }, { width: 14 }, { width: 12 }, { width: 14 }, { width: 11 }, { width: 10 }, { width: 11 }, { width: 13 }, { width: 13 }, { width: 15 },
+    { width: 26 }, { width: 16 }, { width: 14 }, { width: 14 }, { width: 13 }, { width: 12 }, { width: 14 }, { width: 10 }, { width: 11 }, { width: 11 }, { width: 11 }, { width: 13 }, { width: 13 },
   ];
 
   // Banner
-  summary.mergeCells('A1:K1');
+  summary.mergeCells('A1:M1');
   const sTitle = summary.getCell('A1');
   sTitle.value = 'Attendance Team Report';
   sTitle.font = { bold: true, size: 18, color: { argb: 'FFFFFFFF' } };
@@ -156,14 +151,14 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   sTitle.alignment = { vertical: 'middle', horizontal: 'left' };
   summary.getRow(1).height = 36;
 
-  summary.mergeCells('A2:K2');
+  summary.mergeCells('A2:M2');
   const sMeta = summary.getCell('A2');
   sMeta.value = `Period: ${periodLabel}  •  Downloaded: ${fromLabel} to ${toLabel}  •  Calendar Days: ${globalCalendarDays}  •  Employees: ${allData.length}  •  Generated: ${generatedAt}`;
   sMeta.font = { size: 10, color: { argb: 'FF475569' }, italic: true };
   sMeta.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
   summary.getRow(2).height = 22;
 
-  const summaryHeaders = ['Employee', 'Department', 'Role', 'Present', 'On Leave', 'Half-Day', 'Absent', 'Late', 'Permission', 'Short Hours', 'Att. Days'];
+  const summaryHeaders = ['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Present', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours'];
   const shRow = summary.getRow(4);
   shRow.values = summaryHeaders;
   shRow.height = 26;
@@ -174,10 +169,13 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     cell.border = { bottom: { style: 'medium', color: { argb: 'FF93C5FD' } } };
   });
 
+  let totalWorking = 0;
+  let totalWorked = 0;
   let totalPresent = 0;
   let totalLeave = 0;
-  let totalHalf = 0;
   let totalAbsent = 0;
+  let totalNotArrived = 0;
+  let totalHoliday = 0;
   let totalLate = 0;
   let totalPerm = 0;
   let totalShort = 0;
@@ -185,14 +183,17 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   for (const { emp, records } of allData) {
     const sorted = [...(records || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const st = computeStats(sorted);
+    totalWorking += st.workingDays;
+    totalWorked += st.daysWorked;
     totalPresent += st.present;
-    totalLeave += st.onLeave;
-    totalHalf += st.halfDayLeaveCount;
+    totalLeave += st.leave;
     totalAbsent += st.absent;
+    totalNotArrived += st.notArrived;
+    totalHoliday += st.offDays;
     totalLate += st.late;
     totalPerm += st.permission;
     totalShort += st.shortHours;
-    const r = summary.addRow([emp.name || '—', emp.department || '—', emp.role || '—', st.present, st.onLeave, st.halfDayLeaveCount, st.absent, st.late, st.permission, st.shortHours, sorted.length]);
+    const r = summary.addRow([emp.name || '—', emp.department || '—', emp.role || '—', st.workingDays, st.daysWorked, st.present, st.leave, st.absent, st.notArrived, st.offDays, st.late, st.permission, st.shortHours]);
     r.height = 22;
     r.eachCell((cell, col) => {
       cell.font = { size: 10, color: { argb: col <= 3 ? 'FF0F172A' : 'FF334155' }, bold: col <= 3 };
@@ -203,7 +204,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   }
 
   if (allData.length > 1) {
-    const totals = summary.addRow(['TOTAL', '—', '—', totalPresent, totalLeave, totalHalf, totalAbsent, totalLate, totalPerm, totalShort, '—']);
+    const totals = summary.addRow(['TOTAL', '—', '—', totalWorking, totalWorked, totalPresent, totalLeave, totalAbsent, totalNotArrived, totalHoliday, totalLate, totalPerm, totalShort]);
     totals.height = 24;
     totals.eachCell((cell) => {
       cell.font = { bold: true, size: 10, color: { argb: 'FF0F172A' } };
@@ -214,19 +215,19 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   }
 
   summary.views = [{ state: 'frozen', ySplit: 4, showGridLines: false }];
-  summary.autoFilter = { from: 'A4', to: `K${summary.rowCount}` };
+    summary.autoFilter = { from: 'A4', to: `M${summary.rowCount}` };
   summary.headerFooter.oddFooter = `&LAttendance Team Report&CPage &P of &N&R${periodLabel}`;
 
   // ── Per-employee sheets ────────────────────────────────────────────────────
   for (const { emp, records } of allData) {
     const sorted = [...(records || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-    const headers = ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked'];
+    const headers = ['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked', 'Remarks'];
     const colCount = headers.length;
     const sheetName = uniqueSheetName(emp.name || 'Employee', usedNames);
     const ws = wb.addWorksheet(sheetName, { properties: { tabColor: { argb: 'FF2563EB' } } });
     ws.views = [{ state: 'frozen', ySplit: 6, showGridLines: false }];
     ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.25, right: 0.25, top: 0.4, bottom: 0.4, header: 0.2, footer: 0.2 } };
-    ws.columns = [{ width: 14 }, { width: 10 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 14 }];
+    ws.columns = [{ width: 14 }, { width: 10 }, { width: 14 }, { width: 12 }, { width: 12 }, { width: 14 }, { width: 28 }];
     ws.headerFooter.oddFooter = `&L${emp.name || 'Employee'}&CPage &P of &N&R${periodLabel}`;
 
     const st = computeStats(sorted);
@@ -251,20 +252,23 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     infoCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     ws.getRow(2).height = 20;
 
-    // Row 3: Downloaded range + calendar/attendance days
+    // Row 3: Downloaded range + calendar/working days + reconciliation proof
     ws.mergeCells(3, 1, 3, colCount);
     const rangeCell = ws.getCell(3, 1);
-    rangeCell.value = `Downloaded: ${empFromLabel} to ${empToLabel}   •   Calendar Days: ${calendarDays}   •   Attendance Days: ${sorted.length}   •   Generated: ${generatedAt}`;
+    rangeCell.value = `Downloaded: ${empFromLabel} to ${empToLabel}   •   Calendar Days: ${calendarDays}   •   Working Days: ${st.workingDays} (${reconciliationLine(st)})   •   Generated: ${generatedAt}`;
     rangeCell.font = { size: 9, color: { argb: 'FF64748B' } };
     rangeCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     ws.getRow(3).height = 18;
 
-    // Row 4: Summary chips — one metric per cell for easy reading
+    // Row 4: Summary chips — Days Worked total first, then its breakdown
     const summaryLabels = [
+      `Days Worked: ${st.daysWorked}`,
       `Present: ${st.present}`,
-      `On Leave: ${st.onLeave} (${st.halfDayLeaveCount} half-day)`,
+      `On Leave: ${st.leave} (${st.halfDayLeave} half-day)`,
       `Absent: ${st.absent}`,
+      `Not Arrived: ${st.notArrived}`,
       `Late: ${st.late}`,
+      `Holidays/Off: ${st.offDays}`,
       `Permission: ${st.permission}`,
       `Short Hours: ${st.shortHours}`,
     ];
@@ -302,15 +306,23 @@ export async function buildAttendanceExcel(allData, meta = {}) {
       sorted.forEach((r, idx) => {
         const row = ws.getRow(7 + idx);
         const dayLabel = DAYS[new Date(r.date + 'T00:00:00').getDay()] || '';
-        const statusLabel = STATUS_STYLE[r.status]?.label || statusChip(r.status).label;
-        const values = [r.date, dayLabel, statusLabel, formatTimeFn(r.clockIn) || '—', formatTimeFn(r.clockOut) || '—', r.hoursWorked ? formatMins(r.hoursWorked) : '—'];
+        const ds = displayStatusOf(r);
+        const statusLabel = STATUS_STYLE[ds]?.label || statusChip(ds).label;
+        const values = [r.date, dayLabel, statusLabel, formatTimeFn(r.clockIn) || '—', formatTimeFn(r.clockOut) || '—', r.hoursWorked ? formatMins(r.hoursWorked) : '—', remarksOf(r)];
         values.forEach((v, ci) => {
           const cell = row.getCell(ci + 1);
           cell.value = v;
         });
         styleDataRow(row);
+        // Non-working rows render greyed out.
+        if (r.status === 'holiday') {
+          row.eachCell((cell) => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+            cell.font = { size: 11, color: { argb: 'FF94A3B8' }, italic: true };
+          });
+        }
         // Status chip override (col 3)
-        const chip = statusChip(r.status);
+        const chip = statusChip(ds);
         const statusCell = row.getCell(3);
         statusCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: chip.fill } };
         statusCell.font = { color: { argb: chip.font }, bold: chip.bold, size: 11 };
@@ -318,7 +330,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     }
 
     if (sorted.length > 0) {
-      ws.autoFilter = { from: 'A6', to: `F${6 + sorted.length}` };
+      ws.autoFilter = { from: 'A6', to: `G${6 + sorted.length}` };
     }
   }
 
@@ -365,25 +377,24 @@ export async function buildAttendancePdf(allData, meta = {}) {
   const summaryBody = allData.map(({ emp, records }) => {
     const sorted = [...(records || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const st = computeStats(sorted);
-    return [emp.name || '—', emp.department || '—', emp.role || '—', String(st.present), String(st.onLeave), String(st.halfDayLeaveCount), String(st.absent), String(st.late), String(st.permission), String(st.shortHours), String(sorted.length)];
+    return [emp.name || '—', emp.department || '—', emp.role || '—', String(st.workingDays), String(st.daysWorked), String(st.present), String(st.leave), String(st.absent), String(st.notArrived), String(st.offDays), String(st.late), String(st.permission), String(st.shortHours)];
   });
 
   let totalsRow = null;
   if (allData.length > 1) {
     const totals = summaryBody.reduce(
       (acc, row) => {
-        for (let i = 3; i <= 9; i++) acc[i] += Number(row[i]) || 0;
-        acc[10] += Number(row[10]) || 0;
+        for (let i = 3; i <= 12; i++) acc[i] += Number(row[i]) || 0;
         return acc;
       },
-      { 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0 },
+      { 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0, 11: 0, 12: 0 },
     );
-    totalsRow = ['TOTAL', '—', '—', String(totals[3]), String(totals[4]), String(totals[5]), String(totals[6]), String(totals[7]), String(totals[8]), String(totals[9]), String(totals[10])];
+    totalsRow = ['TOTAL', '—', '—', String(totals[3]), String(totals[4]), String(totals[5]), String(totals[6]), String(totals[7]), String(totals[8]), String(totals[9]), String(totals[10]), String(totals[11]), String(totals[12])];
   }
 
   autoTable(doc, {
     startY: 30,
-    head: [['Employee', 'Department', 'Role', 'Present', 'On Leave', 'Half-Day', 'Absent', 'Late', 'Permission', 'Short Hours', 'Att. Days']],
+    head: [['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Present', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours']],
     body: totalsRow ? [...summaryBody, totalsRow] : summaryBody,
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -420,21 +431,25 @@ export async function buildAttendancePdf(allData, meta = {}) {
 
     doc.setTextColor(100, 116, 139);
     doc.setFontSize(8);
-    doc.text(`Downloaded: ${empFromLabel} to ${empToLabel}   •   Calendar Days: ${calendarDays}   •   Attendance Days: ${sorted.length}   •   Generated: ${generatedAt}`, 14, 26);
+    doc.text(`Downloaded: ${empFromLabel} to ${empToLabel}   •   Calendar Days: ${calendarDays}   •   Working Days: ${st.workingDays} (${reconciliationLine(st)})   •   Generated: ${generatedAt}`, 14, 26);
     doc.setTextColor(15, 23, 42);
     doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
-    doc.text(`Present: ${st.present}   •   On Leave: ${st.onLeave} (${st.halfDayLeaveCount} half-day)   •   Absent: ${st.absent}   •   Late: ${st.late}   •   Permission: ${st.permission}   •   Short Hours: ${st.shortHours}`, 14, 31);
+    doc.text(`Days Worked: ${st.daysWorked}   •   Present: ${st.present}   •   On Leave: ${st.leave} (${st.halfDayLeave} half-day)   •   Absent: ${st.absent}   •   Not Arrived: ${st.notArrived}   •   Late: ${st.late}   •   Holidays/Off: ${st.offDays}   •   Permission: ${st.permission}   •   Short Hours: ${st.shortHours}`, 14, 31);
     doc.setFont(undefined, 'normal');
 
-    const rows = sorted.map((r) => [
-      r.date,
-      DAYS[new Date(r.date + 'T00:00:00').getDay()] || '',
-      STATUS_STYLE[r.status]?.label || statusChip(r.status).label,
-      formatTimeFn(r.clockIn) || '—',
-      formatTimeFn(r.clockOut) || '—',
-      r.hoursWorked ? formatMins(r.hoursWorked) : '—',
-    ]);
+    const rows = sorted.map((r) => {
+      const ds = displayStatusOf(r);
+      return [
+        r.date,
+        DAYS[new Date(r.date + 'T00:00:00').getDay()] || '',
+        STATUS_STYLE[ds]?.label || statusChip(ds).label,
+        formatTimeFn(r.clockIn) || '—',
+        formatTimeFn(r.clockOut) || '—',
+        r.hoursWorked ? formatMins(r.hoursWorked) : '—',
+        remarksOf(r),
+      ];
+    });
 
     if (rows.length === 0) {
       doc.setFontSize(10);
@@ -445,18 +460,22 @@ export async function buildAttendancePdf(allData, meta = {}) {
 
     autoTable(doc, {
       startY: 34,
-      head: [['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked']],
+      head: [['Date', 'Day', 'Status', 'Clock In', 'Clock Out', 'Hours Worked', 'Remarks']],
       body: rows,
       styles: { fontSize: 8, cellPadding: 2 },
       headStyles: { fillColor: [59, 130, 246], textColor: [255, 255, 255], fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       didParseCell: (data) => {
         if (data.section === 'body' && data.column.index === 2) {
-          const stt = sorted[data.row.index]?.status;
+          const stt = displayStatusOf(sorted[data.row.index] || {});
           const s = pdfStatusStyle(stt);
           data.cell.styles.fillColor = s.fill;
           data.cell.styles.textColor = s.text;
           if (s.bold) data.cell.styles.fontStyle = 'bold';
+        }
+        if (data.section === 'body' && sorted[data.row.index]?.status === 'holiday') {
+          data.cell.styles.textColor = [148, 163, 184];
+          data.cell.styles.fontStyle = 'italic';
         }
       },
     });

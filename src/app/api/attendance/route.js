@@ -1,21 +1,27 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Notification } from '@/lib/models/index';
+import { Notification, Holiday } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { getGlobalConfig, parseShiftStartTime } from '@/lib/payroll-cycle';
+import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
+import { isWorkedDay } from '@/lib/attendance-stats';
+import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
 import { matchBreakRule } from '@/lib/attendance-breaks';
 import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 import { publishAttendance } from '@/lib/sse';
+
+// Throttle for the read-path calendar sync (Step: self-healing register).
+// Keyed by range + roster size so rapid refreshes don't re-issue bulkWrites.
+const _attendanceSyncThrottle = new Map();
 
 async function getShiftAwareToday(targetUserId) {
   const now = await getTzTime();
@@ -96,13 +102,82 @@ export async function GET(req) {
       query.clockOut = null;
     }
 
-    const raw = await Attendance.find(query)
+    const now = await getTzTime();
+    const config = await getGlobalConfig();
+    const _calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
+
+    // Self-healing register: materialise absent/holiday/leave rows for the
+    // requested report range so the team report shows the full calendar even
+    // when the daily sweep hasn't run. Insert-only and idempotent — clocked
+    // rows are never touched, today is left for Not-Arrived (derived below).
+    let holidayDocs = [];
+    let syncUids = [];
+    let syncFrom = null;
+    let syncTo = null;
+    if (!openOnly && !date) {
+      if (fromDate || toDate) {
+        syncFrom = fromDate || toDate;
+        syncTo = toDate || fromDate;
+      } else if (month && /^\d{4}-\d{2}$/.test(month)) {
+        const [yy, mm] = month.split('-').map(Number);
+        const last = new Date(yy, mm, 0).getDate();
+        syncFrom = `${month}-01`;
+        syncTo = `${month}-${String(last).padStart(2, '0')}`;
+      }
+      if (syncFrom && syncTo && syncFrom <= syncTo) {
+        const qUid = query.userId;
+        if (typeof qUid === 'string') syncUids = [qUid];
+        else if (Array.isArray(qUid)) syncUids = qUid.map(u => String(u));
+        else if (qUid && typeof qUid === 'object') {
+          if (Array.isArray(qUid.$in)) syncUids = qUid.$in.map(u => String(u));
+          else {
+            // All-users scope ({ $nin }) — resolve the roster once.
+            const all = await User.find({ status: 'active', role: { $ne: 'super_admin' } }).select('_id').lean().catch(() => []);
+            syncUids = (all || []).map(u => String(u._id));
+          }
+        }
+        holidayDocs = await Holiday.find({ date: { $gte: syncFrom, $lte: syncTo } }).select('date name type').lean().catch(() => []);
+        if (syncUids.length) {
+          const tKey = `${syncFrom}|${syncTo}|${syncUids.length}|${syncUids[0] || ''}`;
+          const lastSync = _attendanceSyncThrottle.get(tKey);
+          if (!lastSync || Date.now() - lastSync > 60000) {
+            _attendanceSyncThrottle.set(tKey, Date.now());
+            if (_attendanceSyncThrottle.size > 500) _attendanceSyncThrottle.clear();
+            try {
+              await syncCalendarRowsForUsers({
+                userIds: syncUids,
+                fromDate: syncFrom,
+                toDate: syncTo,
+                config,
+                holidays: holidayDocs,
+                todayStr: _calToday,
+                allowTodayAbsent: false,
+              });
+            } catch (e) { console.error('attendance read-sync failed:', e?.message || e); }
+          }
+        }
+      }
+    }
+
+    let raw = await Attendance.find(query)
       .populate('userId', 'name avatar department role shift shiftId')
       .sort({ date: -1 })
       .lean();
 
-    const now = await getTzTime();
-    const config = await getGlobalConfig();
+    // Holiday name join (read-time, never stored): renaming a holiday in
+    // Settings updates every historical row immediately.
+    if (holidayDocs.length) {
+      const nameByDate = new Map(holidayDocs.map(h => [h.date, h]));
+      for (const rec of raw) {
+        if (rec.nonWorkingDayType === 'holiday') {
+          const h = nameByDate.get(rec.date);
+          if (h) { rec.holidayName = h.name; rec.holidayType = h.type; }
+        }
+      }
+    }
+
+    // Not-arrived derivation (display-only, never persisted) is applied
+    // after resolveShiftForRow is defined — see below.
 
     const clockedUsers = raw.filter(r => r.clockIn && r.userId?._id).map(r => r.userId);
     const uniqueUsers = [...new Map(clockedUsers.map(u => [u._id.toString(), u])).values()];
@@ -112,7 +187,6 @@ export async function GET(req) {
       if (sd) shiftByUserId[u._id.toString()] = sd;
     }
 
-    const _calToday = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     // Per-day shift resolver: frozen snapshot first, then historical
     // ShiftChange lineage for past dates, then current shift fallback.
     // Cached per user+date to avoid N+1 query blowup on Vercel.
@@ -141,6 +215,61 @@ export async function GET(req) {
       }
       return shiftByUserId[uid] || null;
     };
+
+    // Not-arrived derivation (display-only, never persisted): today, no
+    // clock-in, shift half-day threshold not yet elapsed. Mirrors the Absence
+    // page; the end-of-day sweep owns today's real absent rows.
+    try {
+      const { resolveShiftStartMins, elapsedSinceShiftStart } = await import('@/lib/absence-status');
+      const inRange = syncFrom && syncTo && _calToday >= syncFrom && _calToday <= syncTo;
+      const todayKeys = new Set(raw.filter(r => r.date === _calToday).map(r => String(r.userId?._id || r.userId)));
+      const missingUids = syncUids.filter(uid => !todayKeys.has(String(uid)));
+      if (missingUids.length && inRange && isWorkingDay(_calToday, config, holidayDocs)) {
+        const missingUsers = await User.find({ _id: { $in: missingUids } }).select('name avatar department role shift shiftId').lean().catch(() => []);
+        for (const u of missingUsers || []) {
+          if (isEmployer(u.role)) continue;
+          let shiftDoc = null;
+          try { shiftDoc = await resolveShift(u); } catch { shiftDoc = null; }
+          const halfDayThreshold = Number(shiftDoc?.halfDayThreshold ?? 180) || 180;
+          const shiftStartMins = resolveShiftStartMins(shiftDoc, u.shift);
+          const elapsed = elapsedSinceShiftStart(now, shiftStartMins);
+          if (elapsed < halfDayThreshold) {
+            raw.push({
+              _id: `notarrived_${u._id}_${_calToday}`,
+              userId: u,
+              date: _calToday,
+              status: 'absent',
+              clockIn: null,
+              clockOut: null,
+              hoursWorked: 0,
+              payableHours: 0,
+              shortHours: false,
+              lateFlag: false,
+              nonWorkingDayType: 'none',
+              notArrived: true,
+              displayStatus: 'not_arrived',
+              _virtual: true,
+            });
+          }
+        }
+        raw.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      }
+      // Rows that exist for today but are still pre-threshold: mark the
+      // no-clock-in ones as not-arrived instead of absent. Source-aware:
+      // the schema's empty importedPresence object must not suppress this.
+      for (const rec of raw) {
+        if (rec.date !== _calToday || isWorkedDay(rec)) continue;
+        if (['leave', 'holiday'].includes(rec.status)) continue;
+        const shiftDoc = await resolveShiftForRow(rec);
+        const halfDayThreshold = Number(shiftDoc?.halfDayThreshold ?? 180) || 180;
+        const shiftStartMins = resolveShiftStartMins(shiftDoc, rec.userId?.shift);
+        const elapsed = elapsedSinceShiftStart(now, shiftStartMins);
+        if (elapsed < halfDayThreshold) {
+          rec.notArrived = true;
+          rec.displayStatus = 'not_arrived';
+        }
+      }
+    } catch (e) { console.error('not-arrived derivation failed:', e?.message || e); }
 
     // Lazy auto-logout honoring each user's shift setup (endTime + autoLogoutAfterShiftEnd buffer).
     // Past dates use the historical shift so the grace deadline matches that day's config.

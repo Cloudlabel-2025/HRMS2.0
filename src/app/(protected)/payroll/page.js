@@ -161,7 +161,11 @@ export default function PayrollPage() {
       <div class='box'>
         <div class='row'><span style='color:#64748b'>Employee</span><span style='font-weight:600'>${empName}</span></div>
         <div class='row'><span style='color:#64748b'>Pay Period</span><span style='font-weight:600'>${slip.cycleLabel || slip.month}</span></div>
-        <div class='row'><span style='color:#64748b'>Days Present</span><span>${slip.presentDays ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Days Present (credit)</span><span>${slip.presentDays ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Days Worked</span><span>${slip.daysWorked ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Absent Days</span><span>${slip.absentDays ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Paid Leave Days</span><span>${slip.paidLeaveDays ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Holidays / Week-offs</span><span>${((slip.holidayDays || 0) + (slip.weeklyOffDays || 0)) || '—'}</span></div>
         <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.effectiveLopDays ?? slip.lopDays ?? 0}${(slip.graceDaysApplied > 0) ? ` (${slip.lopDays || 0} raw, ${slip.graceDaysApplied} grace)` : ''}${(slip.retroLopDays > 0) ? ` + ${slip.retroLopDays} retro` : ''}</span></div>
       </div>
       <div style='display:flex;gap:12px'>
@@ -604,7 +608,7 @@ export default function PayrollPage() {
                         <input type="number" min="0" className="form-control form-control-sm" placeholder="e.g. 0" value={ruleForm.lopConfig?.graceDays ?? 0} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, graceDays: +e.target.value } }))} />
                       </div>
                       <div className="col-3 d-flex align-items-end">
-                        <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.lopConfig?.countHalfDay !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, countHalfDay: e.target.checked } }))} id="halfDayLop" /><label className="form-check-label" htmlFor="halfDayLop" style={{ fontSize: 12 }}>Half-day = 0.5 LOP</label></div>
+                        <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.lopConfig?.countHalfDay !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, countHalfDay: e.target.checked } }))} id="halfDayLop" /><label className="form-check-label" htmlFor="halfDayLop" style={{ fontSize: 12 }} title="Approved half-day leave counts 0.5 day. Late arrival always counts a full day and is never LOP.">Half-day leave = 0.5 day</label></div>
                       </div>
                     </div>
                   </div>

@@ -4,6 +4,10 @@
     {
       "path": "/api/shifts/apply-due",
       "schedule": "35 18 * * *"
+    },
+    {
+      "path": "/api/attendance/daily-sweep",
+      "schedule": "20 19 * * *"
     }
   ]
 }

@@ -163,42 +163,54 @@ async function applyApprovedRequest(request, reviewer) {
     // 8-hours day view shows it even before the employee clocks in.
     // clockIn stays null until the employee actually clocks in; the real
     // wall time is always preserved (never overwritten with shift start).
+    // The mirrored row never claims presence: status defaults to 'absent'
+    // and the sync/display layers (Not-Arrived badge, absent-with-permission
+    // context) own the rest. A permission for a FUTURE date with no row yet
+    // creates nothing — the request itself is the source of truth until the
+    // day arrives (clock-in or the calendar sync creates the row).
     try {
       const { default: Attendance } = await import('@/lib/models/Attendance');
+      const { getTzTime } = await import('@/lib/timezone');
       const permDate = request.payload?.date;
       if (permDate && identity.authUserId) {
+        const nowTz = await getTzTime();
+        const todayStr = nowTz.getFullYear() + '-' + String(nowTz.getMonth() + 1).padStart(2, '0') + '-' + String(nowTz.getDate()).padStart(2, '0');
         const startTime = request.payload?.startTime || null;
         const endTime = request.payload?.endTime || null;
         const granted = Number(request.payload?.duration || 0) || null;
         const existingPermRec = await Attendance.findOne({ userId: identity.authUserId, date: permDate }).select('permission').lean().catch(() => null);
-        const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
-        await Attendance.findOneAndUpdate(
-          { userId: identity.authUserId, date: permDate },
-          {
-            $set: {
-              permission: {
-                requestId: request._id,
-                startTime,
-                endTime,
-                duration: granted,
-                grantedDuration: granted,
-                usedDuration: null,
-                refundedDuration: null,
-                actualClockIn: null,
-                effectiveClockIn: null,
-                applied: false,
-                isMidDay: false,
-                status: 'approved',
-                approvedBy: reviewer._id,
-                approvedAt: new Date(),
-                ...keepEnded,
+        if (!existingPermRec && permDate > todayStr) {
+          // Nothing to mirror onto yet — skip row creation.
+        } else {
+          const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
+          await Attendance.findOneAndUpdate(
+            { userId: identity.authUserId, date: permDate },
+            {
+              $set: {
+                permission: {
+                  requestId: request._id,
+                  startTime,
+                  endTime,
+                  duration: granted,
+                  grantedDuration: granted,
+                  usedDuration: null,
+                  refundedDuration: null,
+                  actualClockIn: null,
+                  effectiveClockIn: null,
+                  applied: false,
+                  isMidDay: false,
+                  status: 'approved',
+                  approvedBy: reviewer._id,
+                  approvedAt: new Date(),
+                  ...keepEnded,
+                },
+                note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}`,
               },
-              note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}`,
+              $setOnInsert: { status: 'absent' },
             },
-            $setOnInsert: { status: 'present' },
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true }
-        );
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+        }
       }
     } catch (e) {
       // Non-fatal: approval itself succeeded; attendance mirror is best-effort.
