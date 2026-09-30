@@ -158,7 +158,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   sMeta.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
   summary.getRow(2).height = 22;
 
-  const summaryHeaders = ['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Present', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours'];
+  const summaryHeaders = ['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours'];
   const shRow = summary.getRow(4);
   shRow.values = summaryHeaders;
   shRow.height = 26;
@@ -171,7 +171,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
 
   let totalWorking = 0;
   let totalWorked = 0;
-  let totalPresent = 0;
+  let totalPerfect8 = 0;
   let totalLeave = 0;
   let totalAbsent = 0;
   let totalNotArrived = 0;
@@ -185,7 +185,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     const st = computeStats(sorted);
     totalWorking += st.workingDays;
     totalWorked += st.daysWorked;
-    totalPresent += st.present;
+    totalPerfect8 += st.present;
     totalLeave += st.leave;
     totalAbsent += st.absent;
     totalNotArrived += st.notArrived;
@@ -204,7 +204,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   }
 
   if (allData.length > 1) {
-    const totals = summary.addRow(['TOTAL', '—', '—', totalWorking, totalWorked, totalPresent, totalLeave, totalAbsent, totalNotArrived, totalHoliday, totalLate, totalPerm, totalShort]);
+    const totals = summary.addRow(['TOTAL', '—', '—', totalWorking, totalWorked, totalPerfect8, totalLeave, totalAbsent, totalNotArrived, totalHoliday, totalLate, totalPerm, totalShort]);
     totals.height = 24;
     totals.eachCell((cell) => {
       cell.font = { bold: true, size: 10, color: { argb: 'FF0F172A' } };
@@ -263,7 +263,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     // Row 4: Summary chips — Days Worked total first, then its breakdown
     const summaryLabels = [
       `Days Worked: ${st.daysWorked}`,
-      `Present: ${st.present}`,
+      `Perfect 8: ${st.present}`,
       `On Leave: ${st.leave} (${st.halfDayLeave} half-day)`,
       `Absent: ${st.absent}`,
       `Not Arrived: ${st.notArrived}`,
@@ -394,7 +394,7 @@ export async function buildAttendancePdf(allData, meta = {}) {
 
   autoTable(doc, {
     startY: 30,
-    head: [['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Present', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours']],
+    head: [['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours']],
     body: totalsRow ? [...summaryBody, totalsRow] : summaryBody,
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -435,7 +435,7 @@ export async function buildAttendancePdf(allData, meta = {}) {
     doc.setTextColor(15, 23, 42);
     doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
-    doc.text(`Days Worked: ${st.daysWorked}   •   Present: ${st.present}   •   On Leave: ${st.leave} (${st.halfDayLeave} half-day)   •   Absent: ${st.absent}   •   Not Arrived: ${st.notArrived}   •   Late: ${st.late}   •   Holidays/Off: ${st.offDays}   •   Permission: ${st.permission}   •   Short Hours: ${st.shortHours}`, 14, 31);
+    doc.text(`Days Worked: ${st.daysWorked}   •   Perfect 8: ${st.present}   •   On Leave: ${st.leave} (${st.halfDayLeave} half-day)   •   Absent: ${st.absent}   •   Not Arrived: ${st.notArrived}   •   Late: ${st.late}   •   Holidays/Off: ${st.offDays}   •   Permission: ${st.permission}   •   Short Hours: ${st.shortHours}`, 14, 31);
     doc.setFont(undefined, 'normal');
 
     const rows = sorted.map((r) => {

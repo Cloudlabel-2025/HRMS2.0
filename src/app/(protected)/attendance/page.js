@@ -157,14 +157,22 @@ export default function AttendancePage() {
     return Array.isArray(records) ? records : [];
   };
 
+  // Super admins do not track attendance, so they are never a reportable
+  // employee — not in the Team list, its counts, or any download. Keeping one
+  // filter here means the screen and the file agree by construction.
+  const reportableEmployees = employees.filter(e => e.role !== 'super_admin');
+
   const handleDownload = async (format) => {
     setDownloadLoading(true);
     try {
       let targets;
       if (showAllEmployees && !selectedUserId) {
-        targets = employees;
+        targets = reportableEmployees;
       } else if (selectedUserId) {
-        targets = employees.filter(e => e.userId === selectedUserId);
+        targets = reportableEmployees.filter(e => e.userId === selectedUserId);
+      } else if (user?.role === 'super_admin') {
+        showToast('Super admin accounts do not track attendance', 'error');
+        return;
       } else {
         targets = [{ userId: user?._id, name: user?.name, role: user?.role, department: user?.department }];
       }
@@ -1999,7 +2007,7 @@ export default function AttendancePage() {
               <select className="form-select" style={{ fontSize: 13, maxWidth: 300 }} value={showAllEmployees ? 'all' : selectedUserId} onChange={e => { const val = e.target.value; if (val === 'all') { setShowAllEmployees(true); setSelectedUserId(''); } else if (val === '') { setShowAllEmployees(false); setSelectedUserId(''); } else { setShowAllEmployees(false); setSelectedUserId(val); setTeamMonth(month); setTeamFromDate(''); setTeamToDate(''); } }}>
                 <option value="">— Select Employee —</option>
                 <option value="all">All Employees</option>
-                {employees.filter(e => e.role !== 'super_admin').map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
+                {reportableEmployees.map(e => <option key={e.userId} value={e.userId}>{e.name} ({e.department || 'No Dept'})</option>)}
               </select>
             </div>
           ) : null}
@@ -2045,7 +2053,7 @@ export default function AttendancePage() {
               <div style={{ padding: '12px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <i className="bi bi-people" style={{ color: '#3b82f6', fontSize: 14 }} />
-                  <span style={{ fontWeight: 750, fontSize: 13.5 }}>All Employees ({employees.filter(e => e.role !== 'super_admin').length})</span>
+                  <span style={{ fontWeight: 750, fontSize: 13.5 }}>All Employees ({reportableEmployees.length})</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ fontSize: 12, color: '#64748b' }}>Click an employee to view their attendance</span>
@@ -2063,7 +2071,7 @@ export default function AttendancePage() {
               </div>
               <div style={{ padding: '12px 18px' }}>
                 <div className="row g-2">
-                  {employees.filter(e => e.role !== 'super_admin').map(emp => (
+                  {reportableEmployees.map(emp => (
                     <div key={emp.userId} className="col-6 col-md-4 col-lg-3">
                       <div
                         className="card"
