@@ -8,6 +8,10 @@ const AttendanceSchema = new mongoose.Schema({
   hoursWorked:{ type: Number, default: 0 },              // in minutes
   payableHours:{ type: Number, default: 0 },              // capped daily credit, in minutes
   shortHours: { type: Boolean, default: false },          // informational only; never creates LOP
+  // Why the day is short hours — the two additive triggers behind `shortHours`.
+  // Kept alongside it so the UI can say "short by 60m" instead of a bare badge.
+  shortfallMins:   { type: Number, default: 0 },          // clock-out before scheduled shift end
+  breakExcessMins: { type: Number, default: 0 },          // break time taken over the allowances
   baseHoursWorked: { type: Number, default: 0 },
   breakDeduction: { type: Number, default: 0 },
   breaks: [{
@@ -116,7 +120,7 @@ AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 if (mongoose.models.Attendance) {
   const existing = mongoose.models.Attendance;
   const wpSchema = existing.schema.path('workProgress')?.schema;
-  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded') || !existing.schema.path('absentMarkedAt') || !existing.schema.path('permission.endedAt') || !existing.schema.path('permission.endedBy') || !wpSchema?.path('permissionRequestId')) {
+  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded') || !existing.schema.path('absentMarkedAt') || !existing.schema.path('permission.endedAt') || !existing.schema.path('permission.endedBy') || !existing.schema.path('shortfallMins') || !existing.schema.path('breakExcessMins') || !wpSchema?.path('permissionRequestId')) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

@@ -1,5 +1,5 @@
 import { connectDB } from '@/lib/db';
-import { AttendanceRegularization, Notification } from '@/lib/models/index';
+import { AttendanceRegularization, Notification, SelfServiceRequest } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -7,10 +7,13 @@ import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
 import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
-import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
-import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
+import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
+import { computePermissionUsage, permissionDurationMins, getPermissionAllowanceMins, getPermissionUsageForCycle, getCycleRangeForDate } from '@/lib/permission-allowance';
+import { permissionOverrunMins } from '@/lib/permission-window';
+import { resolveDayStatus } from '@/lib/attendance-resolver';
 
 export async function GET(req) {
   try {
@@ -51,6 +54,32 @@ export async function GET(req) {
         return fail('Access denied', 403);
       }
       query = { status: 'pending' };
+    } else if (scope === 'permission') {
+      // Owner-scoped permission lookup for the regularization modal: fetch
+      // the approved permission for THIS user on the given date. Never leaks
+      // other users' permissions.
+      const date = searchParams.get('date');
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail('Valid date YYYY-MM-DD is required', 400);
+      const orConds = [];
+      if (user.identityId) orConds.push({ identityId: user.identityId });
+      if (user.profileId) orConds.push({ profileId: user.profileId });
+      if (orConds.length === 0) return ok({ permission: null, source: 'manual' });
+      const perm = await SelfServiceRequest.findOne({
+        $or: orConds,
+        requestType: 'permission',
+        status: 'approved',
+        'payload.date': date,
+      }).select('payload').lean();
+      if (!perm) return ok({ permission: null, source: 'manual' });
+      return ok({
+        permission: {
+          startTime: perm.payload?.startTime || null,
+          endTime: perm.payload?.endTime || null,
+          actualEndTime: perm.payload?.actualEndTime || null,
+          duration: perm.payload?.duration || null,
+        },
+        source: 'fetched',
+      });
     } else {
       query = { userId: user._id };
     }
@@ -103,7 +132,7 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { date, requestedIn, requestedOut, requestedOutNotYet, requestedBreaks, reason } = validation.data;
+    const { date, requestedIn, requestedOut, requestedOutNotYet, requestedBreaks, requestedPermission, reason } = validation.data;
 
     const countToday = await AttendanceRegularization.countDocuments({ userId: user._id, date: validation.data.date });
     if (countToday >= 4) {
@@ -140,6 +169,14 @@ export async function POST(req) {
         end: b.end || null,
         notYet: b.notYet || false,
       })),
+      requestedPermission: requestedPermission?.startTime && requestedPermission?.endTime
+        ? {
+            startTime: requestedPermission.startTime,
+            endTime: requestedPermission.endTime,
+            actualEndTime: requestedPermission.actualEndTime || null,
+            source: requestedPermission.source || 'manual',
+          }
+        : null,
       reason, status: 'pending',
     });
 
@@ -210,7 +247,92 @@ export async function PUT(req) {
       return fail('Access denied', 403);
     }
 
-    const empUser = await User.findById(reg.userId).select('shift shiftId').lean();
+    const empUser = await User.findById(reg.userId).select('shift shiftId identityId profileId').lean();
+
+    // ── Permission pre-claim gate ──────────────────────────────────────────
+    // Validation, monthly-allowance enforcement and the SelfServiceRequest
+    // upsert ALL happen before the atomic claim (STEP 1) so a rejection here
+    // can never leave the request marked approved with attendance untouched.
+    const regPerm = reg.requestedPermission || null;
+    let regPermSelfReq = null;
+    let regPermDuration = 0;
+    if (action === 'approved' && regPerm && regPerm.startTime && regPerm.endTime) {
+      regPermDuration = permissionDurationMins(regPerm.startTime, regPerm.endTime);
+      if (regPermDuration <= 0 || regPermDuration > 120) {
+        return fail('Permission duration must be between 1 and 120 minutes', 400);
+      }
+      if (!regPerm.actualEndTime) {
+        return fail('Permission actual end time is required', 400);
+      }
+      if (!empUser.profileId || !empUser.identityId) {
+        return fail('Employee identity/profile not found; cannot record permission', 400);
+      }
+
+      regPermSelfReq = await SelfServiceRequest.findOne({
+        $or: [{ identityId: empUser.identityId }, { profileId: empUser.profileId }],
+        requestType: 'permission',
+        'payload.date': reg.date,
+      }).sort({ createdAt: -1 }).lean();
+
+      // Monthly allowance enforcement — mirrors self-service approval.
+      // An already-counted (approved/pending) request adds 0; a new or
+      // previously-rejected one adds its full duration.
+      try {
+        const cfg = await getGlobalConfig();
+        const { fromDate, toDate } = await getCycleRangeForDate(reg.date, cfg);
+        const usage = await getPermissionUsageForCycle(empUser.profileId, fromDate, toDate);
+        const allowance = getPermissionAllowanceMins(cfg);
+        const alreadyCounted = !!regPermSelfReq && ['approved', 'pending'].includes(regPermSelfReq.status);
+        const projected = usage.totalUsed + (alreadyCounted ? 0 : regPermDuration);
+        if (projected > allowance) {
+          return fail(`Permission allowance exceeded for cycle ${fromDate} to ${toDate}: ${projected} of ${allowance} minutes`, 400);
+        }
+      } catch (e) {
+        return fail('Permission allowance check failed: ' + (e?.message || e), 400);
+      }
+
+      // Upsert the SelfServiceRequest so allowance/balance/calendar/history
+      // stay single-sourced (getPermissionUsageForCycle reads it).
+      try {
+        const payload = {
+          date: reg.date,
+          startTime: regPerm.startTime,
+          endTime: regPerm.endTime,
+          actualEndTime: regPerm.actualEndTime,
+          duration: regPermDuration,
+        };
+        if (regPermSelfReq) {
+          regPermSelfReq = await SelfServiceRequest.findByIdAndUpdate(
+            regPermSelfReq._id,
+            {
+              $set: {
+                payload: { ...(regPermSelfReq.payload || {}), ...payload },
+                status: 'approved',
+                reviewerUserId: user._id,
+                reviewedAt: new Date(),
+                reviewNote: 'Approved via attendance regularization',
+              },
+            },
+            { new: true }
+          ).lean();
+        } else {
+          regPermSelfReq = (await SelfServiceRequest.create({
+            identityId: empUser.identityId,
+            profileId: empUser.profileId,
+            requestType: 'permission',
+            payload,
+            reason: `Regularization-approved permission for ${reg.date}`,
+            status: 'approved',
+            reviewerUserId: user._id,
+            reviewedAt: new Date(),
+            reviewNote: 'Created via attendance regularization approval',
+            requestSource: 'regularization',
+          })).toObject();
+        }
+      } catch (e) {
+        return fail('Failed to record permission request: ' + (e?.message || e), 400);
+      }
+    }
 
     // STEP 1: Atomically claim the regulation FIRST
     const updated = await AttendanceRegularization.findOneAndUpdate(
@@ -266,11 +388,16 @@ export async function PUT(req) {
       if (reg.requestedIn) attendance.clockIn = reg.requestedIn;
       if (reg.requestedIn && oldClockIn && reg.requestedIn !== oldClockIn) {
         const delta = toMins(reg.requestedIn) - toMins(oldClockIn);
-        attendance.workProgress = (attendance.workProgress || []).map(w => ({
-          ...w,
-          startTime: w.startTime ? shiftTime(w.startTime, delta) : w.startTime,
-          endTime:   w.endTime   ? shiftTime(w.endTime, delta)   : w.endTime,
-        }));
+        // The approved permission window is authoritative and must never be
+        // shifted — only work/break rows move with the corrected clock-in.
+        attendance.workProgress = (attendance.workProgress || []).map(w => {
+          if (w.type === 'permission') return w;
+          return {
+            ...w,
+            startTime: w.startTime ? shiftTime(w.startTime, delta) : w.startTime,
+            endTime:   w.endTime   ? shiftTime(w.endTime, delta)   : w.endTime,
+          };
+        });
         attendance.breaks = (attendance.breaks || []).map(b => ({
           ...b,
           start: b.start ? shiftTime(b.start, delta) : b.start,
@@ -352,6 +479,12 @@ export async function PUT(req) {
                 attendanceWorkProgress[wpIdx].duration = computeWorkRowDuration(attendanceWorkProgress[wpIdx]);
               }
             } else {
+              // Close any other open row first so regularization can never
+              // create a second active row (which wedges every later save
+              // with "Multiple active work rows").
+              const healed = closeExtraActiveRows(attendanceWorkProgress, rb.start || rb.end || null);
+              attendanceWorkProgress.length = 0;
+              attendanceWorkProgress.push(...healed.rows);
               attendanceWorkProgress.push({
                 type: rb.type, taskDetails: rb.name || (rb.type === 'lunch' ? 'Lunch break' : 'Break'),
                 startTime: rb.start || '', endTime: rb.end || null,
@@ -390,35 +523,154 @@ export async function PUT(req) {
       const config = await getGlobalConfig();
       const regCfg = getShiftConfig(regShiftDoc, config);
 
+      // ── Apply the approved permission to the day's attendance ────────────
+      // Usage is recomputed the same way clock-in does it, shortHours stays
+      // suppressed downstream, and the work-progress permission row is
+      // materialised completed (actualEndTime is required) so it can never
+      // become a second active row. Any pre-existing wedge is healed first.
+      if (regPerm && regPerm.startTime && regPerm.endTime) {
+        try {
+          const actualEnd = regPerm.actualEndTime;
+          // Wrap-aware overrun: measured against the permission start so an
+          // overnight window (23:00-01:00) returning at 23:30 is not read as
+          // "+1350m over". Shared with the attendance page badges.
+          const overrunMins = permissionOverrunMins(regPerm.startTime, regPerm.endTime, actualEnd);
+          const endedLate = overrunMins > 0;
+
+          const permShiftStart = regShiftDoc?.startTime || null;
+          const [psH, psM] = permShiftStart ? permShiftStart.split(':').map(Number) : [NaN, NaN];
+          const shiftStartMins = Number.isNaN(psH) ? null : psH * 60 + psM;
+
+          const usage = computePermissionUsage({
+            actualClockIn: attendance.clockIn || reg.requestedIn || null,
+            permStart: regPerm.startTime,
+            permEnd: regPerm.endTime,
+            grantedDuration: regPermDuration,
+            shiftStartMins,
+            lateThreshold: regCfg?.lateThreshold ?? 15,
+          });
+          const effectiveClockIn = usage.applied && shiftStartMins !== null
+            ? `${String(Math.floor(shiftStartMins / 60)).padStart(2, '0')}:${String(shiftStartMins % 60).padStart(2, '0')}`
+            : attendance.clockIn || null;
+          const prevPerm = attendance.permission || {};
+
+          attendance.permission = {
+            requestId: regPermSelfReq?._id || prevPerm.requestId || null,
+            startTime: regPerm.startTime,
+            endTime: regPerm.endTime,
+            duration: regPermDuration,
+            grantedDuration: regPermDuration,
+            usedDuration: usage.used,
+            refundedDuration: usage.refunded,
+            actualClockIn: attendance.clockIn || null,
+            effectiveClockIn,
+            applied: usage.applied,
+            isMidDay: usage.isMidDay,
+            status: 'approved',
+            approvedBy: user._id,
+            approvedAt: prevPerm.approvedAt || new Date(),
+            endedAt: actualEnd,
+            endedEarly: true,
+            endedLate: endedLate || !!prevPerm.endedLate,
+            endedLateMins: overrunMins > 0 ? overrunMins : (prevPerm.endedLateMins ?? null),
+            endedBy: 'manual',
+          };
+
+          const rows = attendance.workProgress || [];
+          if (!rows.some(w => w.type === 'permission' && String(w.permissionRequestId || '') === String(attendance.permission.requestId || ''))) {
+            // Single-active-row invariant: heal first, then push a COMPLETED
+            // row (actualEndTime is required, so it can never stay open).
+            const healed = closeExtraActiveRows(rows, actualEnd);
+            attendance.workProgress = healed.rows;
+            attendance.workProgress.push({
+              type: 'permission',
+              taskDetails: `Permission (${regPerm.startTime}-${regPerm.endTime})`,
+              startTime: regPerm.startTime,
+              endTime: actualEnd,
+              status: 'completed',
+              remarks: '',
+              feedback: '',
+              duration: computeWorkRowDuration({ startTime: regPerm.startTime, endTime: actualEnd }),
+              permissionRequestId: attendance.permission.requestId,
+              scheduledEndTime: regPerm.endTime,
+              endedLate,
+              overrunMins: overrunMins || null,
+            });
+          }
+
+          // Reconcile the SelfServiceRequest usage so unused minutes return
+          // to the monthly allowance (approved counts used, not granted).
+          if (regPermSelfReq?._id) {
+            await SelfServiceRequest.findByIdAndUpdate(regPermSelfReq._id, {
+              $set: {
+                'payload.usedDuration': usage.used,
+                'payload.refundedMins': usage.refunded,
+                'payload.applied': usage.applied,
+                'payload.actualClockIn': attendance.clockIn || null,
+                'payload.isMidDay': usage.isMidDay,
+                'payload.actualEndTime': actualEnd,
+              },
+            });
+          }
+        } catch (e) {
+          console.error('Regularization permission apply failed:', e?.message || e);
+        }
+      }
+
       if (attendance.clockIn && attendance.clockOut) {
         let base = diffMins(attendance.clockIn, attendance.clockOut);
         base = Math.max(0, base);
         attendance.baseHoursWorked = base;
 
         attendance.breakDeduction = calculateBreakDeduction(attendanceBreaks, regCfg.breaks);
-        const { hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(base, attendance.breakDeduction, regCfg);
+        // Short hours = clock-out before the scheduled shift end OR break
+        // excess. No strict 8-hour rule: a 3-hour shift that ends on time is a
+        // full day.
+        const regShiftEndMins = regShiftDoc ? getShiftEndMinutes(regShiftDoc, regCfg) : null;
+        const { hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours: rawShortHours } =
+          calculateHoursWorked(base, attendance.breakDeduction, regCfg, {
+            clockOut: attendance.clockOut,
+            shiftEndMins: regShiftEndMins,
+            breakExcessMins: attendance.breakDeduction,
+          });
         attendance.hoursWorked = hoursWorked;
         attendance.payableHours = payableHours;
         const hasRegPermission = !!(attendance.permission?.requestId || attendance.permission?.startTime);
         attendance.shortHours = hasRegPermission ? false : rawShortHours;
+        attendance.shortfallMins = hasRegPermission ? 0 : shortfallMins;
+        attendance.breakExcessMins = hasRegPermission ? 0 : breakExcessMins;
         attendance.status = 'present';
 
-        // Recalculate lateFlag based on shift start (same per-day shift)
+        // Recalculate late via resolveDayStatus so the permission window is
+        // consulted — judging only against shift start would wrongly mark an
+        // employee with an approved covering permission as Late (the read-path
+        // resolves the same day as Present).
         if (empUser?.shift || regShiftDoc?.startTime) {
           const lateShiftDoc = regShiftDoc || await resolveShift(empUser);
-          if (lateShiftDoc?.startTime) {
+          if (lateShiftDoc?.startTime && attendance.clockIn) {
             const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
             const shiftStartMins = sH * 60 + sM;
-            if (attendance.clockIn) {
-              const [cH, cM] = attendance.clockIn.split(':').map(Number);
-              const clockInMins = cH * 60 + cM;
-              let minutesLate = clockInMins - shiftStartMins;
-              if (minutesLate < -720) minutesLate += 1440;
-              if (minutesLate > 720) minutesLate -= 1440;
-              attendance.lateFlag = minutesLate > (regCfg?.lateThreshold || 15);
-              attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate >= (regCfg?.halfDayThreshold || 180);
-              if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
-            }
+            const [cH, cM] = attendance.clockIn.split(':').map(Number);
+            let minutesLate = cH * 60 + cM - shiftStartMins;
+            if (minutesLate < -720) minutesLate += 1440;
+            if (minutesLate > 720) minutesLate -= 1440;
+
+            const resolved = resolveDayStatus({
+              clockIn: attendance.clockIn,
+              permission: attendance.permission?.startTime && attendance.permission?.endTime
+                ? { startTime: attendance.permission.startTime, endTime: attendance.permission.endTime }
+                : null,
+              approvedHalfDayLeave: !!attendance.approvedHalfDayLeave,
+              nonWorkingDayType: attendance.nonWorkingDayType || 'none',
+              leaveOverrideStatus: attendance.leaveOverride?.status || 'none',
+              minutesSinceShiftStart: minutesLate,
+              shiftStartMins,
+              cfg: regCfg,
+            });
+            attendance.lateFlag = !!resolved.lateFlag;
+            attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate >= (regCfg?.halfDayThreshold || 180);
+            if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
+            else if (!attendance.lateFlag && attendance.status === 'late') attendance.status = 'present';
           }
         }
       }

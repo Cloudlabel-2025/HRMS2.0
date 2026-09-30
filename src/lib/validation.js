@@ -358,10 +358,16 @@ export const AttendanceRegularizeSchema = z.object({
     end: z.string().regex(TIME_RE, 'Time must be HH:MM').optional().or(z.literal('')),
     notYet: z.boolean().optional(),
   })).optional().default([]),
+  requestedPermission: z.object({
+    startTime: z.string().regex(TIME_RE, 'Permission start must be HH:MM').optional().or(z.literal('')),
+    endTime: z.string().regex(TIME_RE, 'Permission end must be HH:MM').optional().or(z.literal('')),
+    actualEndTime: z.string().regex(TIME_RE, 'Permission actual end must be HH:MM').optional().or(z.literal('')),
+    source: z.enum(['fetched', 'manual']).optional(),
+  }).nullish(),
   reason: z.string().min(20, 'Reason must be detailed (min 20 chars)').max(1000),
 }).strict().refine(
-  (data) => data.requestedIn || data.requestedOut || data.requestedOutNotYet || data.requestedBreaks?.length > 0,
-  { message: 'At least one field (Clock In, Clock Out, Break, or Lunch) must be requested' }
+  (data) => data.requestedIn || data.requestedOut || data.requestedOutNotYet || data.requestedBreaks?.length > 0 || data.requestedPermission,
+  { message: 'At least one field (Clock In, Clock Out, Break, Lunch, or Permission) must be requested' }
 ).refine(
   (data) => {
     if (data.requestedOutNotYet) return true;
@@ -369,6 +375,40 @@ export const AttendanceRegularizeSchema = z.object({
     return true;
   },
   { message: 'Clock In must be before Clock Out' }
+  ).refine(
+    (data) => {
+      const p = data.requestedPermission;
+      if (!p) return true;
+      if (!p.startTime || !p.endTime) return false;
+      return true;
+    },
+    { message: 'Permission start and end are required' }
+  ).refine(
+  (data) => {
+    const p = data.requestedPermission;
+    if (!p || !p.startTime || !p.endTime) return true;
+    const [sh, sm] = p.startTime.split(':').map(Number);
+    const [eh, em] = p.endTime.split(':').map(Number);
+    let dur = (eh * 60 + em) - (sh * 60 + sm);
+    if (dur < 0) dur += 24 * 60;
+    return dur > 0 && dur <= 120;
+  },
+  { message: 'Permission duration must be 1-120 minutes' }
+).refine(
+  (data) => {
+    const p = data.requestedPermission;
+    if (!p || !p.startTime || !p.endTime || !p.actualEndTime) return true;
+    const [sh, sm] = p.startTime.split(':').map(Number);
+    const [eh, em] = p.endTime.split(':').map(Number);
+    const [ah, am] = p.actualEndTime.split(':').map(Number);
+    let diff = (ah * 60 + am) - (sh * 60 + sm);
+    // Only a midnight-crossing permission may wrap actual end past 00:00;
+    // otherwise an actual end before the start is a plain data-entry error.
+    const crossesMidnight = (eh * 60 + em) < (sh * 60 + sm);
+    if (diff < 0 && crossesMidnight) diff += 24 * 60;
+    return diff >= 0;
+  },
+  { message: 'Permission actual end must be on or after permission start' }
 );
 
 export const ApproveRegularizationSchema = z.object({

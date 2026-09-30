@@ -8,13 +8,13 @@ import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payrol
 import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
-import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
+import { getShiftConfig, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
 import { isWorkedDay } from '@/lib/attendance-stats';
 import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
-import { matchBreakRule } from '@/lib/attendance-breaks';
+import { matchBreakRule, calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -394,6 +394,10 @@ export async function GET(req) {
           rec.shortHours = false;
           rec._permissionStatus = 'approved';
         }
+        // Keep the breakdown consistent with the suppressed flag so the UI
+        // never renders "short by 60m" next to an excused permission day.
+        rec.shortfallMins = 0;
+        rec.breakExcessMins = 0;
       }
     }
 
@@ -472,7 +476,7 @@ export async function GET(req) {
       .map(rec => ({
         updateOne: {
           filter: { _id: rec._id },
-          update: { $set: { status: rec.status, lateFlag: rec.lateFlag, shortHours: !!rec.shortHours } }
+          update: { $set: { status: rec.status, lateFlag: rec.lateFlag, shortHours: !!rec.shortHours, shortfallMins: rec.shortfallMins ?? 0, breakExcessMins: rec.breakExcessMins ?? 0 } }
         }
       }));
 
@@ -589,6 +593,9 @@ export async function PUT(req) {
         record.clockOut = null;
         record.hoursWorked = 0;
         record.baseHoursWorked = 0;
+        record.shortHours = false;
+        record.shortfallMins = 0;
+        record.breakExcessMins = 0;
         record.earlyLogin = false;
         await record.save();
 
@@ -615,14 +622,29 @@ export async function PUT(req) {
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
 
     if (update.workProgress) {
-      const activeRows = update.workProgress.filter(row => row.startTime && !row.endTime);
-      if (activeRows.length > 1) {
-        return fail('Multiple active work rows detected. End the current row before starting another.', 400);
+      // Self-heal instead of wedging the day: keep the most recently
+      // started open row, close any earlier ones (clamped to their own
+      // start so no negative duration is invented). Previously this was a
+      // hard 400 that left already-broken days permanently unsavable.
+      const openRows = update.workProgress.filter(row => row.startTime && !row.endTime);
+      if (openRows.length > 1) {
+        const latestStart = openRows.map(r => r.startTime).sort().reverse()[0];
+        const healed = closeExtraActiveRows(update.workProgress, latestStart);
+        update.workProgress = healed.rows;
+        try {
+          const { auditLog } = await import('@/lib/middleware');
+          await auditLog('Work Progress Self-Heal', 'Attendance', user._id,
+            `Collapsed ${healed.healed} extra active row(s) on ${today} (kept ${latestStart})`, 'low',
+            req.headers.get('x-forwarded-for') || '', null, user._id);
+        } catch { /* non-fatal */ }
       }
       update.workProgress = update.workProgress.map(row => ({ ...row, duration: computeWorkRowDuration(row) }));
     }
 
-    // Enforce break limits from shift config
+    // Enforce break limits from shift config, then recompute the derived
+    // values. Break edits change the excess, which is one of the two triggers
+    // behind shortHours — trusting client-supplied hours here would silently
+    // desynchronise the flag from the actual breaks on the record.
     if (body.breaks) {
       const targetUser = await User.findById(targetUserId).select('shift shiftId').lean();
       const shiftDoc = await resolveShift(targetUser);
@@ -635,6 +657,27 @@ export async function PUT(req) {
         if (count > allowed) {
           return fail(`You can only take ${allowed} ${rule.name || rule.type}(s) per day.`, 400);
         }
+      }
+
+      const current = await Attendance.findOne({ userId: targetUserId, date: today }).lean();
+      if (current?.clockIn && current?.clockOut) {
+        const elapsed = Math.max(0, diffMins(current.clockIn, current.clockOut));
+        const deduction = calculateBreakDeduction(body.breaks, shiftCfg.breaks);
+        const shiftEndMins = shiftDoc ? getShiftEndMinutes(shiftDoc, shiftCfg) : null;
+        const { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours } =
+          calculateHoursWorked(elapsed, deduction, shiftCfg, {
+            clockOut: current.clockOut,
+            shiftEndMins,
+            breakExcessMins: deduction,
+          });
+        const hasPermission = !!(current.permission?.requestId || current.permission?.startTime);
+        update.breakDeduction = deduction;
+        update.baseHoursWorked = baseHours;
+        update.hoursWorked = hoursWorked;
+        update.payableHours = payableHours;
+        update.shortHours = hasPermission ? false : shortHours;
+        update.shortfallMins = hasPermission ? 0 : shortfallMins;
+        update.breakExcessMins = hasPermission ? 0 : breakExcessMins;
       }
     }
 

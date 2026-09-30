@@ -53,25 +53,64 @@ export function getBreakAllowanceForEntry(entry, shiftBreaks) {
   return getBreakAllowance(entry?.type, shiftBreaks);
 }
 
-export function calculateBreakDeduction(breaks, shiftBreaks) {
+/**
+ * Break time taken over and above what the allowances permit.
+ *
+ * Two bounds are evaluated per group (rule, or type for legacy/unmatched
+ * entries) and the LARGER wins, because each is a genuine violation on its
+ * own:
+ *
+ *   perOccurrence = Σ max(0, duration_i − maxDuration)
+ *                   — one break ran long against its own cap
+ *                   (a 30m break that took 40m => 10m)
+ *
+ *   pool          = max(0, Σ duration_i − allowance)
+ *                   — the day's total outran the bucket
+ *                   (two 40m breaks in a 60m pool => 20m)
+ *
+ * Staying inside every cap AND inside the pool is zero excess: 45m of a 60m
+ * lunch allowance is normal, never short hours.
+ */
+export function calculateBreakExcess(breaks, shiftBreaks) {
   const rules = shiftBreaks || [];
-  const byRule = {};
-  const byType = {};
+  const groups = new Map();
+
   for (const b of (breaks || [])) {
-    if (!b.end) continue;
+    if (!b?.start || !b?.end) continue;
     const dur = diffMins(b.start, b.end);
+    if (dur <= 0) continue;
+
     const m = matchBreakRule(b, rules);
-    if (m) byRule[m.index] = (byRule[m.index] || 0) + dur;
-    else byType[b.type] = (byType[b.type] || 0) + dur;
+    const key = m ? 'r' + m.index : 't' + (b.type || '');
+    let g = groups.get(key);
+    if (!g) {
+      g = { total: 0, perOccurrence: 0, hasRule: !!m, rule: m ? rules[m.index] : null, type: b.type || '' };
+      groups.set(key, g);
+    }
+    g.total += dur;
+    if (g.hasRule) {
+      const cap = Number(g.rule?.maxDuration);
+      // No per-break cap configured => only the pool bound can apply.
+      if (Number.isFinite(cap) && cap > 0) g.perOccurrence += Math.max(0, dur - cap);
+    }
   }
-  let deduction = 0;
-  for (const [idx, total] of Object.entries(byRule)) {
-    deduction += Math.max(0, total - getRuleAllowance(rules[Number(idx)]));
+
+  let excessMins = 0;
+  const byGroup = [];
+  for (const g of groups.values()) {
+    const allowance = g.hasRule ? getRuleAllowance(g.rule) : getBreakAllowance(g.type, rules);
+    const poolExcess = Math.max(0, g.total - allowance);
+    const excess = Math.max(g.perOccurrence, poolExcess);
+    if (excess > 0) {
+      excessMins += excess;
+      byGroup.push({ type: g.type, excess });
+    }
   }
-  for (const [type, total] of Object.entries(byType)) {
-    deduction += Math.max(0, total - getBreakAllowance(type, rules));
-  }
-  return deduction;
+  return { excessMins, byGroup };
+}
+
+export function calculateBreakDeduction(breaks, shiftBreaks) {
+  return calculateBreakExcess(breaks, shiftBreaks).excessMins;
 }
 
 const BREAK_PALETTES = [

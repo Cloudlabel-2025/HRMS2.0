@@ -12,8 +12,9 @@ import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, MANAGER_ROLES } from '@/lib/constants';
 import { computeAttendanceStats, reconciliationLine, displayStatusOf, showsAsPresentViaPermission } from '@/lib/attendance-stats';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
-import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
+import { formatTaskDuration, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
+import { permissionOverrunMins } from '@/lib/permission-window';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -50,6 +51,15 @@ function diffMins(start, end) {
   return e + 24 * 60 - s;
 }
 
+function shortHoursTitle(row) {
+  const parts = [];
+  const shortfall = Number(row?.shortfallMins || 0);
+  const excess = Number(row?.breakExcessMins || 0);
+  if (shortfall > 0) parts.push(`clocked out ${formatMins(shortfall)} before shift end`);
+  if (excess > 0) parts.push(`${formatMins(excess)} over break allowance`);
+  return parts.length ? `Short hours: ${parts.join('; ')}` : 'Short hours';
+}
+
 export default function AttendancePage() {
   const { user } = useAuth();
   const { formatDate, settings, formatTime } = useSettings();
@@ -71,7 +81,7 @@ export default function AttendancePage() {
   const [toastQueue, setToastQueue] = useState([]);
   const [regRequests, setRegRequests]   = useState([]);
   const [showRegModal, setShowRegModal] = useState(false);
-  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], reason: '' });
+  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], requestedPermission: null, reason: '' });
   const [regSaving, setRegSaving]       = useState(false);
   const [todayPage, setTodayPage]       = useState(1);
   const [regPage, setRegPage]           = useState(1);
@@ -828,6 +838,10 @@ export default function AttendancePage() {
       return;
     }
     setBreakLoading(true);
+    // Success messages are shown only AFTER the save persists — never for a
+    // write that then fails.
+    let doneMsg = null;
+    let doneType = 'success';
     try {
       const now = nowTimeStr();
       const type = rule.type;
@@ -838,7 +852,17 @@ export default function AttendancePage() {
       let updatedWorkProgress = [...(todayRecord?.workProgress || [])];
 
       if (!active) {
-        // Start break/lunch
+        // Start break/lunch — never while a DIFFERENT break is running.
+        // Starting one used to close the other break's sheet row without
+        // ending its breaks entry, desyncing the two and permanently
+        // wedging End Break with "Multiple active work rows".
+        const otherActive = (todayRecord?.breaks || []).find(b => b.start && !b.end);
+        if (otherActive) {
+          const otherLabel = otherActive.name || breakLabel(otherActive.type);
+          showToast(`End your ${otherLabel} break first.`, 'error');
+          setBreakLoading(false);
+          return;
+        }
         const maxCount = rule.maxCount ?? 1;
         if (getRuleBreaks(rule, ruleIdx).length >= maxCount) {
           showToast(`You have already taken the maximum ${maxCount} ${label}(s) for today.`, 'error');
@@ -848,9 +872,11 @@ export default function AttendancePage() {
         updatedBreaks.push({ type, name: rule.name || '', ruleIdx, start: now, end: null });
         updatedWorkProgress = closeActiveWork(updatedWorkProgress, now, 'stopped');
         updatedWorkProgress.push(buildBreakRow(rule, now));
-        showToast(`${label} started at ${now}`);
+        doneMsg = `${label} started at ${now}`;
       } else {
-        // End break/lunch
+        // End break/lunch — bulletproof: whatever the prior state (stale
+        // open rows, breaks/workProgress desync), finish with exactly one
+        // open row so the save can never 400.
         // Match by rule first; fall back to any open break of the same type so a
         // stale ruleIdx (e.g. after a shift config change) can never wedge the day.
         let idx = updatedBreaks.findIndex(b => matchBreakRule(b, breakRules)?.index === ruleIdx && b.start && !b.end);
@@ -858,9 +884,16 @@ export default function AttendancePage() {
         if (idx !== -1) updatedBreaks[idx] = { ...updatedBreaks[idx], end: now };
         let workIdx = updatedWorkProgress.findIndex(row => row.type === type && (rule.name ? row.taskDetails === rule.name : true) && row.startTime && !row.endTime);
         if (workIdx === -1) workIdx = updatedWorkProgress.findIndex(row => row.type === type && row.startTime && !row.endTime);
-        if (workIdx !== -1) updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
+        if (workIdx !== -1) {
+          updatedWorkProgress[workIdx] = { ...updatedWorkProgress[workIdx], endTime: now, status: 'completed' };
+        }
+        // else: desync — the breaks entry was open but its sheet row was
+        // already closed/missing. The entry is ended above; collapse any
+        // other open row below so the day is consistent again.
+        const healed = closeExtraActiveRows(updatedWorkProgress, now);
+        updatedWorkProgress = healed.rows;
         const lastTask = [...updatedWorkProgress].reverse().find(row => row.type === 'task' && row.taskDetails);
-        if (!clockedOut) {
+        if (!clockedOut && !updatedWorkProgress.some(row => row.startTime && !row.endTime)) {
           const t = buildTaskRow(now, lastTask?.taskDetails || '');
           t.resumedAfter = 'break';
           updatedWorkProgress.push(t);
@@ -869,9 +902,10 @@ export default function AttendancePage() {
           .reduce((acc, b) => acc + diffMins(b.start, b.end), 0);
         const over = Math.max(0, ruleMins - getRuleAllowance(rule));
         if (over > 0) {
-          showToast(`${label} ended — ${over} min over allowance. Working hours reduced.`, 'error');
+          doneMsg = `${label} ended — ${over} min over allowance. Working hours reduced.`;
+          doneType = 'error';
         } else {
-          showToast(`${label} ended at ${now}`);
+          doneMsg = `${label} ended at ${now}`;
         }
       }
 
@@ -890,7 +924,8 @@ export default function AttendancePage() {
         hoursWorked: effectiveHours,
         breakDeduction: totalDeduction,
       });
-    } catch (e) { showToast(e.message, 'error'); }
+      if (doneMsg) showToast(doneMsg, doneType);
+    } catch (e) { showToast((e.message || 'Failed to save break') + ' — not saved', 'error'); }
     finally { setBreakLoading(false); }
   };
 
@@ -970,6 +1005,36 @@ export default function AttendancePage() {
   };
 
   // ── Regularization ──────────────────────────────────────────────────────────
+  const EMPTY_REG_FORM = { date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], requestedPermission: null, reason: '' };
+
+  // Fetch the approved permission for the selected regularization date.
+  // Returns true when one exists (fields prefill read-only); otherwise the
+  // employee may enter a permission manually.
+  const fetchRegPermission = async (date) => {
+    if (!date) return false;
+    try {
+      const r = await api.get('/api/attendance/regularize?scope=permission&date=' + encodeURIComponent(date));
+      if (r?.permission?.startTime && r?.permission?.endTime) {
+        setRegForm(p => ({
+          ...p,
+          requestedPermission: {
+            startTime: r.permission.startTime,
+            endTime: r.permission.endTime,
+            actualEndTime: r.permission.actualEndTime || r.permission.endTime || '',
+            source: 'fetched',
+          },
+        }));
+        return true;
+      }
+    } catch { /* no approved permission — fall through to manual */ }
+    return false;
+  };
+
+  const handleRegDateChange = async (value) => {
+    setRegForm(p => ({ ...p, date: value, requestedPermission: null }));
+    if (value) await fetchRegPermission(value);
+  };
+
   const submitRegularization = async () => {
     if (!regForm.date || !regForm.reason) { showToast('Date and reason are required', 'error'); return; }
     if (regDateError) { showToast(regDateError, 'error'); return; }
@@ -980,12 +1045,23 @@ export default function AttendancePage() {
         showToast('Each break must have both start and end in HH:MM (24-hour) format', 'error'); return;
       }
     }
+    const p = regForm.requestedPermission;
+    if (p) {
+      if (!p.startTime || !p.endTime) { showToast('Permission start and end are required', 'error'); return; }
+      if (!TIME_RE.test(p.startTime) || !TIME_RE.test(p.endTime)) { showToast('Permission times must be in HH:MM (24-hour) format', 'error'); return; }
+      if (!p.actualEndTime || !TIME_RE.test(p.actualEndTime)) { showToast('Permission actual end time is required', 'error'); return; }
+      const toM = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+      let dur = toM(p.endTime) - toM(p.startTime);
+      if (dur < 0) dur += 1440;
+      if (dur <= 0 || dur > 120) { showToast('Permission duration must be 1-120 minutes', 'error'); return; }
+      if (toM(p.actualEndTime) < toM(p.startTime)) { showToast('Permission actual end must be on or after permission start', 'error'); return; }
+    }
     setRegSaving(true);
     try {
       await api.post('/api/attendance/regularize', regForm);
       showToast('Regularization request submitted');
       setShowRegModal(false);
-      setRegForm({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], reason: '' });
+      setRegForm(EMPTY_REG_FORM);
       setRegDateError('');
       loadRegRequests(regScope);
     } catch (e) { showToast(e.message, 'error'); }
@@ -1070,6 +1146,11 @@ export default function AttendancePage() {
     const totalMins = totalRuleMins(rule, ruleIdx);
     const over      = overMinsForRule(rule, ruleIdx);
     const history   = getRuleBreaks(rule, ruleIdx).filter(b => b.end);
+    // A different break already running blocks STARTING this one (ending it
+    // is always allowed). Prevents the breaks/workProgress desync that
+    // wedges End Break with "Multiple active work rows".
+    const otherRunningBreak = !active ? (todayRecord?.breaks || []).find(b => b.start && !b.end) : null;
+    const otherRunningBreakLabel = otherRunningBreak ? (otherRunningBreak.name || breakLabel(otherRunningBreak.type)) : '';
 
     return (
       <div style={{ background: bgColor, border: `1px solid ${color}30`, borderRadius: 12, padding: 16 }}>
@@ -1101,7 +1182,8 @@ export default function AttendancePage() {
         {!clockedOut && !todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime && !todayRecord?.permission?.endedAt) && (
           <button
             className="btn btn-sm w-100"
-            disabled={breakLoading}
+            disabled={breakLoading || (!active && !!otherRunningBreak)}
+            title={!active && otherRunningBreak ? `End your ${otherRunningBreakLabel} break first` : (active ? `End ${label}` : `Start ${label}`)}
             onClick={() => handleBreakClock(rule, ruleIdx)}
             style={{ fontSize: 13, fontWeight: 600, background: active ? '#ef444415' : color + '15', color: active ? '#ef4444' : color, border: `1px solid ${active ? '#ef4444' : color}30` }}>
             {breakLoading
@@ -1695,7 +1777,7 @@ export default function AttendancePage() {
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {(row.lateFlag || isPendingPerm) && !isApprovedPerm && !row.halfDayThresholdExceeded && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
                                 {row.halfDayThresholdExceeded && !isApprovedPerm && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}><i className="bi bi-sun me-1" />Half Day</span>}
-                                {row.shortHours && !isApprovedPerm && <span className="badge" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {row.shortHours && !isApprovedPerm && <span className="badge" title={shortHoursTitle(row)} style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
                                 {isApprovedPerm && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission · Approved{row.permission?.startTime ? ` (${row.permission.startTime}-${row.permission.endedAt || row.permission.endTime})` : ''}</span>}
                                 {isPendingPerm && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Permission · Pending{row.pendingPermission?.startTime ? ` (${row.pendingPermission.startTime}-${row.pendingPermission.endTime})` : ''}</span>}
                                 {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>On Leave · Half-day</span>}
@@ -2121,7 +2203,7 @@ export default function AttendancePage() {
           )}
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             {user?.role !== 'super_admin' && (
-              <button className="btn btn-primary btn-sm" onClick={() => { setRegForm(p => ({ ...p, date: today })); setShowRegModal(true); }}>
+              <button className="btn btn-primary btn-sm" onClick={async () => { setRegForm({ ...EMPTY_REG_FORM, date: today }); setShowRegModal(true); await fetchRegPermission(today); }}>
                 <i className="bi bi-plus-lg me-1" />New Request
               </button>
             )}
@@ -2143,7 +2225,7 @@ export default function AttendancePage() {
                         {canReview && <th>Employee</th>}
                         <th>Date</th><th>Req. In</th><th>Req. Out</th>
                         {regBreakTypes.map(type => <th key={type}>Req. {type}</th>)}
-                        <th>Reason</th><th>Status</th>
+                        <th>Permission</th><th>Reason</th><th>Status</th>
                         {canReview && <th>Actions</th>}
                       </tr>
                     </thead>
@@ -2173,6 +2255,18 @@ export default function AttendancePage() {
                               })()}
                             </td>
                           ))}
+                          <td style={{ fontSize: 12 }}>{(() => {
+                            const p = r.requestedPermission;
+                            if (!p?.startTime || !p?.endTime) return <span style={{ color: '#cbd5e1' }}>—</span>;
+                            const late = permissionOverrunMins(p.startTime, p.endTime, p.actualEndTime);
+                            return (
+                              <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 3 }}>
+                                <span style={{ fontWeight: 600 }}><i className="bi bi-box-arrow-in-right" style={{ marginRight: 4, color: '#3b82f6' }} />{formatTime(p.startTime)} – {formatTime(p.endTime)}</span>
+                                <span style={{ color: '#64748b' }}>Actual end: {formatTime(p.actualEndTime) || '—'}</span>
+                                {late > 0 && <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700, width: 'fit-content' }}>+{late} min over</span>}
+                              </span>
+                            );
+                          })()}</td>
                           <td style={{ fontSize: 12, color: '#64748b', maxWidth: 160 }}>{r.reason}</td>
                           <td>
                             <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -2216,6 +2310,17 @@ export default function AttendancePage() {
                         <div className="col-6" key={type}><div style={{ fontSize: 10, color: '#94a3b8', marginBottom: 2 }}>Req. {type}</div><div style={{ fontSize: 13, fontWeight: 600 }}>{(() => { const tb = (r.requestedBreaks || []).filter(b => b.type === type); if (tb.length === 0) return '—'; return tb.map(b => b.notYet ? <span key={b.idx ?? 0} style={{ color: breakStyle(type).color, fontStyle: 'italic' }}>Not yet</span> : `${formatTime(b.start) || '—'} → ${formatTime(b.end) || '—'}`).reduce((acc, el, i) => i === 0 ? [el] : [...acc, ', ', el], []); })()}</div></div>
                       ))}
                     </div>
+                    {r.requestedPermission?.startTime && r.requestedPermission?.endTime && (() => {
+                      const p = r.requestedPermission;
+                      const late = permissionOverrunMins(p.startTime, p.endTime, p.actualEndTime);
+                      return (
+                        <div style={{ fontSize: 12, background: '#eff6ff', border: '1px solid #dbeafe', borderRadius: 8, padding: '6px 8px', marginBottom: 8 }}>
+                          <div style={{ fontWeight: 600 }}><i className="bi bi-box-arrow-in-right" style={{ marginRight: 4, color: '#3b82f6' }} />Permission {formatTime(p.startTime)} – {formatTime(p.endTime)}</div>
+                          <div style={{ color: '#64748b' }}>Actual end: {formatTime(p.actualEndTime) || '—'}</div>
+                          {late > 0 && <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700, marginTop: 3 }}>+{late} min over</span>}
+                        </div>
+                      );
+                    })()}
                     <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
                     {canReview && regScope === 'approvals' && r.status === 'pending' && (
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -2259,7 +2364,7 @@ export default function AttendancePage() {
                         <i className="bi bi-calendar" style={{ color: '#3b82f6', fontSize: 14 }} />
                         <span style={{ fontSize: 13, fontWeight: 700 }}>Date</span>
                       </div>
-                      <DateInput className="form-control" value={regForm.date} max={todayStr} onChange={e => setRegForm(p => ({ ...p, date: e.target.value }))} allowTyping showHint onErrorChange={setRegDateError} />
+                      <DateInput className="form-control" value={regForm.date} max={todayStr} onChange={e => handleRegDateChange(e.target.value)} allowTyping showHint onErrorChange={setRegDateError} />
                     </div>
                     <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
@@ -2283,6 +2388,70 @@ export default function AttendancePage() {
                           )}
                         </div>
                       </div>
+                    </div>
+                    <div style={{ background: '#f8fafc', borderRadius: 12, padding: 16, border: '1px solid #e2e8f0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                        <i className="bi bi-box-arrow-in-right" style={{ color: '#3b82f6', fontSize: 14 }} />
+                        <span style={{ fontSize: 13, fontWeight: 700 }}>Permission</span>
+                        <label style={{ marginLeft: 'auto', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b' }}>
+                          <input type="checkbox" checked={!!regForm.requestedPermission}
+                            onChange={e => setRegForm(p => ({
+                              ...p,
+                              requestedPermission: e.target.checked
+                                ? { startTime: '', endTime: '', actualEndTime: '', source: 'manual' }
+                                : null,
+                            }))} />
+                          Include permission
+                        </label>
+                      </div>
+                      {regForm.requestedPermission && (() => {
+                        const perm = regForm.requestedPermission;
+                        const toM = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return Number.isNaN(h) || Number.isNaN(m) ? null : h * 60 + m; };
+                        const s = toM(perm.startTime);
+                        let dur = null;
+                        if (s !== null && toM(perm.endTime) !== null) {
+                          dur = toM(perm.endTime) - s;
+                          if (dur < 0) dur += 1440;
+                        }
+                        const overrun = permissionOverrunMins(perm.startTime, perm.endTime, perm.actualEndTime);
+                        const upd = (field, value) => setRegForm(p => ({
+                          ...p,
+                          requestedPermission: { ...p.requestedPermission, [field]: value },
+                        }));
+                        return (
+                          <>
+                            <div style={{ fontSize: 11, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5, color: perm.source === 'fetched' ? '#059669' : '#b45309' }}>
+                              <i className={`bi ${perm.source === 'fetched' ? 'bi-check-circle-fill' : 'bi-pencil-square'}`} />
+                              {perm.source === 'fetched'
+                                ? 'Approved permission found for this date — start/end prefilled.'
+                                : 'No approved permission for this date — enter the window manually.'}
+                            </div>
+                            <div className="row g-2">
+                              <div className="col-4">
+                                <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission Start</label>
+                                <input type="time" className="form-control" style={{ fontSize: 13 }} value={perm.startTime || ''} onChange={ev => upd('startTime', ev.target.value)} />
+                              </div>
+                              <div className="col-4">
+                                <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission End</label>
+                                <input type="time" className="form-control" style={{ fontSize: 13 }} value={perm.endTime || ''} onChange={ev => upd('endTime', ev.target.value)} />
+                              </div>
+                              <div className="col-4">
+                                <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission Actual End <span style={{ color: '#ef4444' }}>*</span></label>
+                                <input type="time" className="form-control" style={{ fontSize: 13 }} value={perm.actualEndTime || ''} onChange={ev => upd('actualEndTime', ev.target.value)} />
+                              </div>
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 11, color: '#64748b', display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+                              <span>Duration: {dur !== null ? `${dur} min` : '—'} / 120 min allowance</span>
+                            </div>
+                            {overrun > 0 && (
+                              <div style={{ marginTop: 6, fontSize: 11, color: '#b45309', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <i className="bi bi-exclamation-triangle-fill" />
+                                Ended {overrun} min after the scheduled permission end — shown to the reviewer.
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                     {breakInstances.map(bi => {
                       const entryIndex = regForm.requestedBreaks.findIndex(rb => rb.ruleIdx === bi.ruleIdx && rb.idx === bi.index);
@@ -2853,7 +3022,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                         <span className="badge bg-warning text-dark" style={{ fontSize: 11 }}>Pending Review</span>
                       )}
                       {isPendingPerm && <span className="badge ms-1" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
-                      {row.shortHours && !isApprovedPerm && <span className="badge ms-1" style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
+                      {row.shortHours && !isApprovedPerm && <span className="badge ms-1" title={shortHoursTitle(row)} style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
                       {isApprovedPerm && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                       {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (

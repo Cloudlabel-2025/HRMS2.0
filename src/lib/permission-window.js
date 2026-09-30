@@ -23,6 +23,25 @@ function toMinsLocal(timeStr) {
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 /**
+ * Minutes an ACTUAL permission end overran its SCHEDULED end.
+ *
+ * Wrap-aware: both values are measured relative to the permission start, so
+ * an overnight window (23:00-01:00) ending at 23:30 reports 0 overrun rather
+ * than "+1350m". Returns 0 when anything is missing or malformed.
+ *
+ * Shared by the regularization approval route and the attendance page badges
+ * so both always agree.
+ */
+export function permissionOverrunMins(startTime, endTime, actualEndTime) {
+  const s = toMinsLocal(startTime);
+  const e = toMinsLocal(endTime);
+  const a = toMinsLocal(actualEndTime);
+  if (s === null || e === null || a === null) return 0;
+  const rel = (t) => (((t - s) % 1440) + 1440) % 1440;
+  return Math.max(0, rel(a) - rel(e));
+}
+
+/**
  * Anchor a HH:MM time on a shift timeline to an absolute calendar instant
  * ("YYYY-MM-DDTHH:MM", lexicographically comparable). For overnight shifts
  * (end < start, e.g. 22:00-06:00) post-midnight times belong to the next

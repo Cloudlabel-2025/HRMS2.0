@@ -9,7 +9,7 @@ import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payrol
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime, toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShift, getShiftEndMinutes } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { computePermissionUsage, permissionCoversShiftStart } from '@/lib/permission-allowance';
@@ -465,7 +465,12 @@ export async function POST(req) {
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
       const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
-      const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, cfg);
+      // Short hours is clock-out-before-shift-end OR break excess — never a
+      // strict 8-hour comparison. Shift end is wrap-aware so overnight shifts
+      // measure correctly.
+      const shiftEndMins = shiftDoc ? getShiftEndMinutes(shiftDoc, cfg) : null;
+      const { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours: rawShortHours } =
+        calculateHoursWorked(finalMinutes, deduction, cfg, { clockOut: finalClockOut, shiftEndMins, breakExcessMins: deduction });
       // Permission day: keep real hours worked for display (highlight Xh Ym / 8h)
       // but never flag shortHours / early clock-out — the excused time has no
       // business impact. Employee may still voluntarily work the full 8 hours.
@@ -513,6 +518,8 @@ export async function POST(req) {
           hoursWorked,
           payableHours,
           shortHours,
+          shortfallMins: hasPermission ? 0 : shortfallMins,
+          breakExcessMins: hasPermission ? 0 : breakExcessMins,
           baseHoursWorked: baseHours,
           autoLoggedOut: isAutoLogout,
           regularizationOutOpen: false,
