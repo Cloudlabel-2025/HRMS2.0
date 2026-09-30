@@ -16,6 +16,7 @@ const STATUS_STYLE = {
   absent:  { bg: '#fee2e2', color: '#dc2626', label: 'Absent',  icon: 'bi-x-circle' },
   late:    { bg: '#fef3c7', color: '#d97706', label: 'Late',    icon: 'bi-clock' },
   leave:   { bg: '#dbeafe', color: '#2563eb', label: 'On Leave',icon: 'bi-calendar-check' },
+  holiday: { bg: '#f3e8ff', color: '#7c3aed', label: 'Holiday', icon: 'bi-balloon' },
   logged_out: { bg: '#f1f5f9', color: '#64748b', label: 'Logged Out', icon: 'bi-box-arrow-right' },
 };
 
@@ -82,13 +83,15 @@ export default function MonitoringPage() {
         employees = await api.get(d ? `/api/employees?department=${encodeURIComponent(d)}` : '/api/employees');
       }
 
-      const [attendanceToday, attendanceYest, leaves] = await Promise.all([
+      const [attendanceToday, attendanceYest, leaves, holidays] = await Promise.all([
         api.get(`/api/attendance?date=${calToday}&scope=team`),
         api.get(`/api/attendance?date=${calYesterday}&scope=team`),
         api.get('/api/leave?scope=team&status=approved'),
+        api.get('/api/settings?type=holidays').catch(() => []),
       ]);
 
       const leaveArr = Array.isArray(leaves) ? leaves : [];
+      const holidaySet = new Set((Array.isArray(holidays) ? holidays : []).map(h => h.date).filter(Boolean));
 
       const attMap = {};
       for (const r of [...(Array.isArray(attendanceYest) ? attendanceYest : [])]) {
@@ -165,6 +168,13 @@ export default function MonitoringPage() {
               pendingPermission = attRecord.pendingPermission || null;
             }
           }
+          // A public holiday wins over a stale non-worked row (the ?date=
+          // read path skips the holiday sync, so the stored row can lag).
+          // Real clock-ins and leave rows stay truthful.
+          if (status !== 'leave' && !attRecord.clockIn && (holidaySet.has(empToday) || attRecord.status === 'holiday')) {
+            status = 'holiday';
+            lateFlag = false;
+          }
           clockIn = attRecord.clockIn || '—';
           clockOut = attRecord.clockOut || '—';
           autoLoggedOut = attRecord.autoLoggedOut === true;
@@ -174,11 +184,16 @@ export default function MonitoringPage() {
           onBreak = !!openBreak;
           activeBreakType = openBreak?.type || '';
         } else {
-          const [shiftHour, shiftMinute] = (matchedShift?.startTime || '09:00').split(':').map(Number);
-          let elapsedSinceStart = now.getHours() * 60 + now.getMinutes() - (shiftHour * 60 + shiftMinute);
-          if (elapsedSinceStart < -720) elapsedSinceStart += 1440;
-          if (elapsedSinceStart > 720) elapsedSinceStart -= 1440;
-          if (elapsedSinceStart >= (matchedShift?.halfDayThreshold ?? 180)) status = 'absent';
+          // No record: a public holiday is never "absent" or "not arrived".
+          if (holidaySet.has(empToday)) {
+            status = 'holiday';
+          } else {
+            const [shiftHour, shiftMinute] = (matchedShift?.startTime || '09:00').split(':').map(Number);
+            let elapsedSinceStart = now.getHours() * 60 + now.getMinutes() - (shiftHour * 60 + shiftMinute);
+            if (elapsedSinceStart < -720) elapsedSinceStart += 1440;
+            if (elapsedSinceStart > 720) elapsedSinceStart -= 1440;
+            if (elapsedSinceStart >= (matchedShift?.halfDayThreshold ?? 180)) status = 'absent';
+          }
         }
 
         const hasClockOut = clockOut !== '—' && clockOut !== null;

@@ -1,5 +1,5 @@
 import { SystemConfig, Holiday } from '@/lib/models/index';
-import { getPayrollDayNumber, isPayrollCycleSaturdayOff, countSaturdaysFromCycleStart } from '@/lib/saturday-cycle';
+import { isSaturdayOff } from '@/lib/saturday-cycle';
 
 export async function getGlobalConfig() {
   const doc = await SystemConfig.findOne({ key: 'global_config' }).lean();
@@ -37,13 +37,17 @@ export function isWorkingDay(dateStr, config, holidays) {
   // changeable at any time, default 'alternate').
   // 'all': every Saturday working unless explicit Holiday.
   // 'none': no Saturday working.
-  // 'alternate' (default): 1st & 3rd Saturdays counted from the PAYROLL
-  // CYCLE START are holidays — same rule the calendar highlights. Automatic,
-  // no Holiday doc or generator run required (explicit Holiday docs still win).
+  // 'alternate' (default): Saturdays alternate continuously (leave, working,
+  // leave, …) and the alternation never resets at a payroll-cycle boundary,
+  // so a 5-Saturday cycle is L W L W L or W L W L W — never L W L W W.
+  // The exact phase is chosen by Settings → Alternate Saturday Pattern
+  // ('pattern1' / 'pattern2' mirrors, 'legacy' = old per-cycle 1st & 3rd).
+  // Automatic, no Holiday doc or generator run required (explicit Holiday
+  // docs still win).
   if (dayOfWeek === 6) {
     const mode = String(config?.saturdayWorking ?? 'alternate').toLowerCase();
     if (mode === 'none') return false;
-    if (mode === 'alternate' && isPayrollCycleSaturdayOff(dateStr, config)) return false;
+    if (mode === 'alternate' && isSaturdayOff(dateStr, config)) return false;
   }
 
   return true;
@@ -159,6 +163,7 @@ export function getCycleCalendarStats(fromDate, toDate, config = {}) {
 
   const from = new Date(fromDate + 'T00:00:00');
   const to = new Date(toDate + 'T00:00:00');
+  const saturdayMode = String(config?.saturdayWorking ?? 'alternate').toLowerCase();
 
   for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
     totalDays++;
@@ -166,11 +171,13 @@ export function getCycleCalendarStats(fromDate, toDate, config = {}) {
     if (dayOfWeek === 0) {
       sundays++;
     } else if (dayOfWeek === 6) {
-      // Cycle-aware: 1st & 3rd Saturdays of the payroll cycle (not calendar
-      // month) — same rule as isWorkingDay/calendar/generate-saturdays.
+      // Continuous alternation via the shared helper — same rule as
+      // isWorkingDay/calendar/generate-saturdays. Only meaningful in
+      // 'alternate' mode ('none' already treats every Saturday as off,
+      // 'all' has no alternate Saturdays).
+      if (saturdayMode !== 'alternate') continue;
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const n = countSaturdaysFromCycleStart(dateStr, config?.payrollStartDay ?? 26);
-      if (n === 1 || n === 3) alternateSaturdays++;
+      if (isSaturdayOff(dateStr, config)) alternateSaturdays++;
     }
   }
 

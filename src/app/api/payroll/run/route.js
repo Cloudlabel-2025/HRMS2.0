@@ -58,7 +58,7 @@ export async function POST(req) {
     const effectiveWorkingDays = workingDateSet.size;
     const cycleLabel = getCycleLabel(year, monthIndex, startDay, endDay);
 
-    const calendarStats = getCycleCalendarStats(fromDate, toDate);
+    const calendarStats = getCycleCalendarStats(fromDate, toDate, config);
 
     // Load default payroll rule
     const defaultRule = await PayrollRule.findOne({ isDefault: true }).lean();

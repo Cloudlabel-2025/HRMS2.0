@@ -425,7 +425,16 @@ const HolidaySchema = new mongoose.Schema({
   name: { type: String, required: true },
   date: { type: String, required: true },
   type: { type: String, enum: ['National','Optional','Company'], default: 'National' },
+  // Provenance for auto-generated rows. The Saturday generator tags its rows
+  // so the opt-in cleanup can remove exactly those and never touch manual
+  // holidays. Pre-existing generator rows have no source (matched by name).
+  source: { type: String, enum: ['manual','saturday_alternate'], default: 'manual' },
 }, { timestamps: true });
+// Non-unique by design: duplicates are rejected in the application layer
+// (POST/PUT 409), because a unique index would fail closed at startup if
+// legacy duplicates already exist. Promote to unique only after the audit
+// script confirms zero duplicates.
+HolidaySchema.index({ date: 1 });
 
 const SmeExpertiseSchema = new mongoose.Schema({
   name: { type: String, required: true, unique: true, trim: true },
@@ -469,6 +478,10 @@ export { default as Department } from './Department';
 export { default as Shift } from './Shift';
 if (process.env.NODE_ENV === 'development' && mongoose.models.ShiftChange) delete mongoose.models.ShiftChange;
 export const ShiftChange = mongoose.models.ShiftChange || mongoose.model('ShiftChange', ShiftChangeSchema);
+if (mongoose.models.Holiday && !mongoose.models.Holiday.schema.path('source')) {
+  delete mongoose.models.Holiday;
+  if (mongoose.connection.models.Holiday) delete mongoose.connection.models.Holiday;
+}
 export const Holiday     = mongoose.models.Holiday     || mongoose.model('Holiday', HolidaySchema);
 export { default as SystemConfig } from './SystemConfig';
 if (mongoose.models.AttendanceRegularization) delete mongoose.models.AttendanceRegularization;

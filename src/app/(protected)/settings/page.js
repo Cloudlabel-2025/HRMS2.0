@@ -6,6 +6,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import ConfirmModal from '@/components/ConfirmModal';
+import { isSaturdayOff, getSaturdayPattern } from '@/lib/saturday-cycle';
 import ShiftMaster from '@/components/dev-admin/ShiftMaster';
 import ShiftFormModal, { DEFAULT_SHIFT_FORM, validateShiftForm } from '@/components/dev-admin/ShiftFormModal';
 
@@ -79,6 +80,7 @@ export default function SettingsPage() {
     timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
     language: 'English', timeFormat: '24h', payrollStartDay: getDefaultPayrollStartDate(), payrollEndDay: getDefaultPayrollEndDate(), attendanceStartDay: '1',
     saturdayWorking: 'alternate', lateThreshold: '15', permissionMonthlyAllowanceMins: '120',
+    saturdayAlternatePattern: 'pattern1',
   });
   const [archiveYears, setArchiveYears] = useState(3);
   const [archivePreview, setArchivePreview] = useState(null);
@@ -95,6 +97,15 @@ export default function SettingsPage() {
   const [shiftNotifsLoading, setShiftNotifsLoading] = useState(false);
   const [shiftSearch, setShiftSearch] = useState('');
   const [toast, setToast]           = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting]         = useState(false);
+  const [deleteImpact, setDeleteImpact] = useState(null);
+  const [confirmSat, setConfirmSat]     = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [cleanupPreview, setCleanupPreview] = useState(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const [notifications, setNotifications] = useState(
     Object.fromEntries(NOTIFICATION_RULES.map(([title, , def]) => [title, def]))
   );
@@ -105,11 +116,11 @@ export default function SettingsPage() {
   };
 
   const generateSaturdays = async () => {
-    if (!confirm('Generate 1st & 3rd Saturday holidays for the current year? This will not overwrite existing holidays on those dates.')) return;
     setGenerating(true);
     try {
       const res = await api.post('/api/settings/generate-saturdays', { year: new Date().getFullYear() });
       showToast(`${res.generated} Saturday holidays generated`);
+      setConfirmSat(false);
       const h = await api.get('/api/settings?type=holidays');
       setHolidays(Array.isArray(h) ? h : []);
     } catch (e) {
@@ -117,6 +128,40 @@ export default function SettingsPage() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const previewCleanup = async () => {
+    setCleanupLoading(true);
+    try {
+      const res = await api.post('/api/settings/cleanup-saturday-holidays', {});
+      setCleanupPreview(res);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setCleanupLoading(false);
+    }
+  };
+
+  const doCleanup = async () => {
+    setCleaning(true);
+    try {
+      const res = await api.post('/api/settings/cleanup-saturday-holidays', { confirm: true });
+      showToast(`Removed ${res.deleted} auto-generated Saturday holiday(s)`);
+      setConfirmCleanup(false);
+      setCleanupPreview(null);
+      const h = await api.get('/api/settings?type=holidays');
+      setHolidays(Array.isArray(h) ? h : []);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setCleaning(false);
+    }
+  };
+  const saturdayPatternLabel = () => {
+    const p = String(config.saturdayAlternatePattern || 'pattern1').toLowerCase();
+    if (p === 'pattern2') return 'Pattern 2 (opposite phase)';
+    if (p === 'legacy') return 'Legacy (1st & 3rd per cycle)';
+    return 'Pattern 1';
   };
 
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
@@ -202,6 +247,24 @@ export default function SettingsPage() {
     }
   };
 
+  const saveHoliday = async (form) => {
+    setSaving(true);
+    try {
+      // Never send a `type` key: the route discriminator is also called
+      // `type`, so the holiday kind travels as `holidayType`.
+      const { type: _ignored, ...rest } = form || {};
+      const res = form?._id
+        ? await api.put('/api/settings', { type: 'holidays', id: form._id, ...rest })
+        : await api.post('/api/settings', { type: 'holidays', ...rest });
+      showToast(res?.synced ? `Saved — ${(res.synced.updated || 0) + (res.synced.inserted || 0)} attendance row(s) updated` : 'Saved successfully');
+      setShowModal(null);
+      load();
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
   const saveShift = () => {
     const errs = validateShiftForm(modalForm);
     setShiftErrs(errs);
@@ -209,14 +272,39 @@ export default function SettingsPage() {
     saveItem('shifts', modalForm);
   };
 
-  const deleteItem = async (type, id) => {
-    if (!confirm('Are you sure you want to delete this?')) return;
+  const deleteItem = (type, id) => {
+    setDeleteTarget({ type, id });
+    setDeleteImpact(null);
+    if (type === 'holidays') {
+      api.delete('/api/settings', { type: 'holidays', id, preview: true })
+        .then(res => setDeleteImpact(res?.impact || null))
+        .catch(() => {});
+    }
+  };
+
+  const deleteTargetLabel = () => {
+    if (!deleteTarget) return '';
+    const pools = { departments, sme_expertise: expertise, roles, designations, categories, shifts, holidays };
+    return pools[deleteTarget.type]?.find(i => i._id === deleteTarget.id)?.name || '';
+  };
+
+  const doDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
     try {
-      await api.delete('/api/settings', { type, id });
-      showToast('Deleted');
+      const res = await api.delete('/api/settings', { type: deleteTarget.type, id: deleteTarget.id });
+      if (deleteTarget.type === 'holidays' && res?.synced) {
+        showToast(`Deleted — ${(res.synced.updated || 0) + (res.synced.inserted || 0)} attendance row(s) updated`);
+      } else {
+        showToast('Deleted');
+      }
+      setDeleteTarget(null);
+      setDeleteImpact(null);
       load();
     } catch (e) {
       showToast(e.message, 'error');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -248,12 +336,13 @@ export default function SettingsPage() {
   };
 
   const runArchive = async () => {
-    if (!confirm(`Archive ${archivePreview?.count} separated profiles older than ${archiveYears} years? This will change their status to "alumni" and cannot be undone without manual intervention.`)) return;
+    if (!archivePreview || archivePreview.count === 0) return;
     setArchiving(true);
     try {
       const res = await api.post('/api/core/archive', { olderThanYears: archiveYears });
       showToast(`${res.archived} profiles archived successfully`);
       setArchivePreview(null);
+      setConfirmArchive(false);
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -437,6 +526,46 @@ export default function SettingsPage() {
                     <option value="none">No Saturdays</option>
                   </select>
                 </div>
+                {String(config.saturdayWorking || 'alternate').toLowerCase() === 'alternate' && (
+                  <>
+                    <div className="col-md-6">
+                      <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Alternate Saturday Pattern</label>
+                      <select className="form-select" value={config.saturdayAlternatePattern || 'pattern1'} onChange={e => setConfig(p => ({ ...p, saturdayAlternatePattern: e.target.value }))}>
+                        <option value="pattern1">Pattern 1</option>
+                        <option value="pattern2">Pattern 2 (opposite phase)</option>
+                        <option value="legacy">Legacy — 1st &amp; 3rd per cycle (deprecated)</option>
+                      </select>
+                      {String(config.saturdayAlternatePattern || 'pattern1').toLowerCase() === 'legacy' && (
+                        <div style={{ fontSize: 11, color: '#b45309', marginTop: 4 }}>
+                          Temporary migration aid. Keeps the original per-cycle rule, which leaves two working Saturdays in a row in 5-Saturday cycles. Switch to Pattern 1 or 2 after verifying payroll.
+                        </div>
+                      )}
+                    </div>
+                    <div className="col-12">
+                      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Next 10 Saturdays preview</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {(() => {
+                          const out = [];
+                          const cur = new Date();
+                          while (out.length < 10) {
+                            if (cur.getDay() === 6) {
+                              const ds = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
+                              const off = isSaturdayOff(ds, { saturdayWorking: 'alternate', saturdayAlternatePattern: config.saturdayAlternatePattern, payrollStartDay: config.payrollStartDay });
+                              out.push(
+                                <span key={ds} className="badge" style={{ background: off ? '#fee2e2' : '#dcfce7', color: off ? '#b91c1c' : '#16a34a', fontSize: 11, fontWeight: 600 }}>
+                                  {ds.slice(8)}/{ds.slice(5, 7)} · {off ? 'Holiday' : 'Working'}
+                                </span>
+                              );
+                            }
+                            cur.setDate(cur.getDate() + 1);
+                          }
+                          return out;
+                        })()}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Alternation never resets at a payroll-cycle boundary — a 5-Saturday cycle is always L·W·L·W·L or W·L·W·L·W.</div>
+                    </div>
+                  </>
+                )}
                 <div className="col-12">
                   <button className="btn btn-primary" onClick={() => saveConfig('global_config', config)} disabled={saving}>
                     {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : <><i className="bi bi-check-lg me-2" />Save Settings</>}
@@ -459,7 +588,7 @@ export default function SettingsPage() {
                         <i className="bi bi-search me-1" />Preview
                       </button>
                       {archivePreview && archivePreview.count > 0 && (
-                        <button className="btn btn-danger btn-sm" onClick={runArchive} disabled={archiving} style={{ height: 38 }}>
+                        <button className="btn btn-danger btn-sm" onClick={() => setConfirmArchive(true)} disabled={archiving} style={{ height: 38 }}>
                           {archiving ? <><span className="spinner-border spinner-border-sm me-1" />Archiving...</> : <><i className="bi bi-archive me-1" />Archive {archivePreview.count} Profiles</>}
                         </button>
                       )}
@@ -556,14 +685,40 @@ export default function SettingsPage() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
                 <div className="section-title" style={{ margin: 0 }}>Holiday Calendar</div>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', date: '', type: 'National' }); setShowModal('holiday'); }}>
+                  <button className="btn btn-primary btn-sm" onClick={() => { setModalForm({ name: '', date: '', holidayType: 'National' }); setShowModal('holiday'); }}>
                     <i className="bi bi-plus-lg me-1" />Add Holiday
                   </button>
-                  <button className="btn btn-outline-secondary btn-sm" onClick={generateSaturdays} disabled={generating}>
-                    <i className={`bi ${generating ? 'bi-arrow-repeat' : 'bi-calendar-check'} me-1`} />{generating ? 'Generating...' : 'Generate 1st & 3rd Saturdays'}
+                  <button className="btn btn-outline-secondary btn-sm" onClick={() => setConfirmSat(true)} disabled={generating}>
+                    <i className={`bi ${generating ? 'bi-arrow-repeat' : 'bi-calendar-check'} me-1`} />{generating ? 'Generating...' : 'Generate Saturday Holidays'}
+                  </button>
+                  <button className="btn btn-outline-danger btn-sm" onClick={previewCleanup} disabled={cleanupLoading}>
+                    <i className={`bi ${cleanupLoading ? 'bi-arrow-repeat' : 'bi-eraser'} me-1`} />{cleanupLoading ? 'Scanning...' : 'Clean Up Saturday Holidays'}
                   </button>
                 </div>
               </div>
+              {cleanupPreview && (
+                <div className="alert py-2 px-3 mb-3" style={{ fontSize: 12, background: cleanupPreview.count > 0 ? '#fffbeb' : '#f0fdf4', border: `1px solid ${cleanupPreview.count > 0 ? '#fde68a' : '#bbf7d0'}`, color: cleanupPreview.count > 0 ? '#92400e' : '#166534' }}>
+                  {cleanupPreview.count > 0 ? (
+                    <>
+                      <strong>{cleanupPreview.count}</strong> auto-generated Saturday holiday(s) found
+                      {cleanupPreview.pattern ? <> (active pattern: <strong>{cleanupPreview.pattern}</strong>)</> : null}.
+                      Only generator-created rows are listed — manual holidays are never touched.
+                      <div style={{ maxHeight: 120, overflowY: 'auto', marginTop: 6, background: '#fff', border: '1px solid #f1f5f9', borderRadius: 6, padding: '4px 8px' }}>
+                        {cleanupPreview.holidays.slice(0, 30).map(h => (
+                          <div key={h._id}>{h.date} — {h.name}</div>
+                        ))}
+                        {cleanupPreview.holidays.length > 30 && <div>...and {cleanupPreview.holidays.length - 30} more</div>}
+                      </div>
+                      <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                        <button className="btn btn-danger btn-sm" onClick={() => setConfirmCleanup(true)}>Remove {cleanupPreview.count}</button>
+                        <button className="btn btn-outline-secondary btn-sm" onClick={() => setCleanupPreview(null)}>Dismiss</button>
+                      </div>
+                    </>
+                  ) : (
+                    <>No auto-generated Saturday holidays found. Nothing to clean up. <button className="btn btn-link btn-sm p-0" style={{ fontSize: 12 }} onClick={() => setCleanupPreview(null)}>Dismiss</button></>
+                  )}
+                </div>
+              )}
               {loading ? (
                 <div style={{ textAlign: 'center', padding: 20 }}><div className="spinner-border text-primary spinner-border-sm" /></div>
               ) : (
@@ -582,7 +737,7 @@ export default function SettingsPage() {
                             <td style={{ fontSize: 13, color: '#64748b' }}>{h.date ? new Date(h.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' }) : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4 }}>
-                                <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...h }); setShowModal('holiday'); }}>Edit</button>
+                                <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { const { type: _ignored, ...rest } = h || {}; setModalForm({ ...rest, holidayType: h.type || 'National' }); setShowModal('holiday'); }}>Edit</button>
                                 <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('holidays', h._id)}>Delete</button>
                               </div>
                             </td>
@@ -601,7 +756,7 @@ export default function SettingsPage() {
                             <span className="badge mt-1" style={{ background: h.type === 'National' ? '#dbeafe' : '#fef3c7', color: h.type === 'National' ? '#2563eb' : '#d97706' }}>{h.type}</span>
                           </div>
                           <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { setModalForm({ ...h }); setShowModal('holiday'); }}>Edit</button>
+                            <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => { const { type: _ignored, ...rest } = h || {}; setModalForm({ ...rest, holidayType: h.type || 'National' }); setShowModal('holiday'); }}>Edit</button>
                             <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => deleteItem('holidays', h._id)}>Delete</button>
                           </div>
                         </div>
@@ -900,7 +1055,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="col-6">
                     <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Type</label>
-                    <select className="form-select" value={modalForm.type || 'National'} onChange={e => setModalForm(p => ({ ...p, type: e.target.value }))}>
+                    <select className="form-select" value={modalForm.holidayType || modalForm.type || 'National'} onChange={e => setModalForm(p => { const { type: _ignored, ...rest } = p || {}; return { ...rest, holidayType: e.target.value }; })}>
                       {['National', 'Optional', 'Company'].map(t => <option key={t}>{t}</option>)}
                     </select>
                   </div>
@@ -908,7 +1063,7 @@ export default function SettingsPage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => setShowModal(null)}>Cancel</button>
-                <button className="btn btn-primary" onClick={() => saveItem('holidays', modalForm)} disabled={saving}>
+                <button className="btn btn-primary" onClick={() => saveHoliday(modalForm)} disabled={saving}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Saving...</> : 'Save'}
                 </button>
               </div>
@@ -928,6 +1083,71 @@ export default function SettingsPage() {
         <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
           End all active sessions for <strong>{endSessionTarget?.name}</strong>? This will clock out
           every employee currently clocked in on this shift.
+        </p>
+      </ConfirmModal>
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Delete"
+        confirmText="Delete"
+        variant="danger"
+        confirming={deleting}
+        onClose={() => { if (!deleting) { setDeleteTarget(null); setDeleteImpact(null); } }}
+        onConfirm={doDelete}
+      >
+        <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+          Are you sure you want to delete{deleteTargetLabel() ? <> <strong>{deleteTargetLabel()}</strong></> : ' this'}? This cannot be undone.
+        </p>
+        {deleteTarget?.type === 'holidays' && deleteImpact && deleteImpact.nonWorked > 0 && (
+          <p style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', margin: '10px 0 0' }}>
+            <i className="bi bi-exclamation-triangle me-1" />
+            <strong>{deleteImpact.nonWorked}</strong> employee(s) had no clock-in on this date and will be marked <strong>Absent</strong>.
+            {deleteImpact.worked > 0 && <> {deleteImpact.worked} with clock-in keep their hours.</>}
+          </p>
+        )}
+      </ConfirmModal>
+      <ConfirmModal
+        open={confirmSat}
+        title="Generate Saturday Holidays"
+        confirmText="Generate"
+        variant="primary"
+        confirming={generating}
+        onClose={() => { if (!generating) setConfirmSat(false); }}
+        onConfirm={generateSaturdays}
+      >
+        <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+          Generate alternate Saturday holidays for <strong>{new Date().getFullYear()}</strong> using{' '}
+          <strong>{saturdayPatternLabel()}</strong>? This will not overwrite existing holidays on those dates.
+          Saturdays are already treated as non-working by the calendar — this only adds named holiday entries.
+        </p>
+      </ConfirmModal>
+      <ConfirmModal
+        open={confirmCleanup}
+        title="Remove Saturday Holidays"
+        confirmText={`Remove ${cleanupPreview?.count || 0}`}
+        variant="danger"
+        confirming={cleaning}
+        onClose={() => { if (!cleaning) setConfirmCleanup(false); }}
+        onConfirm={doCleanup}
+      >
+        <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+          Permanently remove the <strong>{cleanupPreview?.count || 0}</strong> auto-generated Saturday
+          holiday(s) listed above? Manual holidays are not affected. Re-run{' '}
+          <strong>Generate Saturday Holidays</strong> afterwards to rebuild them under the active pattern.
+        </p>
+      </ConfirmModal>
+      <ConfirmModal
+        open={confirmArchive}
+        title="Archive Profiles"
+        confirmText={`Archive ${archivePreview?.count || 0} Profiles`}
+        variant="danger"
+        confirming={archiving}
+        onClose={() => { if (!archiving) setConfirmArchive(false); }}
+        onConfirm={runArchive}
+      >
+        <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+          Archive <strong>{archivePreview?.count || 0}</strong> separated profiles older than{' '}
+          <strong>{archiveYears} years</strong>? This will change their status to "alumni" and cannot be
+          undone without manual intervention.
         </p>
       </ConfirmModal>
     </AppShell>

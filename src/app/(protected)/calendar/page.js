@@ -6,8 +6,9 @@ import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
+import ConfirmModal from '@/components/ConfirmModal';
 
-import { countSaturdaysFromCycleStart } from '@/lib/saturday-cycle';
+import { isSaturdayOff } from '@/lib/saturday-cycle';
 
 const MONTHS     = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DAYS_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -21,15 +22,17 @@ const TYPE_COLORS = {
   pay_end:      { bg: '#f0fdf4', color: '#16a34a', label: 'Payroll End',   icon: 'bi-cash' },
 };
 
-function isHolidaySaturday(year, month, day, payrollStartDay) {
-  // Single source: 1st & 3rd Saturdays counted from the PAYROLL CYCLE START
-  // (same helper as payroll isWorkingDay + generate-saturdays). Default
-  // calendar behaviour preserved; follows Settings → payrollStartDay.
+function isHolidaySaturday(year, month, day, saturdayConfig) {
+  // Single source: continuous alternation (same helper as payroll
+  // isWorkingDay + generate-saturdays). Never resets at cycle boundaries,
+  // so a 5-Saturday cycle is L W L W L / W L W L W — never L W L W W.
+  // Only applies in 'alternate' mode ('none' already treats every Saturday
+  // as off; 'all' has no alternate Saturdays).
+  if (String(saturdayConfig?.saturdayWorking || 'alternate').toLowerCase() !== 'alternate') return false;
   const d = new Date(year, month, day);
   if (d.getDay() !== 6) return false;
   const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  const satCount = countSaturdaysFromCycleStart(dateStr, payrollStartDay ?? 26);
-  return satCount === 1 || satCount === 3;
+  return isSaturdayOff(dateStr, saturdayConfig);
 }
 
 export default function CalendarPage() {
@@ -44,8 +47,18 @@ export default function CalendarPage() {
   const [viewMode, setViewMode] = useState('month');
   const [payrollStartDay, setPayrollStartDay] = useState(26);
   const [payrollEndDay, setPayrollEndDay] = useState(25);
+  const [saturdayConfig, setSaturdayConfig] = useState({ saturdayWorking: 'alternate', saturdayAlternatePattern: 'pattern1' });
   const [holidayModal, setHolidayModal] = useState(null);
   const [savingHoliday, setSavingHoliday] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [undoTarget, setUndoTarget] = useState(null);
+  const [undoImpact, setUndoImpact] = useState(null);
+  const [undoLoading, setUndoLoading] = useState(false);
+
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
+  };
   const [deletingEvent, setDeletingEvent] = useState(null);
   const gridRef = useRef(null);
 
@@ -71,6 +84,11 @@ export default function CalendarPage() {
       }
       setPayrollStartDay(psDay);
       setPayrollEndDay(peDay);
+      setSaturdayConfig({
+        saturdayWorking: gc?.value?.saturdayWorking || 'alternate',
+        saturdayAlternatePattern: gc?.value?.saturdayAlternatePattern || 'pattern1',
+        payrollStartDay: gc?.value?.payrollStartDay,
+      });
     }
 
     const all = [];
@@ -152,18 +170,40 @@ export default function CalendarPage() {
     return all;
   }, [currentDate, payrollStartDay, payrollEndDay]);
 
-  const handleDeleteEvent = async (ev) => {
-    if (!window.confirm(`Remove "${ev.title}" from ${formatDate(ev.date)}?`)) return;
+  const handleDeleteEvent = async (ev, confirmed = false) => {
+    // Undo-holiday (and leave) removal goes through a ConfirmModal; the
+    // direct call only opens it. For holidays the modal first fetches the
+    // attendance impact so the admin sees the consequence.
+    if (!confirmed) {
+      setUndoTarget(ev);
+      setUndoImpact(null);
+      if (ev.type === 'holiday') {
+        setUndoLoading(true);
+        try {
+          const res = await api.delete('/api/settings', { type: 'holidays', id: ev.refId, preview: true });
+          setUndoImpact(res);
+        } catch (e) {
+          showToast(e.message, 'error');
+          setUndoTarget(null);
+        } finally {
+          setUndoLoading(false);
+        }
+      }
+      return;
+    }
     setDeletingEvent(ev.id);
     try {
       if (ev.type === 'holiday') {
-        await api.delete('/api/settings', { type: 'holidays', id: ev.refId });
+        const res = await api.delete('/api/settings', { type: 'holidays', id: ev.refId });
+        showToast(res?.synced ? `Holiday removed — ${res.synced.updated || 0} attendance row(s) updated` : 'Holiday removed');
       } else if (ev.type === 'leave') {
         await api.delete(`/api/leave/${ev.refId}`);
+        showToast('Leave removed');
       }
+      setUndoTarget(null);
       await reloadEvents();
     } catch (e) {
-      console.error(e);
+      showToast(e.message, 'error');
     } finally {
       setDeletingEvent(null);
     }
@@ -194,6 +234,9 @@ export default function CalendarPage() {
   };
 
   const today = new Date();
+  // Local YYYY-MM-DD — toISOString() is UTC and shifts the date for half
+  // the day in timezones ahead of UTC (e.g. IST).
+  const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
   const isToday = (d) => d === today.getDate() && month === today.getMonth() && year === today.getFullYear();
 
   const cells = [];
@@ -203,7 +246,7 @@ export default function CalendarPage() {
   const selectedEvents = selectedDay ? getEventsForDay(selectedDay) : [];
 
   const upcomingEvents = events
-    .filter(e => e.date >= today.toISOString().slice(0, 10) && (!filterType || e.type === filterType))
+    .filter(e => e.date >= todayStr && (!filterType || e.type === filterType))
     .sort((a, b) => a.date.localeCompare(b.date))
     .slice(0, 8);
 
@@ -339,19 +382,18 @@ export default function CalendarPage() {
                       if (!day) return <div key={i} />;
                       const dayEvents = getEventsForDay(day);
                       const isSelected = selectedDay === day;
-                      const isHolidaySat = isHolidaySaturday(year, month, day, payrollStartDay);
+                      const isHolidaySat = isHolidaySaturday(year, month, day, saturdayConfig);
                       const isWeekend = (i % 7 === 0) || (isHolidaySat);
                       const count = eventCounts[`${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`] || 0;
                       const typeColors = [...new Set(dayEvents.map(e => e.type))].map(t => TYPE_COLORS[t]?.color).filter(Boolean);
                       const bgTint = typeColors.length > 0 ? typeColors[0] + '12' : 'transparent';
                       return (
                         <div key={i} onClick={() => {
-                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-                          if (dateStr <= today.toISOString().slice(0, 10)) {
-                            router.push(`/calendar/day/${dateStr}`);
-                          } else {
-                            setSelectedDay(day === selectedDay ? null : day);
-                          }
+                          // Every date selects (past, today, future) so the
+                          // Selected Day panel — and its Holiday add/undo —
+                          // is reachable for all dates. Day-activity view
+                          // moved to an explicit button inside that panel.
+                          setSelectedDay(day === selectedDay ? null : day);
                         }}
                           style={{
                             minHeight: 80, padding: '8px 6px', cursor: 'pointer',
@@ -454,20 +496,36 @@ export default function CalendarPage() {
                       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`;
                       const d = new Date(year, month, selectedDay);
                       const dayName = d.toLocaleDateString('en-US', { weekday: 'long' });
-                      const hasHoliday = events.some(e => e.date === dateStr && e.type === 'holiday');
-                      const isSunday = d.getDay() === 0;
-                      const isAltSaturday = isHolidaySaturday(year, month, selectedDay, payrollStartDay);
-                      const hideHolidayBtn = hasHoliday || isSunday || isAltSaturday;
-                      return ['super_admin', 'admin_full'].includes(user?.role) && !hideHolidayBtn && (
-                        <button className="btn btn-sm" style={{
-                          borderRadius: 8, padding: '4px 10px', fontSize: 12,
-                          border: '1px solid #fee2e2', color: '#dc2626', background: '#fff',
-                        }}
-                          onClick={() => {
-                            setHolidayModal({ date: dateStr, name: dayName === 'Saturday' ? 'Saturday Holiday' : 'Holiday', type: 'Company' });
-                          }}>
-                          <i className="bi bi-balloon me-1" />Holiday
-                        </button>
+                      const dayHoliday = events.find(e => e.date === dateStr && e.type === 'holiday');
+                      const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
+                      return (
+                        <>
+                          <button className="btn btn-sm btn-outline-secondary" style={{ borderRadius: 8, padding: '4px 10px', fontSize: 12 }}
+                            onClick={() => router.push(`/calendar/day/${dateStr}`)}>
+                            <i className="bi bi-activity me-1" />Day Activity
+                          </button>
+                          {isAdmin && !dayHoliday && (
+                            <button className="btn btn-sm" style={{
+                              borderRadius: 8, padding: '4px 10px', fontSize: 12,
+                              border: '1px solid #fee2e2', color: '#dc2626', background: '#fff',
+                            }}
+                              onClick={() => {
+                                setHolidayModal({ date: dateStr, name: dayName === 'Saturday' ? 'Saturday Holiday' : 'Holiday', type: 'Company' });
+                              }}>
+                              <i className="bi bi-balloon me-1" />Holiday
+                            </button>
+                          )}
+                          {isAdmin && dayHoliday && (
+                            <button className="btn btn-sm" style={{
+                              borderRadius: 8, padding: '4px 10px', fontSize: 12,
+                              border: '1px solid #fde68a', color: '#92400e', background: '#fffbeb',
+                            }}
+                              disabled={deletingEvent === dayHoliday.id}
+                              onClick={() => handleDeleteEvent(dayHoliday)}>
+                              <i className="bi bi-arrow-counterclockwise me-1" />Undo Holiday
+                            </button>
+                          )}
+                        </>
                       );
                     })()}
                     <button className="btn btn-sm btn-outline-secondary" style={{ borderRadius: 8, padding: '4px 10px', fontSize: 12 }}
@@ -554,7 +612,7 @@ export default function CalendarPage() {
                 ) : (
                   upcomingEvents.map((ev, i) => {
                     const evDate = new Date(ev.date + 'T00:00:00');
-                    const isPast = ev.date < today.toISOString().slice(0, 10);
+                    const isPast = ev.date < todayStr;
                     return (
                       <div key={ev.id} style={{
                         display: 'flex', gap: 12,
@@ -639,11 +697,12 @@ export default function CalendarPage() {
                   onClick={async () => {
                     setSavingHoliday(true);
                     try {
-                      await api.post('/api/settings', { type: 'holidays', name: holidayModal.name.trim(), date: holidayModal.date });
+                      const res = await api.post('/api/settings', { type: 'holidays', name: holidayModal.name.trim(), date: holidayModal.date, holidayType: holidayModal.type, source: 'manual' });
                       setHolidayModal(null);
+                      showToast(res?.synced ? `Holiday marked — ${res.synced.updated || 0} attendance row(s) updated` : 'Holiday marked');
                       await reloadEvents();
                     } catch (e) {
-                      console.error(e);
+                      showToast(e.message, 'error');
                     } finally {
                       setSavingHoliday(false);
                     }
@@ -652,6 +711,47 @@ export default function CalendarPage() {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      <ConfirmModal
+        open={!!undoTarget}
+        title={undoTarget?.type === 'holiday' ? 'Undo Holiday' : 'Remove'}
+        confirmText={undoTarget?.type === 'holiday' ? 'Remove Holiday' : 'Remove'}
+        variant="danger"
+        confirming={deletingEvent === undoTarget?.id}
+        onClose={() => { if (!undoLoading && deletingEvent !== undoTarget?.id) { setUndoTarget(null); setUndoImpact(null); } }}
+        onConfirm={() => handleDeleteEvent(undoTarget, true)}
+      >
+        {undoTarget?.type === 'holiday' ? (
+          <div style={{ fontSize: 13, color: '#64748b' }}>
+            <p style={{ margin: '0 0 8px' }}>
+              Remove <strong>{undoTarget.title}</strong> from <strong>{undoTarget.date}</strong>?
+            </p>
+            {undoLoading ? (
+              <p style={{ margin: 0 }}><span className="spinner-border spinner-border-sm me-2" />Checking attendance impact...</p>
+            ) : undoImpact ? (
+              undoImpact.impact.nonWorked > 0 ? (
+                <p style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', margin: 0 }}>
+                  <i className="bi bi-exclamation-triangle me-1" />
+                  <strong>{undoImpact.impact.nonWorked}</strong> employee(s) had no clock-in on this date and will be marked <strong>Absent</strong>.
+                  {undoImpact.impact.worked > 0 && <> {undoImpact.impact.worked} with clock-in keep their hours.</>}
+                </p>
+              ) : (
+                <p style={{ margin: 0 }}>No attendance impact — nobody was marked on this date.</p>
+              )
+            ) : null}
+          </div>
+        ) : (
+          <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+            Remove <strong>{undoTarget?.title}</strong> from <strong>{undoTarget?.date}</strong>? This cannot be undone.
+          </p>
+        )}
+      </ConfirmModal>
+      {toast && (
+        <div className="toast-container-custom">
+          <div className={'toast-custom ' + toast.type}>
+            <i className={'bi ' + (toast.type === 'success' ? 'bi-check-circle' : 'bi-exclamation-circle') + ' me-2'} />{toast.msg}
           </div>
         </div>
       )}
