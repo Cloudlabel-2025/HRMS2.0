@@ -8,6 +8,7 @@ import { getTzTime } from '@/lib/timezone';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
+import { closePermissionEarly } from '@/lib/permission-work';
 import { getShiftEndMinutes, resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { publishAttendance } from '@/lib/sse';
@@ -129,7 +130,18 @@ export async function POST(req) {
         const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
         const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
         const shortHours = hasPermission ? false : rawShortHours;
-        const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag ? 'late' : 'present');
+
+        // Permission auto-end on server-side logout: an open permission is
+        // closed at the logout time and flagged late when past its window.
+        let permEndedLate = false;
+        if (record.permission?.requestId && !record.permission?.endedAt) {
+          try {
+            const endRes = closePermissionEarly(record, finalClockOut, 'auto_logout');
+            if (!endRes.error) permEndedLate = !!endRes.endedLate;
+          } catch (e) { console.error('Permission auto-logout end failed:', e?.message || e); }
+        }
+        const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag || permEndedLate ? 'late' : 'present');
+        const lateFlag = !!(record.lateFlag || permEndedLate);
 
         const finalized = finalizeDayWork(record.workProgress, finalClockOut, record.date);
 
@@ -142,12 +154,14 @@ export async function POST(req) {
               autoLoggedOut: true,
               breaks: updatedBreaks,
               workProgress: finalized,
+              permission: record.permission,
               baseHoursWorked: baseHours,
               breakDeduction: deduction,
               hoursWorked,
               payableHours,
               shortHours,
               status,
+              lateFlag,
             }
           },
           { new: true }

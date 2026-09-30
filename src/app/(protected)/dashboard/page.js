@@ -8,8 +8,7 @@ import AppShell from '@/components/AppShell';
 import Pagination from '@/components/Pagination';
 import DateInput from '@/components/DateInput';
 import { formatMins } from '@/lib/format';
-
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { validatePermissionWindow, MAX_PERMISSION_DURATION_MINS, TIME_RE } from '@/lib/permission-window';
 
 const WORK_STATUS_COLORS = { pending: '#64748b', work_in_progress: '#3b82f6', stopped: '#f59e0b' };
 const WORK_STATUS_LABELS = { pending: 'Pending', work_in_progress: 'Work in Progress', stopped: 'Stopped' };
@@ -33,6 +32,7 @@ export default function DashboardPage() {
 
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [permissionForm, setPermissionForm] = useState({ date: '', startTime: '', endTime: '', reason: '' });
+  const [permBounds, setPermBounds] = useState({ minDate: '', maxDate: '', shiftStart: null, shiftEnd: null });
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
   const [modalSuccess, setModalSuccess] = useState('');
@@ -54,12 +54,21 @@ export default function DashboardPage() {
     if (!reason || reason.trim().length < 10) return setModalError('Reason must be at least 10 characters');
     if (!TIME_RE.test(startTime) || !TIME_RE.test(endTime)) return setModalError('Invalid start or end time format');
 
+    const windowCheck = validatePermissionWindow({
+      date, startTime, endTime, now: new Date(),
+      minDate: permBounds.minDate || undefined,
+      maxDate: permBounds.maxDate || undefined,
+      shiftStart: permBounds.shiftStart || undefined,
+      shiftEnd: permBounds.shiftEnd || undefined,
+    });
+    if (!windowCheck.valid) return setModalError(windowCheck.error);
+
     const [sh, sm] = startTime.split(':').map(Number);
     const [eh, em] = endTime.split(':').map(Number);
     let durationMins = (eh * 60 + em) - (sh * 60 + sm);
     if (durationMins < 0) durationMins += 24 * 60;
-    if (durationMins > 120) {
-      return setModalError('Permission duration cannot exceed 2 hours');
+    if (durationMins > MAX_PERMISSION_DURATION_MINS) {
+      return setModalError(`Permission duration cannot exceed ${MAX_PERMISSION_DURATION_MINS / 60} hours`);
     }
 
     setSubmitting(true);
@@ -80,6 +89,14 @@ export default function DashboardPage() {
       setSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (!showPermissionModal) return;
+    // Bookable window for permission dates (server-computed, shift-aware).
+    api.get('/api/self-service/permission-balance')
+      .then(r => { if (r?.minDate) setPermBounds({ minDate: r.minDate, maxDate: r.maxDate || '', shiftStart: r.shiftStart || null, shiftEnd: r.shiftEnd || null }); })
+      .catch(() => {});
+  }, [showPermissionModal]);
 
   useEffect(() => {
     api.get('/api/dashboard')
@@ -634,7 +651,7 @@ export default function DashboardPage() {
 
               <div className="mb-3">
                 <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Date <span style={{color:'#ef4444'}}>*</span></label>
-                <DateInput className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={new Date().toISOString().split('T')[0]} />
+                <DateInput className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={permBounds.minDate || undefined} max={permBounds.maxDate || undefined} />
               </div>
 
               <div className="row g-3 mb-3">

@@ -30,6 +30,14 @@ const AttendanceSchema = new mongoose.Schema({
     completedAt: { type: String, default: null },
     completedDate: { type: String, default: null },
     tries: { type: Number, default: null },
+    // Permission lifecycle bookkeeping (written by permission-work.js):
+    // rows are matched to requests by permissionRequestId, and rows
+    // created when a permission ends carry resumedAfter: 'permission'.
+    permissionRequestId: { type: mongoose.Schema.Types.ObjectId, ref: 'SelfServiceRequest', default: null },
+    resumedAfter: { type: String, default: null },
+    scheduledEndTime: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    endedLate: { type: Boolean, default: false },
+    overrunMins: { type: Number, default: null },
   }],
   status:     { type: String, enum: ['present','absent','late','leave','half_day','holiday'], default: 'absent' },
   lateFlag:   { type: Boolean, default: false },
@@ -93,6 +101,13 @@ const AttendanceSchema = new mongoose.Schema({
     status: { type: String, enum: ['approved'], default: 'approved' },
     approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     approvedAt: { type: Date, default: null },
+    // Permission end bookkeeping (written by permission-work.js, read by the
+    // attendance page; a permission stays active until one of these is set):
+    endedAt: { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+    endedEarly: { type: Boolean, default: false },
+    endedLate: { type: Boolean, default: false },
+    endedLateMins: { type: Number, default: null },
+    endedBy: { type: String, enum: ['manual', 'clockout', 'auto_logout', 'approval_overdue'], default: null },
   },
 }, { timestamps: true });
 
@@ -100,7 +115,8 @@ AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 
 if (mongoose.models.Attendance) {
   const existing = mongoose.models.Attendance;
-  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded') || !existing.schema.path('absentMarkedAt')) {
+  const wpSchema = existing.schema.path('workProgress')?.schema;
+  if (!existing.schema.path('shiftStartTime') || !existing.schema.path('importedPresence') || !existing.schema.path('halfDayThresholdExceeded') || !existing.schema.path('absentMarkedAt') || !existing.schema.path('permission.endedAt') || !existing.schema.path('permission.endedBy') || !wpSchema?.path('permissionRequestId')) {
     delete mongoose.models.Attendance;
     if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
   }

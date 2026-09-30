@@ -10,6 +10,7 @@ import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
+import { closePermissionEarly } from '@/lib/permission-work';
 
 export async function POST(req) {
   try {
@@ -68,7 +69,18 @@ export async function POST(req) {
       const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, shiftCfg);
       const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
       const shortHours = hasPermission ? false : rawShortHours;
-      const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag ? 'late' : 'present');
+
+      // Permission auto-end on forced session close: an open permission is
+      // closed at the close time and flagged late when past its window.
+      let permEndedLate = false;
+      if (record.permission?.requestId && !record.permission?.endedAt) {
+        try {
+          const endRes = closePermissionEarly(record, clockOutTime, 'auto_logout');
+          if (!endRes.error) permEndedLate = !!endRes.endedLate;
+        } catch (e) { console.error('Permission end-shift end failed:', e?.message || e); }
+      }
+      const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag || permEndedLate ? 'late' : 'present');
+      const lateFlag = !!(record.lateFlag || permEndedLate);
 
       const finalized = finalizeDayWork(record.workProgress, clockOutTime, record.date);
 
@@ -80,6 +92,7 @@ export async function POST(req) {
             autoLoggedOut: true,
             regularizationOutOpen: false,
             status,
+            lateFlag,
             hoursWorked,
             payableHours,
             shortHours,
@@ -87,6 +100,7 @@ export async function POST(req) {
             breakDeduction: deduction,
             breaks: updatedBreaks,
             workProgress: finalized,
+            permission: record.permission,
           },
         },
         { new: true }

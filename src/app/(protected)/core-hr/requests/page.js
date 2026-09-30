@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import Pagination from '@/components/Pagination';
 import DateInput from '@/components/DateInput';
+import { MAX_PERMISSION_DURATION_MINS } from '@/lib/permission-window';
 
 const TYPE_LABELS = {
   profile_update:            'Profile Update',
@@ -138,7 +139,7 @@ function PayloadView({ requestType, payload, formatTime }) {
           const range = cleanCycleRange(payload);
           return (
             <div className="alert alert-warning py-2 px-3 mt-3 mb-0" style={{ fontSize: 13, borderLeft: '4px solid #f59e0b', color: '#854d0e', backgroundColor: '#fef9c3', borderColor: '#fef08a' }}>
-              <strong>⚠️ Warning:</strong> This is the employee&apos;s <strong>{ordinal(payload.permissionCountInCycle)}</strong> permission request{range ? <> in this payroll cycle ({range.fromDate} to {range.toDate})</> : <> in this payroll cycle</>}. Monthly allowance is 120 mins with no carry-forward; approval checks remaining balance.
+              <strong>⚠️ Warning:</strong> This is the employee&apos;s <strong>{ordinal(payload.permissionCountInCycle)}</strong> permission request{range ? <> in this payroll cycle ({range.fromDate} to {range.toDate})</> : <> in this payroll cycle</>}. Monthly allowance is {MAX_PERMISSION_DURATION_MINS} mins with no carry-forward; approval checks remaining balance.
             </div>
           );
         })()}

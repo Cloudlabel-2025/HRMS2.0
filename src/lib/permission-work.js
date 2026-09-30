@@ -102,6 +102,7 @@ export function reconcilePermissionWorkProgress(record, nowTimeStr) {
           feedback: '',
           duration: null,
           permissionRequestId: perm.requestId,
+          scheduledEndTime: perm.endTime,
         });
         modified = true;
       } else if (wp[permIdx]?.endTime) {
@@ -112,32 +113,62 @@ export function reconcilePermissionWorkProgress(record, nowTimeStr) {
       }
     }
   } else if (nowMins >= effectiveEndMins) {
-    if (permIdx >= 0 && !wp[permIdx].endTime) {
-      wp[permIdx].endTime = endTimeForPerm;
-      wp[permIdx].status = 'completed';
-      wp[permIdx].duration = computeWorkRowDuration(wp[permIdx]);
+    // The window has passed but nobody ended the permission: it stays
+    // open (still blocks tasks/breaks/clock-out) until explicitly ended.
+    // Never auto-close — ending is always an explicit act. Flag the
+    // overrun so the UI shows "time exceeded" and the day is marked late.
+    // Any overlapping open task is closed first (clamped to its own start
+    // so no negative/overnight duration is ever fabricated) to preserve
+    // the single-active-row invariant enforced by PUT /api/attendance.
+    const overrun = Math.max(0, nowMins - endMinsRaw);
+    if (permIdx === -1) {
+      const openTaskIdx = wp.findIndex(r => r.type !== 'permission' && r.startTime && !r.endTime);
+      if (openTaskIdx >= 0) {
+        const taskStart = wp[openTaskIdx].startTime;
+        wp[openTaskIdx].endTime = taskStart && taskStart > perm.startTime ? taskStart : perm.startTime;
+        wp[openTaskIdx].status = 'completed';
+        wp[openTaskIdx].duration = computeWorkRowDuration(wp[openTaskIdx]);
+      }
+      wp.push({
+        type: 'permission',
+        taskDetails: `Permission (${perm.startTime}-${perm.endTime})`,
+        startTime: perm.startTime,
+        endTime: null,
+        status: 'work_in_progress',
+        remarks: '',
+        feedback: '',
+        duration: null,
+        permissionRequestId: perm.requestId,
+        scheduledEndTime: perm.endTime,
+        endedLate: true,
+        overrunMins: overrun,
+      });
       modified = true;
-      activeIdx = wp.findIndex(r => r.startTime && !r.endTime);
-      if (activeIdx === -1) {
-        wp.push({
-          type: 'task',
-          taskDetails: '',
-          startTime: endTimeForPerm,
-          endTime: null,
-          status: 'work_in_progress',
-          remarks: '',
-          feedback: '',
-          duration: null,
-          resumedAfter: 'permission',
-        });
+    } else if (!wp[permIdx].endTime) {
+      if (wp[permIdx].endedLate !== true || Number(wp[permIdx].overrunMins || 0) !== overrun) {
+        wp[permIdx].endedLate = true;
+        wp[permIdx].overrunMins = overrun;
         modified = true;
+      }
+      // Heal legacy two-active states (open task alongside the open
+      // permission row): close the stray task with the same clamp so the
+      // single-active-row invariant holds and PUT saves stop 400ing.
+      for (let i = 0; i < wp.length; i++) {
+        const r = wp[i];
+        if (i !== permIdx && r.type !== 'permission' && r.startTime && !r.endTime) {
+          const taskStart = r.startTime;
+          r.endTime = taskStart && taskStart > perm.startTime ? taskStart : perm.startTime;
+          r.status = 'completed';
+          r.duration = computeWorkRowDuration(r);
+          modified = true;
+        }
       }
     }
   }
   return modified;
 }
 
-export function closePermissionEarly(record, endTimeStr) {
+export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
   const perm = record?.permission;
   if (!perm?.requestId) return { error: 'No approved permission on this date' };
   if (!record.clockIn) return { error: 'Clock in first' };
@@ -147,8 +178,13 @@ export function closePermissionEarly(record, endTimeStr) {
   const nowMins = toMins(endTimeStr);
   if (nowMins === null) return { error: 'Invalid end time' };
   if (startMins !== null && nowMins < startMins) return { error: 'Cannot end before permission start' };
-  if (endMins !== null && nowMins > endMins) return { error: 'End time is after scheduled permission end' };
+  // Ending after the scheduled end is allowed — it is recorded as a late
+  // end (time exceeded) instead of rejected. The old 400 here made
+  // over-run permissions impossible to close, so they just disappeared.
   if (perm.endedAt) return { error: 'Permission already ended', already: true };
+
+  const late = endMins !== null && nowMins > endMins;
+  const overrunMins = late ? nowMins - endMins : 0;
 
   if (!Array.isArray(record.workProgress)) record.workProgress = [];
   const wp = record.workProgress;
@@ -175,7 +211,9 @@ export function closePermissionEarly(record, endTimeStr) {
     }
     wp.push({
       type: 'permission',
-      taskDetails: `Permission (${perm.startTime}-${perm.endTime})`,
+      taskDetails: late
+        ? `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`
+        : `Permission (${perm.startTime}-${perm.endTime})`,
       startTime: perm.startTime,
       endTime: endTimeStr,
       status: 'completed',
@@ -183,11 +221,19 @@ export function closePermissionEarly(record, endTimeStr) {
       feedback: '',
       duration: computeWorkRowDuration({ startTime: perm.startTime, endTime: endTimeStr }),
       permissionRequestId: perm.requestId,
+      scheduledEndTime: perm.endTime,
+      endedLate: late,
+      overrunMins: late ? overrunMins : null,
     });
   } else {
     wp[permIdx].endTime = endTimeStr;
     wp[permIdx].status = 'completed';
     wp[permIdx].duration = computeWorkRowDuration(wp[permIdx]);
+    wp[permIdx].endedLate = late;
+    wp[permIdx].overrunMins = late ? overrunMins : null;
+    if (late) {
+      wp[permIdx].taskDetails = `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`;
+    }
   }
   const activeIdx = wp.findIndex(r => r.startTime && !r.endTime);
   if (activeIdx === -1) {
@@ -205,5 +251,8 @@ export function closePermissionEarly(record, endTimeStr) {
   }
   perm.endedAt = endTimeStr;
   perm.endedEarly = true;
-  return { ok: true };
+  perm.endedLate = late;
+  perm.endedLateMins = late ? overrunMins : 0;
+  perm.endedBy = endedBy;
+  return { ok: true, endedLate: late, overrunMins };
 }

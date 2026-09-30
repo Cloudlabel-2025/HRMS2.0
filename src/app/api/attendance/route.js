@@ -5,12 +5,13 @@ import { Notification, Holiday } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payroll-cycle';
-import { getAttendanceDate } from '@/lib/attendance-date';
+import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getShiftConfig, computeWorkRowDuration } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
+import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
 import { isWorkedDay } from '@/lib/attendance-stats';
 import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
 import { matchBreakRule } from '@/lib/attendance-breaks';
@@ -22,18 +23,6 @@ import { publishAttendance } from '@/lib/sse';
 // Throttle for the read-path calendar sync (Step: self-healing register).
 // Keyed by range + roster size so rapid refreshes don't re-issue bulkWrites.
 const _attendanceSyncThrottle = new Map();
-
-async function getShiftAwareToday(targetUserId) {
-  const now = await getTzTime();
-  try {
-    const targetUser = await User.findById(targetUserId).select('shift shiftId').lean();
-    if (!targetUser) return null;
-    const shiftDoc = await resolveShift(targetUser);
-    return getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
-  } catch {
-    return null;
-  }
-}
 
 function canViewDailyProgress(user) {
   return ['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role);
@@ -163,6 +152,36 @@ export async function GET(req) {
       .populate('userId', 'name avatar department role shift shiftId')
       .sort({ date: -1 })
       .lean();
+
+    // Permission lifecycle (read-path self-heal): materialise the
+    // type:'permission' workProgress row for TODAY's open records so the
+    // sheet shows the permission and the End Permission button can render.
+    // Historical days are never touched. Persists via bulkWrite with the
+    // raw subdocs so no schema-declared field is ever stripped.
+    try {
+      const nowStr = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+      const permReconOps = [];
+      for (const rec of raw) {
+        if (!rec || rec.date !== _calToday || !rec.clockIn || rec.clockOut) continue;
+        if (employerIdSet.has(rec.userId?._id?.toString())) continue;
+        if (!rec.permission?.requestId) continue;
+        try {
+          if (reconcilePermissionWorkProgress(rec, nowStr)) {
+            permReconOps.push({
+              updateOne: {
+                filter: { _id: rec._id },
+                update: { $set: { workProgress: rec.workProgress, permission: rec.permission } },
+              },
+            });
+          }
+        } catch (e) { console.error('Permission read-reconcile failed:', e?.message || e); }
+      }
+      if (permReconOps.length > 0) {
+        await Attendance.bulkWrite(permReconOps).catch(err => {
+          console.error('Failed to persist permission work-progress reconcile:', err);
+        });
+      }
+    } catch (e) { console.error('Permission read-reconcile pass failed:', e?.message || e); }
 
     // Holiday name join (read-time, never stored): renaming a holiday in
     // Settings updates every historical row immediately.
@@ -360,12 +379,21 @@ export async function GET(req) {
         rec.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
       }
       // Permission day: highlight real hours but never mark shortHours.
-      // Per product decision: ANY approved permission forces Present (even mid-day).
+      // An approved, on-time permission forces Present (even mid-day).
+      // An OVER-RUN permission (ended late) keeps the resolver's verdict
+      // so the day is marked Late instead of being masked as Present.
       if (rec.permission?.requestId || rec.permission?.startTime) {
-        rec.status = 'present';
-        rec.lateFlag = false;
-        rec.shortHours = false;
-        rec._permissionStatus = 'approved';
+        if (rec.permission?.endedLate) {
+          rec.status = rec.status === 'present' ? 'late' : rec.status;
+          rec.lateFlag = true;
+          rec.shortHours = false;
+          rec._permissionStatus = 'approved_late';
+        } else {
+          rec.status = 'present';
+          rec.lateFlag = false;
+          rec.shortHours = false;
+          rec._permissionStatus = 'approved';
+        }
       }
     }
 

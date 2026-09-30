@@ -1,23 +1,10 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
-import User from '@/lib/models/User';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
-import { getAttendanceDate } from '@/lib/attendance-date';
+import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { closePermissionEarly, reconcilePermissionWorkProgress } from '@/lib/permission-work';
-import { getGlobalConfig } from '@/lib/payroll-cycle';
-import { resolveShift } from '@/lib/shift-utils';
-
-async function getShiftAwareToday(userId) {
-  const now = await getTzTime();
-  try {
-    const u = await User.findById(userId).select('shift shiftId').lean();
-    if (!u) return null;
-    const shiftDoc = await resolveShift(u);
-    return getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
-  } catch { return null; }
-}
 
 export async function POST(req) {
   try {
@@ -64,7 +51,17 @@ export async function POST(req) {
       record = await Attendance.findOne({ userId: user._id, date: today });
     }
 
-    return ok({ record });
+    // A late end marks the day Late immediately (the GET recompute is the
+    // backstop on subsequent reads).
+    if (result.endedLate && record && !['leave', 'holiday'].includes(record.status)) {
+      await Attendance.collection.updateOne(
+        { _id: record._id },
+        { $set: { status: 'late', lateFlag: true, shortHours: false } }
+      );
+      record = await Attendance.findOne({ userId: user._id, date: today });
+    }
+
+    return ok({ record, endedLate: !!result.endedLate, overrunMins: result.overrunMins || 0 });
   } catch (e) {
     return fail(e.message, 500);
   }

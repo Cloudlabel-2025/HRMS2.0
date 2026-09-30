@@ -58,7 +58,8 @@ export function hasApprovedPermission(rec) {
   return !!(
     rec?.permission?.requestId ||
     rec?.permission?.startTime ||
-    rec?._permissionStatus === 'approved'
+    rec?._permissionStatus === 'approved' ||
+    rec?._permissionStatus === 'approved_late'
   );
 }
 
@@ -77,11 +78,16 @@ export function isShortHours(rec) {
  *  - an approved permission forces Present ONLY on a worked day — a past
  *    permission day with no clock-in shows Absent (with the permission
  *    badge), matching the Absence page;
+ *  - an OVER-RUN (late-ended) permission never masks lateness: the worked
+ *    day shows Late;
  *  - a worked half-day-leave day shows Half Day; an unworked one shows Leave.
  */
 export function displayStatusOf(rec) {
   if (rec?.displayStatus) return rec.displayStatus;
-  if (isWorkedDay(rec) && hasApprovedPermission(rec)) return 'present';
+  if (isWorkedDay(rec) && hasApprovedPermission(rec)) {
+    if (rec?.permission?.endedLate || rec?._permissionStatus === 'approved_late') return 'late';
+    return 'present';
+  }
   if (rec?.status === 'half_day' || rec?.approvedHalfDayLeave) {
     return isWorkedDay(rec) ? 'half_day' : 'leave';
   }

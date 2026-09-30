@@ -183,6 +183,27 @@ async function applyApprovedRequest(request, reviewer) {
           // Nothing to mirror onto yet — skip row creation.
         } else {
           const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
+          // Late approval: the window has already fully elapsed. Approve,
+          // but record it closed-as-late at once so it never becomes a
+          // permanently open, sheet-blocking permission.
+          const [eh, em] = String(endTime || '').split(':').map(Number);
+          const endMins = Number.isNaN(eh) || Number.isNaN(em) ? null : eh * 60 + em;
+          const nowMins = nowTz.getHours() * 60 + nowTz.getMinutes();
+          const windowElapsed = permDate < todayStr || (permDate === todayStr && endMins !== null && nowMins > endMins);
+          const overdueClose = (windowElapsed && !keepEnded.endedAt)
+            ? (() => {
+                const dayDiff = permDate < todayStr
+                  ? Math.max(1, Math.round((new Date(todayStr + 'T00:00:00') - new Date(permDate + 'T00:00:00')) / 86400000))
+                  : 0;
+                return {
+                  endedAt: String(nowTz.getHours()).padStart(2, '0') + ':' + String(nowTz.getMinutes()).padStart(2, '0'),
+                  endedEarly: true,
+                  endedLate: true,
+                  endedLateMins: endMins !== null ? Math.max(0, dayDiff * 24 * 60 + nowMins - endMins) : 0,
+                  endedBy: 'approval_overdue',
+                };
+              })()
+            : {};
           await Attendance.findOneAndUpdate(
             { userId: identity.authUserId, date: permDate },
             {
@@ -202,9 +223,11 @@ async function applyApprovedRequest(request, reviewer) {
                   status: 'approved',
                   approvedBy: reviewer._id,
                   approvedAt: new Date(),
+                  ...overdueClose,
                   ...keepEnded,
                 },
-                note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}`,
+                note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}${overdueClose.endedLate ? ' — window had already passed, closed as late' : ''}`,
+                ...(overdueClose.endedLate ? { status: 'late', lateFlag: true, shortHours: false } : {}),
               },
               $setOnInsert: { status: 'absent' },
             },

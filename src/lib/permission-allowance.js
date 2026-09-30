@@ -1,7 +1,8 @@
 import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
 import { SelfServiceRequest } from '@/lib/models/index';
+import { MAX_PERMISSION_DURATION_MINS } from './permission-window';
 
-export const DEFAULT_PERMISSION_ALLOWANCE_MINS = 120;
+export const DEFAULT_PERMISSION_ALLOWANCE_MINS = MAX_PERMISSION_DURATION_MINS;
 
 export function getPermissionAllowanceMins(config) {
   const v = Number(config?.permissionMonthlyAllowanceMins ?? config?.permissionAllowanceMins ?? DEFAULT_PERMISSION_ALLOWANCE_MINS);

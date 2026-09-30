@@ -7,8 +7,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import DateInput from '@/components/DateInput';
-
-const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+import { validatePermissionWindow, MAX_PERMISSION_DURATION_MINS, TIME_RE } from '@/lib/permission-window';
 
 const EMPTY_FORM = {
   requestType: 'profile_update',
@@ -39,6 +38,7 @@ export default function SelfServicePage() {
   const [formErrors, setFormErrors] = useState({});
   const [permBalance, setPermBalance] = useState(null);
   const [permBalanceLoading, setPermBalanceLoading] = useState(false);
+  const [permBounds, setPermBounds] = useState({ minDate: '', maxDate: '', shiftStart: null, shiftEnd: null });
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type });
@@ -111,13 +111,33 @@ export default function SelfServicePage() {
       if (!form.permissionEndTime) errs.permissionEndTime = 'End time is required';
       if (form.permissionStartTime && !TIME_RE.test(form.permissionStartTime)) errs.permissionStartTime = 'Invalid time format';
       if (form.permissionEndTime && !TIME_RE.test(form.permissionEndTime)) errs.permissionEndTime = 'Invalid time format';
-      if (form.permissionStartTime && form.permissionEndTime) {
+      if (form.permissionDate && form.permissionStartTime && form.permissionEndTime && TIME_RE.test(form.permissionStartTime) && TIME_RE.test(form.permissionEndTime)) {
+        const check = validatePermissionWindow({
+          date: form.permissionDate,
+          startTime: form.permissionStartTime,
+          endTime: form.permissionEndTime,
+          now: new Date(),
+          minDate: permBounds.minDate || undefined,
+          maxDate: permBounds.maxDate || undefined,
+          shiftStart: permBounds.shiftStart || undefined,
+          shiftEnd: permBounds.shiftEnd || undefined,
+        });
+        if (!check.valid) {
+          if (check.error.includes('date format') || check.error.includes('date cannot be in the past') || check.error.includes('advance')) {
+            errs.permissionDate = check.error;
+          } else if (check.error.includes('start time is in the past')) {
+            errs.permissionStartTime = check.error;
+          } else {
+            errs.permissionEndTime = check.error;
+          }
+        }
+      } else if (form.permissionStartTime && form.permissionEndTime) {
         const [sh, sm] = form.permissionStartTime.split(':').map(Number);
         const [eh, em] = form.permissionEndTime.split(':').map(Number);
         let durationMins = (eh * 60 + em) - (sh * 60 + sm);
         if (durationMins < 0) durationMins += 24 * 60;
-        if (durationMins > 120) {
-          errs.permissionEndTime = 'Permission duration cannot exceed 2 hours';
+        if (durationMins > MAX_PERMISSION_DURATION_MINS) {
+          errs.permissionEndTime = `Permission duration cannot exceed ${MAX_PERMISSION_DURATION_MINS / 60} hours`;
         }
       }
     }
@@ -156,6 +176,10 @@ export default function SelfServicePage() {
 
   useEffect(() => {
     if (user) load();
+    // Bookable window for permission dates (server-computed, shift-aware).
+    api.get('/api/self-service/permission-balance')
+      .then(r => { if (r?.minDate) setPermBounds({ minDate: r.minDate, maxDate: r.maxDate || '', shiftStart: r.shiftStart || null, shiftEnd: r.shiftEnd || null }); })
+      .catch(() => {});
   }, [user]);
 
   useEffect(() => {
@@ -163,7 +187,12 @@ export default function SelfServicePage() {
     let cancelled = false;
     setPermBalanceLoading(true);
     api.get('/api/self-service/permission-balance?date=' + form.permissionDate)
-      .then(r => { if (!cancelled) setPermBalance(r?.balance || null); })
+      .then(r => {
+        if (!cancelled) {
+          setPermBalance(r?.balance || null);
+          if (r?.minDate) setPermBounds({ minDate: r.minDate, maxDate: r.maxDate || '', shiftStart: r.shiftStart || null, shiftEnd: r.shiftEnd || null });
+        }
+      })
       .catch(() => { if (!cancelled) setPermBalance(null); })
       .finally(() => { if (!cancelled) setPermBalanceLoading(false); });
     return () => { cancelled = true; };
@@ -343,13 +372,13 @@ export default function SelfServicePage() {
                       {permBalanceLoading ? 'Loading permission balance…' : permBalance ? (
                         <>Monthly allowance: <strong>{permBalance.allowance} mins</strong> · Used: <strong>{permBalance.totalUsed} mins</strong> · Remaining: <strong>{permBalance.remaining} mins</strong> ({permBalance.fromDate} to {permBalance.toDate}). No carry-forward.</>
                       ) : (
-                        <>Monthly allowance: 120 mins per payroll cycle (no carry-forward). Select a date to see remaining balance.</>
+                        <>Monthly allowance: {MAX_PERMISSION_DURATION_MINS} mins per payroll cycle (no carry-forward). Select a date to see remaining balance.</>
                       )}
                     </div>
                   </div>
                   <div className="col-md-4">
                     <label className="form-label">Permission Date <span style={{color:'#ef4444'}}>*</span></label>
-                    <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />
+                    <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} min={permBounds.minDate || undefined} max={permBounds.maxDate || undefined} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />
                     {formErrors.permissionDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionDate}</div>}
                   </div>
                   <div className="col-md-4">

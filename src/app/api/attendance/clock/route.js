@@ -13,6 +13,7 @@ import { resolveShift } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { computePermissionUsage, permissionCoversShiftStart } from '@/lib/permission-allowance';
+import { reconcilePermissionWorkProgress, closePermissionEarly } from '@/lib/permission-work';
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
@@ -360,6 +361,23 @@ export async function POST(req) {
         { upsert: true, new: true }
       );
 
+      // Permission lifecycle: materialise the work-progress permission row
+      // at once so the sheet shows the permission immediately after
+      // clock-in (the read-path reconcile in GET /api/attendance is the
+      // backstop for rows created before this change).
+      if (record?.permission?.requestId) {
+        try {
+          const recon = record.toObject();
+          if (reconcilePermissionWorkProgress(recon, timeStr)) {
+            await Attendance.collection.updateOne(
+              { _id: record._id },
+              { $set: { workProgress: recon.workProgress, permission: recon.permission } }
+            );
+            record = await Attendance.findById(record._id);
+          }
+        } catch (e) { console.error('Permission clock-in reconcile failed:', e?.message || e); }
+      }
+
       if (((isOnLeave && !onLeave?.halfDay) || isNonWorkingDay) && record) {
         record.leaveOverride = { status: 'pending' };
         await record.save();
@@ -467,6 +485,26 @@ export async function POST(req) {
       let status = outRecord.status;
       if (outRecord.approvedHalfDayLeave) status = 'half_day';
 
+      // Permission auto-end on clock-out: an open permission is closed at
+      // the clock-out time and flagged late when past its window, so the
+      // employee is never wedged by a forgotten permission.
+      let permEndedLate = false;
+      if (outRecord.permission?.requestId && !outRecord.permission?.endedAt) {
+        try {
+          const permObj = outRecord.toObject();
+          const endRes = closePermissionEarly(permObj, timeStr, 'clockout');
+          if (!endRes.error) {
+            outRecord.workProgress = permObj.workProgress;
+            outRecord.permission = permObj.permission;
+            permEndedLate = !!endRes.endedLate;
+          }
+        } catch (e) { console.error('Permission clock-out auto-end failed:', e?.message || e); }
+      }
+      if (permEndedLate && !outRecord.approvedHalfDayLeave) {
+        status = 'late';
+        outRecord.lateFlag = true;
+      }
+
       const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut, outRecord.date);
       record = await Attendance.findOneAndUpdate(
         { _id: outRecord._id },
@@ -479,13 +517,14 @@ export async function POST(req) {
           autoLoggedOut: isAutoLogout,
           regularizationOutOpen: false,
           status,
+          lateFlag: outRecord.lateFlag,
           workProgress: finalized,
           breaks: updatedBreaks,
         },
         { new: true }
       );
 
-      await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${finalClockOut}, Hours worked: ${Math.floor(hoursWorked/60)}h ${hoursWorked%60}m${isAutoLogout ? ' (Auto Clock Out)' : ''}`, 'low', ip, null, user._id);
+      await auditLog('Clock Out', 'Attendance', user._id, `Clocked out at ${finalClockOut}, Hours worked: ${Math.floor(hoursWorked/60)}h ${hoursWorked%60}m${isAutoLogout ? ' (Auto Clock Out)' : ''}${outRecord.permission?.endedAt ? ` (Permission auto-ended at ${outRecord.permission.endedAt}${permEndedLate ? ', time exceeded' : ''})` : ''}`, 'low', ip, null, user._id);
 
       publishRecordEvent('clockout', record);
 

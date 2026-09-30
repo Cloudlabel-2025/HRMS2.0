@@ -9,7 +9,9 @@ import { CORE_HR_ADMIN_ROLES } from '@/lib/core/constants';
 import { CreateSelfServiceRequestSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
 import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } from '@/lib/payroll-cycle';
-import { getPermissionAllowanceMins, getPermissionUsageForCycle } from '@/lib/permission-allowance';
+import { getPermissionAllowanceMins, getPermissionUsageForCycle, permissionDurationMins } from '@/lib/permission-allowance';
+import { validatePermissionWindow, addDaysStr, MAX_PERMISSION_ADVANCE_DAYS } from '@/lib/permission-window';
+import { getShiftDayInfo } from '@/lib/shift-today';
 
 function normalizePayload(requestType, payload) {
   if (requestType === 'profile_update') {
@@ -157,21 +159,22 @@ export async function POST(req) {
       if (!date || !startTime || !endTime) {
         return fail('Date, start time, and end time are required for permission requests', 400);
       }
-      const [sh, sm] = startTime.split(':').map(Number);
-      const [eh, em] = endTime.split(':').map(Number);
-      if (Number.isNaN(sh) || Number.isNaN(sm) || Number.isNaN(eh) || Number.isNaN(em)) {
-        return fail('Invalid start or end time format', 400);
+      // Past-date / past-time / advance-booking rules (server-authoritative).
+      // Earliest bookable date is the earlier of the calendar today and the
+      // employee's shift-aware today, so overnight shifts can still book
+      // their live shift day. Shift times anchor post-midnight windows.
+      const dayInfo = await getShiftDayInfo(user._id);
+      const maxDate = addDaysStr(dayInfo.minDate, MAX_PERMISSION_ADVANCE_DAYS);
+      const windowCheck = validatePermissionWindow({
+        date, startTime, endTime, now: dayInfo.now,
+        minDate: dayInfo.minDate, maxDate,
+        shiftStart: dayInfo.shiftStart, shiftEnd: dayInfo.shiftEnd,
+      });
+      if (!windowCheck.valid) {
+        auditLog('Self-Service Request Failed', 'SelfService', user._id, `Permission window rejected: ${windowCheck.error}`, 'low', ip, null, user._id);
+        return fail(windowCheck.error, 400);
       }
-      let durationMins = (eh * 60 + em) - (sh * 60 + sm);
-      if (durationMins < 0) durationMins += 24 * 60;
-
-      if (durationMins <= 0) {
-        return fail('End time must be after start time', 400);
-      }
-
-      if (durationMins > 120) {
-        return fail('Permission request cannot exceed 2 hours', 400);
-      }
+      const durationMins = permissionDurationMins(startTime, endTime);
 
       // Only one permission per day — block if an approved OR pending
       // permission already exists for this date.

@@ -78,7 +78,7 @@ export default function SettingsPage() {
   const [config, setConfig]         = useState({
     timezone: 'Asia/Kolkata', currency: 'INR', dateFormat: 'DD/MM/YYYY',
     language: 'English', timeFormat: '24h', payrollStartDay: getDefaultPayrollStartDate(), payrollEndDay: getDefaultPayrollEndDate(), attendanceStartDay: '1',
-    saturdayWorking: 'alternate', lateThreshold: '15',
+    saturdayWorking: 'alternate', lateThreshold: '15', permissionMonthlyAllowanceMins: '120',
   });
   const [archiveYears, setArchiveYears] = useState(3);
   const [archivePreview, setArchivePreview] = useState(null);
@@ -423,6 +423,11 @@ export default function SettingsPage() {
                 <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Late Login Threshold (minutes)</label>
                   <input type="number" className="form-control" value={config.lateThreshold} onChange={e => setConfig(p => ({ ...p, lateThreshold: e.target.value }))} />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Permission Monthly Allowance (minutes)</label>
+                  <input type="number" className="form-control" min={0} max={480} value={config.permissionMonthlyAllowanceMins ?? '120'} onChange={e => setConfig(p => ({ ...p, permissionMonthlyAllowanceMins: e.target.value }))} />
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Per payroll cycle, no carry-forward. Also caps a single request.</div>
                 </div>
                 <div className="col-md-6">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Saturday Working</label>

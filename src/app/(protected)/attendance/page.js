@@ -727,8 +727,8 @@ export default function AttendancePage() {
   };
 
   const commitWorkRow = async (idx, patch) => {
-    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
-    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
+    const permOpen = !!todayRecord?.permission?.requestId && !todayRecord?.permission?.endedAt;
+    if (permOpen) { showToast('Permission is active. End permission first.', 'error'); return; }
     const currentRows = todayRecord?.workProgress || [];
     const targetRow = currentRows[idx];
     const wasActive = !!(targetRow?.startTime && !targetRow?.endTime);
@@ -770,8 +770,8 @@ export default function AttendancePage() {
   };
 
   const endCurrentTask = async () => {
-    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
-    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
+    const permOpen = !!todayRecord?.permission?.requestId && !todayRecord?.permission?.endedAt;
+    if (permOpen) { showToast('Permission is active. End permission first.', 'error'); return; }
     if (!clockedIn) { showToast('Clock in first to end a task.', 'error'); return; }
     if (clockedOut) { showToast('You have already clocked out today.', 'error'); return; }
     if (anyActiveBreak()) { showToast('End your current break first.', 'error'); return; }
@@ -789,8 +789,8 @@ export default function AttendancePage() {
   };
 
   const deleteWorkRow = async (dbIdx) => {
-    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
-    if (activePerm && !todayRecord?.permission?.endedAt) { showToast('Permission is active. End permission first.', 'error'); return; }
+    const permOpen = !!todayRecord?.permission?.requestId && !todayRecord?.permission?.endedAt;
+    if (permOpen) { showToast('Permission is active. End permission first.', 'error'); return; }
     const rows = [...(todayRecord?.workProgress || [])];
     const deletedRow = rows[dbIdx];
     if (!deletedRow) return;
@@ -822,8 +822,8 @@ export default function AttendancePage() {
   };
 
   const handleBreakClock = async (rule, ruleIdx) => {
-    const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
-    if (activePerm && !todayRecord?.permission?.endedAt) {
+    const permOpen = !!todayRecord?.permission?.requestId && !todayRecord?.permission?.endedAt;
+    if (permOpen) {
       showToast('Cannot start or end a break while permission is active. End permission first.', 'error');
       return;
     }
@@ -904,7 +904,11 @@ export default function AttendancePage() {
       const rec = res.record || res;
       workProgressRef.current = rec.workProgress || [];
       setTodayRecord(rec);
-      showToast('Permission ended at ' + now);
+      if (res.endedLate) {
+        showToast(`Permission ended at ${now} — time exceeded${res.overrunMins ? ` by ${res.overrunMins} min` : ''}, marked Late`, 'warning');
+      } else {
+        showToast('Permission ended at ' + now);
+      }
     } catch (e) { showToast(e.message, 'error'); }
     finally { setPermEnding(false); }
   };
@@ -1198,15 +1202,24 @@ export default function AttendancePage() {
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
             {(() => {
+              // One context-aware action button: while a permission is open
+              // it reads "End Permission"; otherwise "End Current Task".
               const perm = todayRecord?.permission;
-              const pending = todayRecord?.pendingPermission;
-              const activePerm = todayRecord?.workProgress?.some(r => r.type === 'permission' && r.startTime && !r.endTime);
-              const canEndPerm = !!perm && !perm.endedAt && activePerm && clockedIn && !clockedOut;
-              return canEndPerm ? (
-                <button className="btn btn-sm btn-warning" style={{ fontSize: 12 }} disabled={permEnding} onClick={handleEndPermission}>
-                  {permEnding ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Ending...</> : <><i className="bi bi-pause-circle me-1" />End Permission</>}
-                </button>
-              ) : null;
+              const permOpen = !!perm?.requestId && !perm?.endedAt && clockedIn && !clockedOut;
+              if (permOpen) {
+                return (
+                  <button className="btn btn-sm btn-warning" style={{ fontSize: 12 }} disabled={permEnding} onClick={handleEndPermission}>
+                    {permEnding ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Ending...</> : <><i className="bi bi-pause-circle me-1" />End Permission</>}
+                  </button>
+                );
+              }
+              return (
+                <span title={canEndTask ? 'End current task and start next' : endTaskDisabledReason} style={{ display: 'inline-flex' }}>
+                  <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12, pointerEvents: canEndTask ? 'auto' : 'none' }} disabled={!canEndTask} onClick={endCurrentTask}>
+                    <i className="bi bi-check2-circle me-1" />End Current Task
+                  </button>
+                </span>
+              );
             })()}
             {clockedOut && (
               <button className="btn btn-sm btn-outline-success" style={{ fontSize: 12 }} onClick={downloadExcel}>
@@ -1216,11 +1229,6 @@ export default function AttendancePage() {
             <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12 }} disabled={saveWorkLoading || !clockedIn} onClick={handleSaveWork}>
               {saveWorkLoading ? <><span className="spinner-border spinner-border-sm me-1" style={{ width: 12, height: 12 }} />Saving...</> : <><i className="bi bi-floppy me-1" />Save</>}
             </button>
-            <span title={canEndTask ? 'End current task and start next' : endTaskDisabledReason} style={{ display: 'inline-flex' }}>
-              <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 12, pointerEvents: canEndTask ? 'auto' : 'none' }} disabled={!canEndTask} onClick={endCurrentTask}>
-                <i className="bi bi-check2-circle me-1" />End Current Task
-              </button>
-            </span>
           </div>
         </div>
         {(() => {
@@ -1235,13 +1243,32 @@ export default function AttendancePage() {
               </div>
             );
           }
-          const isApplied = !!perm?.applied;
-          if (!perm || !isApplied) return null;
+          const hasPerm = !!(perm?.requestId || perm?.startTime);
+          if (!hasPerm) return null;
           const isEnded = !!perm.endedAt;
+          const isLate = !!perm.endedLate;
+          const openRow = (todayRecord?.workProgress || []).find(r => r.type === 'permission' && r.startTime && !r.endTime);
+          const runningOver = !isEnded && !!openRow?.endedLate;
+          if (isLate) {
+            return (
+              <div style={{ padding: '10px 14px', background: '#fef2f2', borderBottom: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#b91c1c' }}>
+                <i className="bi bi-exclamation-triangle" />
+                <span><strong>Permission Ended Late:</strong> {perm.startTime || '--:--'} – {perm.endedAt || '--:--'} (scheduled end {perm.endTime || '--:--'}{Number(perm.endedLateMins) > 0 ? `, exceeded by ${perm.endedLateMins} min` : ''})</span>
+              </div>
+            );
+          }
+          if (runningOver) {
+            return (
+              <div style={{ padding: '10px 14px', background: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
+                <i className="bi bi-hourglass-bottom" />
+                <span><strong>Permission Time Exceeded:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · still running{openRow?.overrunMins ? ` (+${openRow.overrunMins} min over)` : ''} — end it now</span>
+              </div>
+            );
+          }
           return (
             <div style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
               <i className="bi bi-patch-check" />
-              <span><strong>Permission {isEnded ? 'Ended' : 'Approved'}:</strong> {perm.startTime || '--:--'} – {perm.endedAt || perm.endTime || '--:--'}{perm.endedAt ? ` (ended early at ${perm.endedAt})` : ''}</span>
+              <span><strong>Permission {isEnded ? 'Ended' : 'Approved'}:</strong> {perm.startTime || '--:--'} – {perm.endedAt || perm.endTime || '--:--'}{perm.endedAt ? ` (ended at ${perm.endedAt})` : ''}</span>
             </div>
           );
         })()}
@@ -1284,9 +1311,20 @@ export default function AttendancePage() {
                             </span>
                           )
                         ) : isPermissionRow ? (
-                          <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>
-                            <i className="bi bi-pause-circle me-1" />{row.taskDetails || `Permission (${row.startTime}-${row.endTime || 'Running'})`}
-                          </span>
+                          <>
+                            <span className="badge" style={{ background: '#dbeafe', color: '#2563eb' }}>
+                              <i className="bi bi-pause-circle me-1" />{row.taskDetails || `Permission (${row.startTime}-${row.endTime || 'Running'})`}
+                            </span>
+                            {row.endedLate && row.endTime ? (
+                              <span className="badge ms-1" style={{ background: '#fee2e2', color: '#b91c1c' }}>
+                                Ended Late{Number(row.overrunMins) > 0 ? ` +${row.overrunMins}m` : ''}
+                              </span>
+                            ) : row.endedLate && !row.endTime ? (
+                              <span className="badge ms-1" style={{ background: '#fef3c7', color: '#92400e' }}>
+                                Time Exceeded{Number(row.overrunMins) > 0 ? ` +${row.overrunMins}m` : ''}
+                              </span>
+                            ) : null}
+                          </>
                         ) : isBreakRow ? (
                           <span className="badge" style={{ background: breakStyle(row.type).bg, color: breakStyle(row.type).color }}>
                             <i className={`bi ${breakStyle(row.type).icon} me-1`} />{row.taskDetails || breakLabel(row.type)}
