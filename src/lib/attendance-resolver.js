@@ -16,7 +16,10 @@ function toMins(timeStr) {
  *  1b. non-working calendar day (holiday / weekly_off) -> 'holiday'.
  *      The calendar is authoritative: a clock-in on a holiday is tracked
  *      (hours) but the day is labelled holiday, never present/late.
- *  2. approved half-day leave -> 'half_day' (0.5 presence, no late)
+ *  2. approved half-day leave -> judged by the actual clock-in (present/late,
+ *     never late from the leave-adjusted expectation; callers clear lateFlag).
+ *     The approvedHalfDayLeave marker (not this status) drives the 0.5
+ *     payroll credit and the Half Day display.
  *  3. approved late-arrival permission window (covers shift start),
  *     strict end-inclusive (grace 0):
  *     actualMins <= permEndMins -> 'present' (permissionApplied: true)
@@ -67,9 +70,10 @@ export function resolveDayStatus({
       isMidDayPermission: false,
     };
   }
-  if (approvedHalfDayLeave) {
-    return { status: 'half_day', lateFlag: false, halfDayThresholdExceeded: false, permissionApplied: false, isMidDayPermission: false };
-  }
+  // A worked half of an approved half-day leave is judged by the actual
+  // clock-in below (present/late like any worked day). The
+  // approvedHalfDayLeave flag is intentionally not consulted here: it is a
+  // payroll/display marker, not a status override.
   if (permission?.endTime && clockIn) {
     const nowMins = toMins(clockIn);
     const endMins = toMins(permission.endTime);

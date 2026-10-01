@@ -13,6 +13,12 @@ const LeaveSchema = new mongoose.Schema({
   unpaidDays: { type: Number, default: 0 },
   halfDay:{ type: Boolean, default: false },
   halfDayType:{ type: String, enum: ['first_half', 'second_half'], default: null },
+  // Optional custom window for a half-day leave (HH:MM, 24-hour). When both
+  // are set they override the shift-derived half-day threshold as the
+  // login/clock split: first_half ends at halfDayEndTime, second_half begins
+  // at halfDayStartTime. Both-or-neither is enforced by validation.
+  halfDayStartTime:{ type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
+  halfDayEndTime:  { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   reason: { type: String, required: true },
   documents: [{ type: String }], // file URLs for supporting documents
   policyId: { type: mongoose.Schema.Types.ObjectId, ref: 'LeavePolicy', default: null },

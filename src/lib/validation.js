@@ -321,6 +321,8 @@ export const CreateLeaveSchema = z.object({
   to: DateSchema,
   halfDay: z.boolean().optional().default(false),
   halfDayType: z.preprocess(v => (v === '' || v === null) ? undefined : v, z.enum(['first_half', 'second_half']).optional()),
+  halfDayStartTime: z.preprocess(v => (v === '' || v === null) ? undefined : v, z.string().regex(TIME_RE, 'Start time must be HH:MM (24-hour)').optional()),
+  halfDayEndTime: z.preprocess(v => (v === '' || v === null) ? undefined : v, z.string().regex(TIME_RE, 'End time must be HH:MM (24-hour)').optional()),
   reason: z.string().min(5, 'Reason must be at least 5 characters').max(500),
   documents: z.array(z.string()).optional().default([]),
 }).strict().refine(
@@ -332,6 +334,14 @@ export const CreateLeaveSchema = z.object({
 ).refine(
   data => !data.halfDay || (toDateStr(new Date(data.from)) === toDateStr(new Date(data.to))),
   { message: 'Half-day leave must be a single day', path: ['to'] }
+).refine(
+  // Custom window is both-or-neither; a one-sided fill would be silently
+  // ignored by the threshold resolution, so reject it loudly instead.
+  data => !data.halfDay || (!!data.halfDayStartTime === !!data.halfDayEndTime),
+  { message: 'Custom half-day time needs both a start and an end time', path: ['halfDayEndTime'] }
+).refine(
+  data => !data.halfDay || !data.halfDayStartTime || !data.halfDayEndTime || data.halfDayStartTime < data.halfDayEndTime,
+  { message: 'Custom half-day start must be before the end time', path: ['halfDayEndTime'] }
 );
 
 // ────────────────────────────────────────────────────────────────────────────

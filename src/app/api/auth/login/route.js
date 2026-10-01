@@ -8,6 +8,8 @@ import Shift from '@/lib/models/Shift';
 import Leave from '@/lib/models/Leave';
 import Department from '@/lib/models/Department';
 import { parseShiftStartTime } from '@/lib/payroll-cycle';
+import { resolveShift } from '@/lib/shift-utils';
+import { resolveHalfDaySplitMins, evaluateHalfDayGate } from '@/lib/half-day-window';
 import { LoginSchema, validateRequest } from '@/lib/validation';
 import { NextResponse } from 'next/server';
 import { SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
@@ -186,26 +188,41 @@ export async function POST(req) {
       return response;
     }
 
-    // ── Leave-day gate — block login if employee is on approved leave today ─
-    const today = new Date();
-    const todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    // ── Leave-day gate — block login while the employee's approved leave covers "now" ─
+    // Full-day leaves block all day; half-day leaves only block their own
+    // half (split = shift start + shift.halfDayThreshold, e.g. 12:00 for a
+    // 09:00 shift with the default 180-minute threshold).
+    let todayStr;
+    try {
+      const { getTzDateStr } = await import('@/lib/timezone');
+      todayStr = await getTzDateStr();
+    } catch {
+      const today = new Date();
+      todayStr = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+    }
     const onLeave = await Leave.findOne({
       userId: user._id,
       status: 'approved',
       from: { $lte: todayStr },
       to:   { $gte: todayStr },
     });
-    if (onLeave) {
-      return handleFailure(
-        `You are on approved leave today (${onLeave.type}). Please return on ${onLeave.to} to log in.`,
-        403, 'medium', user._id
-      );
+    if (onLeave && user.role !== 'super_admin') {
+      const shiftDoc = await resolveShift(user).catch(() => null);
+      const gate = evaluateHalfDayGate({
+        leave: onLeave,
+        splitMins: resolveHalfDaySplitMins(shiftDoc, user.shift, onLeave),
+      });
+      if (gate.blocked) {
+        return handleFailure(
+          gate.message,
+          403, 'medium', user._id
+        );
+      }
     }
 
     // ── Join-date / hire-date early-access gate ────────────────────────────
     if (user.joinDate) {
       const now = new Date();
-      const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
       const joinDate = new Date(user.joinDate);
       const joinStr  = joinDate.getFullYear() + '-' + String(joinDate.getMonth() + 1).padStart(2, '0') + '-' + String(joinDate.getDate()).padStart(2, '0');
 
@@ -220,7 +237,8 @@ export async function POST(req) {
       // On hire date: block until 1.5 hours before shift start
       if (todayStr === joinStr) {
         const shiftName = user.shift || 'Morning (9AM-6PM)';
-        const shiftDoc  = await Shift.findOne({ name: shiftName }).lean();
+        const shiftDoc  = (await resolveShift(user).catch(() => null))
+          || await Shift.findOne({ name: shiftName }).lean();
         let shiftHour = 9, shiftMin = 0, resolved = false;
 
         if (shiftDoc?.startTime) {

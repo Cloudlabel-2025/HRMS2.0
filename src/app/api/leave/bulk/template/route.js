@@ -32,8 +32,8 @@ export async function GET(req) {
     ws.addRow(['', 'CHC-2026-0002', 'SL', 2, 0, 0, 0, '', year, 'Correction (+2 days)']);
     ws.columns = headers.map(h => ({ header: h, width: h === 'reason' ? 34 : 18 }));
   } else if (type === 'leaves') {
-    ws.addRow(['priya@company.com', 'CHC-2026-0001', 'CL', `${year}-06-10`, `${year}-06-12`, 'FALSE', '', 'Family function', 'approved', '', '']);
-    ws.addRow(['', 'CHC-2026-0002', 'SL', `${year}-07-04`, `${year}-07-04`, 'TRUE', 'first_half', 'Fever', 'approved', '', '']);
+    ws.addRow(['priya@company.com', 'CHC-2026-0001', 'CL', `${year}-06-10`, `${year}-06-12`, 'FALSE', '', '', '', 'Family function', 'approved', '', '']);
+    ws.addRow(['', 'CHC-2026-0002', 'SL', `${year}-07-04`, `${year}-07-04`, 'TRUE', 'first_half', '09:00', '13:00', 'Fever', 'approved', '', '']);
     ws.columns = headers.map(h => ({ header: h, width: ['reason', 'employeeEmail'].includes(h) ? 28 : 16 }));
   } else {
     ws.addRow(['priya@company.com', 'CHC-2026-0001', `${year}-06-10`, '09:00', '18:00', 'On site, biometric reader failed']);
@@ -61,9 +61,10 @@ export async function GET(req) {
       ['1. Fill ONE of employeeEmail or employeeCode per row. If both are filled they must match the same person.'],
       ['2. Dates must be YYYY-MM-DD, from <= to.'],
       ['3. halfDay TRUE only for single-day leaves; halfDayType = first_half or second_half.'],
-      ['4. status = approved (deducts balance + creates attendance) or pending (goes to approvals).'],
-      ['5. Leave paidDays/unpaidDays blank to auto-calculate from the company calendar.'],
-      ['6. Overlapping dates with existing leaves will be flagged. Max 500 rows per file.'],
+      ['4. halfDayStartTime / halfDayEndTime are optional HH:MM (24-hour), both or neither. When set they override the shift half-day threshold as the login split (first_half ends at halfDayEndTime, second_half begins at halfDayStartTime).'],
+      ['5. status = approved (deducts balance + creates attendance) or pending (goes to approvals).'],
+      ['6. Leave paidDays/unpaidDays blank to auto-calculate from the company calendar.'],
+      ['7. Overlapping dates with existing leaves will be flagged. Max 500 rows per file.'],
     ]
     : [
       ['Bulk Attendance Correction — Instructions'],

@@ -79,8 +79,11 @@ export async function POST(req) {
           if (!endRes.error) permEndedLate = !!endRes.endedLate;
         } catch (e) { console.error('Permission end-shift end failed:', e?.message || e); }
       }
-      const status = record.approvedHalfDayLeave ? 'half_day' : (record.lateFlag || permEndedLate ? 'late' : 'present');
-      const lateFlag = !!(record.lateFlag || permEndedLate);
+      // A worked half of an approved half-day leave finalises as Present
+      // (never late on the leave-adjusted day); the marker drives the 0.5
+      // credit and the Half Day display.
+      const status = record.approvedHalfDayLeave ? 'present' : (record.lateFlag || permEndedLate ? 'late' : 'present');
+      const lateFlag = record.approvedHalfDayLeave ? false : !!(record.lateFlag || permEndedLate);
 
       const finalized = finalizeDayWork(record.workProgress, clockOutTime, record.date);
 

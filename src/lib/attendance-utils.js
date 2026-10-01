@@ -103,7 +103,9 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   record.shortfallMins = hasPermission ? 0 : shortfallMins;
   record.breakExcessMins = hasPermission ? 0 : breakExcessMins;
   if (record.approvedHalfDayLeave) {
-    record.status = 'half_day';
+    // Worked half of an approved half-day leave: Present, never late on the
+    // leave-adjusted day. Marker drives the 0.5 credit / Half Day display.
+    record.status = 'present';
     record.lateFlag = false;
   } else if (!['leave', 'holiday'].includes(record.status)) {
     record.status = record.lateFlag ? 'late' : 'present';

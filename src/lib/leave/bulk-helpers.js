@@ -29,6 +29,8 @@ export const LEAVE_HEADERS = [
   'to',
   'halfDay',
   'halfDayType',
+  'halfDayStartTime',
+  'halfDayEndTime',
   'reason',
   'status',
   'paidDays',
@@ -94,6 +96,10 @@ const LEAVE_ALIASES = {
   todate: 'to',
   halfday: 'halfDay',
   halfdaytype: 'halfDayType',
+  halfdaystarttime: 'halfDayStartTime',
+  starttime: 'halfDayStartTime',
+  halfdayendtime: 'halfDayEndTime',
+  endtime: 'halfDayEndTime',
   reason: 'reason',
   status: 'status',
   paiddays: 'paidDays',
@@ -183,6 +189,16 @@ export function coerceBool(v) {
   if (['true', 'yes', 'y', '1'].includes(s)) return true;
   if (['false', 'no', 'n', '0', ''].includes(s)) return false;
   return null;
+}
+
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/** Coerce an HH:MM cell to a normalised string, or '' when blank. */
+export function coerceHm(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const s = String(v).trim();
+  if (!HM_RE.test(s)) return null;
+  return s;
 }
 
 /**

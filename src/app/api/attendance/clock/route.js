@@ -107,6 +107,31 @@ export async function POST(req) {
       } catch (e) { /* ignore */ }
     };
 
+    // Clock-in must ALWAYS yield an open task row. The $setOnInsert seed is
+    // skipped whenever the day's row already existed (approved leave upsert,
+    // bulk leave, holiday/weekly-off row, prior absent row), which left the
+    // sheet with no task row: no Task Details input and a dead
+    // "End Current Task" button. Wrapped in try/catch at call sites — the
+    // employee is already clocked in, so a seed failure must never 500.
+    const hasOpenWorkRow = (rec) => (rec?.workProgress || []).some(r => r.startTime && !r.endTime);
+    const ensureOpenTaskRow = async (rec, startTime) => {
+      if (!rec || hasOpenWorkRow(rec)) return rec;
+      const wp = Array.isArray(rec.workProgress) ? [...rec.workProgress] : [];
+      wp.push({
+        type: 'task',
+        taskDetails: '',
+        startTime,
+        endTime: null,
+        status: 'work_in_progress',
+        remarks: '',
+        feedback: '',
+        duration: null,
+      });
+      rec.workProgress = wp;
+      await rec.save();
+      return rec;
+    };
+
     if (action === 'in') {
       const openRecords = await Attendance.find({ userId: user._id, clockIn: { $ne: null }, clockOut: null }).sort({ date: -1 });
       const openRecord = openRecords[0] || null;
@@ -122,6 +147,9 @@ export async function POST(req) {
             publishRecordEvent('clockout', stale);
             auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
           }
+          // Heal rows whose day pre-existed clock-in (e.g. a half-day leave
+          // upsert): seed the missing first task row so the sheet works.
+          try { await ensureOpenTaskRow(openRecord, openRecord.clockIn || timeStr); } catch (e) { console.error('Clock-in task-row heal failed (non-fatal):', e?.message || e); }
           return ok({ record: openRecord, alreadyClockedIn: true, time: timeStr });
         }
         // The open session belongs to a PREVIOUS attendance date (overnight shift). Force-close
@@ -137,6 +165,7 @@ export async function POST(req) {
 
       if (record?.clockIn) {
         auditLog('Clock In Attempted', 'Attendance', user._id, `Already clocked in today (idempotent success)`, 'low', ip, null, user._id);
+        try { await ensureOpenTaskRow(record, record.clockIn || timeStr); } catch (e) { console.error('Clock-in task-row heal failed (non-fatal):', e?.message || e); }
         return ok({ record, alreadyClockedIn: true, time: timeStr });
       }
 
@@ -281,12 +310,24 @@ export async function POST(req) {
         if (isMidDayPermission) permissionApplied = false;
       }
 
-      // Approved half-day leave plus a clock-in is a half working day:
-      // half_day status (0.5 presence in payroll) + half-day leave credit,
-      // with no late/absence consequence.
+      // Approved half-day leave plus a clock-in is a worked half day:
+      // Present status with the approvedHalfDayLeave marker (0.5 payroll
+      // credit, Half Day display). Clock-in is never blocked. workedHalf
+      // records which half was actually worked (clockIn side of the split),
+      // independent of the leave's declared half. Arriving at/after the
+      // split on a first_half leave exceeded the threshold -> Late
+      // (lateFlag only; late never reduces pay).
+      let workedHalf = null;
+      let halfDayThresholdExceeded = false;
       if (onLeave?.halfDay) {
-        status = 'half_day';
-        lateFlag = false;
+        const { resolveHalfDaySplitMins, splitSideOf } = await import('@/lib/half-day-window');
+        const split = resolveHalfDaySplitMins(shiftDoc, user.shift, onLeave);
+        workedHalf = splitSideOf(h * 60 + m, split);
+        status = 'present';
+        if (onLeave.halfDayType === 'first_half' && workedHalf === 'second_half') {
+          lateFlag = true;
+          halfDayThresholdExceeded = true;
+        }
       }
 
       // Wraparound-aware: early = clocked before shift start within the same
@@ -304,6 +345,8 @@ export async function POST(req) {
             clockIn: attendanceClockIn,
             status,
             lateFlag,
+            workedHalf,
+            halfDayThresholdExceeded,
             earlyLogin: isEarlyLogin,
             // Frozen per-day shift snapshot — past rows stay judged by this
             // shift even if the employee's shift is changed later.
@@ -360,6 +403,13 @@ export async function POST(req) {
         },
         { upsert: true, new: true }
       );
+
+      // Guarantee the day's first task row. $setOnInsert above only fires on
+      // an actual insert; when the row already existed (approved leave upsert,
+      // bulk leave, holiday/weekly-off row, prior absent row) the sheet would
+      // be left with no task row, no Task Details input and a dead
+      // "End Current Task" button.
+      try { await ensureOpenTaskRow(record, timeStr); } catch (e) { console.error('Clock-in task-row seed failed (non-fatal):', e?.message || e); }
 
       // Permission lifecycle: materialise the work-progress permission row
       // at once so the sheet shows the permission immediately after
@@ -488,7 +538,9 @@ export async function POST(req) {
         })),
       };
       let status = outRecord.status;
-      if (outRecord.approvedHalfDayLeave) status = 'half_day';
+      // NOTE: approvedHalfDayLeave rows keep their clock-in verdict
+      // (present, never late on the leave-adjusted day). The marker drives
+      // the 0.5 payroll credit and the Half Day display.
 
       // Permission auto-end on clock-out: an open permission is closed at
       // the clock-out time and flagged late when past its window, so the

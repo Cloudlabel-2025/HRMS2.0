@@ -13,6 +13,7 @@ import {
   isValidDateStr,
   coerceNumber,
   coerceBool,
+  coerceHm,
 } from '@/lib/leave/bulk-helpers';
 import { resolvePolicyForUser } from '@/app/api/leave/balance/route';
 import { Leave, Holiday, UserLeaveBalance } from '@/lib/models/index';
@@ -227,6 +228,23 @@ export async function POST(req) {
           warnings.push('halfDayType ignored because halfDay is FALSE');
           halfDayType = '';
         }
+        // Optional custom window (both-or-neither). Rejected one-sided so it
+        // is never silently ignored by the threshold resolution.
+        let halfDayStartTime = coerceHm(obj.halfDayStartTime);
+        let halfDayEndTime = coerceHm(obj.halfDayEndTime);
+        if (halfDayStartTime === null) errors.push('halfDayStartTime must be HH:MM (24-hour)');
+        if (halfDayEndTime === null) errors.push('halfDayEndTime must be HH:MM (24-hour)');
+        if (halfDayStartTime === '') halfDayStartTime = null;
+        if (halfDayEndTime === '') halfDayEndTime = null;
+        if (halfDay && (!!halfDayStartTime !== !!halfDayEndTime)) {
+          errors.push('halfDayStartTime and halfDayEndTime must both be filled or both blank');
+        } else if (halfDay && halfDayStartTime && halfDayEndTime && halfDayStartTime >= halfDayEndTime) {
+          errors.push('halfDayStartTime must be before halfDayEndTime');
+        } else if (!halfDay && (halfDayStartTime || halfDayEndTime)) {
+          warnings.push('halfDayStartTime/halfDayEndTime ignored because halfDay is FALSE');
+          halfDayStartTime = null;
+          halfDayEndTime = null;
+        }
 
         if (!reason || reason.length < 5) errors.push('reason is required (min 5 characters)');
         else if (reason.length > 500) errors.push('reason must be under 500 characters');
@@ -383,6 +401,8 @@ export async function POST(req) {
           data: {
             employeeEmail: email, employeeCode: code, typeCode, from, to,
             halfDay, halfDayType: halfDay ? halfDayType : '',
+            halfDayStartTime: halfDay ? (halfDayStartTime || '') : '',
+            halfDayEndTime: halfDay ? (halfDayEndTime || '') : '',
             reason, status, paidDays, unpaidDays,
           },
           user: targetUser ? { _id: String(targetUser._id), name: targetUser.name, email: targetUser.email } : null,

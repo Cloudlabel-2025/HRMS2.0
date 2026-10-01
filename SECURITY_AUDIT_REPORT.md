@@ -52,11 +52,17 @@ This system is **NOT enterprise-ready** and presents **multiple critical securit
 **What Exists:**
 ```
 .env.local contains:
-- MONGODB_URI=mongodb+srv://rishivarshini7713_db_user:5fYuqh3MvGB2l69R@cluster0.mrllgn3.mongodb.net/?appName=Cluster0
-- JWT_SECRET=hrms_super_secret_jwt_key_2025
+- MONGODB_URI=mongodb+srv://<db-user>:<redacted>@cluster0.mrllgn3.mongodb.net/?appName=Cluster0
+- JWT_SECRET=<redacted>
 - SEED_ADMIN_EMAIL=superadmin@hrms.com
-- SEED_ADMIN_PASSWORD=Admin@1234
+- SEED_ADMIN_PASSWORD=<redacted>
 ```
+
+> NOTE (2026-10-01): the live values above were redacted after discovery that
+> this report had captured real secrets. Treat any previously recorded values
+> as compromised: rotate the Atlas DB user password, JWT_SECRET and the seed
+> admin password, and purge this file's history if the repo was pushed to a
+> shared remote.
 
 The `.gitignore` file correctly has `.env*` pattern, which should exclude `.env.local`, but:
 
@@ -68,12 +74,12 @@ The `.gitignore` file correctly has `.env*` pattern, which should exclude `.env.
    - Credentials follow simple naming convention (could be bruteforced in MongoDB Atlas)
 
 2. **JWT Secret Insufficient Strength**
-   - `JWT_SECRET=hrms_super_secret_jwt_key_2025` is only 29 characters
+   - `JWT_SECRET` (value redacted 2026-10-01) is only 29 characters
    - `jwt.js` checks for minimum 24 characters, so it passes, but is still weak
    - No entropy - predictable secret
 
 3. **Seed Admin Password in Env**
-   - `Admin@1234` is exposed in plaintext
+   - Seed admin password (value redacted 2026-10-01) is exposed in plaintext
    - Anyone accessing `.env.local` can access super admin account
    - No password rotation mechanism
 
@@ -102,7 +108,7 @@ ATTACK VECTOR 2: JWT Forgery
 
 ATTACK VECTOR 3: Super Admin Account Takeover
 - Attacker accesses .env.local
-- Knows super admin credentials: superadmin@hrms.com / Admin@1234
+- Knows super admin credentials: superadmin@hrms.com / <redacted 2026-10-01>
 - Logs in directly as super admin
 - Has complete system access
 ```
@@ -125,7 +131,7 @@ ATTACK VECTOR 3: Super Admin Account Takeover
    ```
    - Rotate MongoDB credentials in Atlas console
    - Generate new strong JWT_SECRET (minimum 64 characters, random)
-   - Disable Admin@1234 account and set random temporary password
+   - Disable the seed admin account and set random temporary password
    - Verify .env.local is NOT in git history using: git log --all -S "rishivarshini7713" --oneline
    - If in history: git filter-branch or git filter-repo to remove
    ```

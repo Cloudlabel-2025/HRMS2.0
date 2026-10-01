@@ -76,6 +76,9 @@ const AttendanceSchema = new mongoose.Schema({
     approvedAt: { type: Date, default: null },
   },
   approvedHalfDayLeave: { type: Boolean, default: false },
+  // Which half was actually worked (clockIn side of the split), independent
+  // of Leave.halfDayType (the leave's declared half). Set at clock-in.
+  workedHalf: { type: String, enum: ['first_half', 'second_half'], default: null },
   relatedLeaveId: { type: mongoose.Schema.Types.ObjectId, ref: 'Leave', default: null },
   // Admin-imported presence correction (bulk attendance import). A day the
   // employee physically worked but never clocked in. The status stays

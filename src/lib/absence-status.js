@@ -141,7 +141,10 @@ export function deriveAbsenceKind({
   if (attendance?.clockIn) {
     const st = attendance.status;
     if (st === 'half_day' || attendance.approvedHalfDayLeave) {
-      const halfLabel = leave?.halfDayType ? `Half day (${leave.halfDayType === 'first_half' ? 'First half' : 'Second half'})` : 'Half day (leave)';
+      // Prefer the half actually worked (clockIn side of the split) over the
+      // leave's declared half; historical rows carry no workedHalf.
+      const half = attendance?.workedHalf || leave?.halfDayType;
+      const halfLabel = half ? `Half day (${half === 'first_half' ? 'First half' : 'Second half'})` : 'Half day (leave)';
       return {
         kind: 'half_day', absent: false, permissionStatus: permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null,
         reason: halfLabel, halfDayThreshold, elapsed: 0, coversShift: false,

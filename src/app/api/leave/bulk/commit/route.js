@@ -311,12 +311,16 @@ export async function POST(req) {
         if (overlap) throw new Error(`Overlaps existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`);
 
         const halfDay = !!d.halfDay;
+        const halfDayStartTime = halfDay ? (d.halfDayStartTime || null) : null;
+        const halfDayEndTime = halfDay ? (d.halfDayEndTime || null) : null;
         let days;
         if (halfDay) {
           if (from !== to) throw new Error('Half-day leave must be a single day (from = to)');
           if (!typeConfig.allowHalfDay) throw new Error(`${typeConfig.name} does not support half-day leaves`);
           if (d.halfDayType === 'first_half' && typeConfig.allowFirstHalf === false) throw new Error('First Half is not enabled for this leave type');
           if (d.halfDayType === 'second_half' && typeConfig.allowSecondHalf === false) throw new Error('Second Half is not enabled for this leave type');
+          if (!!halfDayStartTime !== !!halfDayEndTime) throw new Error('halfDayStartTime and halfDayEndTime must both be filled or both blank');
+          if (halfDayStartTime && halfDayEndTime && halfDayStartTime >= halfDayEndTime) throw new Error('halfDayStartTime must be before halfDayEndTime');
           days = 0.5;
         } else {
           const holidays = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
@@ -432,6 +436,8 @@ export async function POST(req) {
           from, to, days, paidDays, unpaidDays,
           halfDay,
           halfDayType: halfDay ? d.halfDayType : null,
+          halfDayStartTime,
+          halfDayEndTime,
           reason,
           documents: [],
           policyId: policy._id,

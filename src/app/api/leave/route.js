@@ -168,7 +168,7 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { typeCode, from, to, halfDay, halfDayType, reason, documents } = validation.data;
+    const { typeCode, from, to, halfDay, halfDayType, halfDayStartTime, halfDayEndTime, reason, documents } = validation.data;
 
     const config = await getGlobalConfig();
     const fmtDate = t => {
@@ -239,6 +239,8 @@ export async function POST(req) {
         unpaidDays: 0,
         halfDay,
         halfDayType: halfDay ? halfDayType : null,
+        halfDayStartTime: halfDay ? (halfDayStartTime || null) : null,
+        halfDayEndTime: halfDay ? (halfDayEndTime || null) : null,
         reason,
         documents,
         status: 'approved',
@@ -287,6 +289,9 @@ export async function POST(req) {
         to,
         days,
         halfDay,
+        halfDayType: halfDay ? halfDayType : null,
+        halfDayStartTime: halfDay ? (halfDayStartTime || null) : null,
+        halfDayEndTime: halfDay ? (halfDayEndTime || null) : null,
         reason,
         documents,
         status: 'pending',
@@ -368,6 +373,26 @@ export async function POST(req) {
       }
       if (halfDayType === 'second_half' && !typeConfig.allowSecondHalf) {
         return fail('Second Half is not enabled for this leave type', 400);
+      }
+      // A custom window becomes the login/clock split, so it must sit
+      // inside the employee's own shift day. Overnight shifts (end < start)
+      // wrap (23:00 + 01:00 is valid on a 22:00-06:00 shift); a window that
+      // crosses midnight is rejected (start must be before end, per schema).
+      if (halfDayStartTime || halfDayEndTime) {
+        const { resolveShift } = await import('@/lib/shift-utils');
+        const shiftDoc = await resolveShift(user).catch(() => null);
+        if (!shiftDoc?.startTime || !shiftDoc?.endTime) {
+          return fail('Custom half-day time needs a resolvable shift on your account', 400);
+        }
+        const toM = (t) => { const [a, b] = t.split(':').map(Number); return a * 60 + b; };
+        const shiftLen = (((toM(shiftDoc.endTime) - toM(shiftDoc.startTime)) % 1440) + 1440) % 1440 || 1440;
+        const pos = (m) => (((m - toM(shiftDoc.startTime)) % 1440) + 1440) % 1440;
+        for (const [label, t] of [['start', halfDayStartTime], ['end', halfDayEndTime]]) {
+          const p = pos(toM(t));
+          if (p > shiftLen) {
+            return fail(`Custom half-day ${label} time ${t} is outside your shift (${shiftDoc.startTime} - ${shiftDoc.endTime})`, 400);
+          }
+        }
       }
     }
 
@@ -519,6 +544,8 @@ export async function POST(req) {
       unpaidDays,
       halfDay,
       halfDayType: halfDay ? halfDayType : null,
+      halfDayStartTime: halfDay ? (halfDayStartTime || null) : null,
+      halfDayEndTime: halfDay ? (halfDayEndTime || null) : null,
       reason,
       documents,
       policyId: policy._id,

@@ -1,6 +1,10 @@
 import mongoose from 'mongoose';
 
-const uri = 'mongodb+srv://rishivarshini7713_db_user:5fYuqh3MvGB2l69R@cluster0.mrllgn3.mongodb.net/?appName=Cluster0';
+const uri = process.env.MONGODB_URI;
+if (!uri) {
+  console.error('MONGODB_URI is not set. Refusing to run.');
+  process.exit(1);
+}
 
 async function main() {
   await mongoose.connect(uri);

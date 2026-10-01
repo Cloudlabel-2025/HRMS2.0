@@ -153,6 +153,12 @@ export default function LeavePage() {
     try {
       const { customStartTime, customEndTime, _showTimePicker, ...payload } = form;
       if (!payload.halfDay) delete payload.halfDayType;
+      // The optional custom window overrides the shift-derived half-day
+      // threshold as the login/clock split (validated both-or-neither above).
+      if (payload.halfDay && customStartTime && customEndTime) {
+        payload.halfDayStartTime = customStartTime;
+        payload.halfDayEndTime = customEndTime;
+      }
       await api.post('/api/leave', payload);
       showToast('Leave application submitted');
       setShowModal(false);

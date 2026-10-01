@@ -361,8 +361,12 @@ export async function GET(req) {
       if (minutesSinceShiftStart > 720) minutesSinceShiftStart -= 1440;
 
       if (rec.approvedHalfDayLeave) {
-        rec.status = 'half_day';
-        rec.lateFlag = false;
+        // Worked half of an approved half-day leave: a Present worked day
+        // carrying the half-day-leave marker (0.5 payroll credit via
+        // classifyPresence, Half Day badge via displayStatusOf). A stored
+        // late verdict (clock-in past the split) is preserved, never cleared.
+        rec.status = 'present';
+        rec.halfDayThresholdExceeded = !!rec.halfDayThresholdExceeded || !!rec.lateFlag;
       } else if (shiftFound) {
         const result = resolveDayStatus({
           clockIn: rec.clockIn,

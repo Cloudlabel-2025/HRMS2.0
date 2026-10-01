@@ -4,7 +4,10 @@ import { connectDB } from '@/lib/db';
 import User from '@/lib/models/User';
 import EmpProfile from '@/lib/models/EmploymentProfile';
 import RefreshToken from '@/lib/models/RefreshToken';
+import Leave from '@/lib/models/Leave';
 import TokenBlacklist from '@/lib/models/TokenBlacklist';
+import { resolveShift } from '@/lib/shift-utils';
+import { resolveHalfDaySplitMins, evaluateHalfDayGate } from '@/lib/half-day-window';
 import { NextResponse } from 'next/server';
 
 export async function POST(req) {
@@ -43,6 +46,40 @@ export async function POST(req) {
         : user.identityId ? await EmpProfile.findOne({ identityId: user.identityId }).select('employmentStatus') : null;
       if (!profile || !['resigned', 'terminated', 'retired', 'alumni'].includes(profile.employmentStatus)) {
         return fail('User not found or inactive', 401);
+      }
+    }
+
+    // ── Leave split gate: a blocked half window ends the rotating session ─
+    // Mirrors the login gate (login/route.js): full-day leave or the leave's
+    // own half refuses refresh, so an approved leave cannot be ridden out on
+    // an existing 7-day refresh family. The client treats a failed refresh
+    // as session expiry and redirects to /login.
+    let leaveToday;
+    try {
+      const { getTzDateStr } = await import('@/lib/timezone');
+      leaveToday = await getTzDateStr();
+    } catch {
+      const d = new Date();
+      leaveToday = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    const onLeave = await Leave.findOne({
+      userId: user._id,
+      status: 'approved',
+      from: { $lte: leaveToday },
+      to: { $gte: leaveToday },
+    });
+    if (onLeave && user.role !== 'super_admin') {
+      const shiftDoc = await resolveShift(user).catch(() => null);
+      const gate = evaluateHalfDayGate({
+        leave: onLeave,
+        splitMins: resolveHalfDaySplitMins(shiftDoc, user.shift, onLeave),
+      });
+      if (gate.blocked) {
+        await RefreshToken.updateMany({ userId: user._id, revoked: false }, { $set: { revoked: true } });
+        const blocked = NextResponse.json({ success: false, error: gate.message }, { status: 401 });
+        blocked.cookies.set('hrms_access', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+        blocked.cookies.set('hrms_refresh', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+        return blocked;
       }
     }
 
