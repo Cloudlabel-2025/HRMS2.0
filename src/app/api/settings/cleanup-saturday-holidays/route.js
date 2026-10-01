@@ -28,9 +28,9 @@ export async function POST(req) {
     const config = await getGlobalConfig();
     const pattern = getSaturdayPattern(config);
 
-    const all = await Holiday.find({}).select('_id name date type source').lean();
+    const all = await Holiday.find({}).select('_id name date type source workingDayOverride').lean();
     const matched = all.filter(h =>
-      isSaturdayDate(h.date) && (
+      isSaturdayDate(h.date) && !h.workingDayOverride && (
         h.source === 'saturday_alternate' ||
         LEGACY_GENERATED_NAME_RE.test(String(h.name || '').trim())
       )

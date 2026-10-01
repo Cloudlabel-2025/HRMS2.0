@@ -7,6 +7,7 @@ import { isDevAdminEmail } from '@/lib/permissions';
 import { ok, fail } from '@/lib/jwt';
 import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
+import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 
 export async function POST(req) {
   try {
@@ -98,8 +99,13 @@ export async function POST(req) {
       },
     });
     const holidayDates = new Set(holidayDocs.map(h => h.date));
+    const overrideDates = new Set(holidayDocs.filter(h => h.workingDayOverride).map(h => h.date));
+    const leaveConfig = await getGlobalConfig();
     if (holidayDocs.length > 0) {
       addTrace('Holiday Check', 'INFO', `Found ${holidayDocs.length} holiday(s) in date range: ${holidayDocs.map(h => `${h.name} (${h.date})`).join(', ')}.`);
+    }
+    if (overrideDates.size > 0) {
+      addTrace('Holiday Check', 'INFO', `Compensated working day(s) in range: ${[...overrideDates].join(', ')} — counted as working days.`);
     }
 
     let calculatedDays = 0;
@@ -110,13 +116,20 @@ export async function POST(req) {
       const dayOfWeek = d.getDay(); // 0: Sun, 6: Sat
       const dateStr = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 
-      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-      if (isWeekend && !policy.countWeekends) {
+      // Saturdays defer to the working calendar (same rule as the live leave
+      // route): a working Saturday counts even when countWeekends is off, and
+      // a compensated Saturday always counts. Sundays keep the policy switch.
+      const overrideDay = overrideDates.has(dateStr);
+      if (dayOfWeek === 0 && !policy.countWeekends && !overrideDay) {
+        weekendCount++;
+        continue;
+      }
+      if (dayOfWeek === 6 && !overrideDay && !isWorkingDay(dateStr, leaveConfig, holidayDocs)) {
         weekendCount++;
         continue;
       }
 
-      if (holidayDates.has(dateStr) && !policy.countHolidays) {
+      if (holidayDates.has(dateStr) && !overrideDay && !policy.countHolidays) {
         holidayCount++;
         continue;
       }

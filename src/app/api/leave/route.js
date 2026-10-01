@@ -9,6 +9,8 @@ import { getGlobalConfig, countWorkingDaysInRange } from '@/lib/payroll-cycle';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
 import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
 import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
+import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
+import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 
 function getActiveWorkflow(policy, typeCode) {
   const typeConfig = policy?.leaveTypeConfigs?.find(config => config.code === typeCode);
@@ -326,7 +328,6 @@ export async function POST(req) {
     }
 
     // Check dynamic eligibility rules
-    const { buildEmployeeContext, evaluateEligibility } = require('@/lib/leave/eligibility');
     const employeeContext = await buildEmployeeContext(user._id);
 
     // Evaluate gender restrictions
@@ -467,8 +468,6 @@ export async function POST(req) {
       return fail(`No balance record found or you are not eligible for ${typeConfig.name}`, 400);
     }
 
-    const { calculatePeriodAllowance } = require('@/lib/leave/accrual');
-    
     // Calculate paid and unpaid (LOP) split if requested days exceed available/allowed quota
     let paidDays = days;
     let unpaidDays = 0;

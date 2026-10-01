@@ -31,7 +31,7 @@ export async function GET(req) {
     const [attendance, leaves, holidays, users, shifts, shiftChanges] = await Promise.all([
       Attendance.find({ userId: { $in: ids }, date: { $gte: startDate, $lte: endDate } }).select('userId date status lateFlag halfDayThresholdExceeded clockIn shiftId shiftName shiftStartTime shiftEndTime shiftLateThreshold approvedHalfDayLeave permission leaveOverride nonWorkingDayType').lean(),
       Leave.find({ userId: { $in: ids }, status: 'approved', from: { $lte: endDate }, to: { $gte: startDate } }).select('userId from to').lean(),
-      Holiday.find({ date: { $gte: addDays(startDate, -1), $lte: addDays(endDate, 1) } }).select('date').lean(),
+      Holiday.find({ date: { $gte: addDays(startDate, -1), $lte: addDays(endDate, 1) } }).select('date workingDayOverride').lean(),
       User.find({ _id: { $in: ids } }).select('_id shift shiftId').lean(),
       Shift.find({}).lean(),
       ShiftChange.find({ status: 'applied', userIds: { $in: ids }, effectiveDate: { $lte: endDate } }).sort({ effectiveDate: -1, appliedAt: -1, createdAt: -1 }).lean(),
@@ -73,7 +73,7 @@ export async function GET(req) {
       return current?.shift ? shiftByName.get(current.shift) || null : null;
     };
     const employeeById = new Map(employees.map(employee => [employee.userId.toString(), employee]));
-    const holidayDates = new Set(holidays.map(holiday => holiday.date));
+    const holidayDates = new Set(holidays.filter(holiday => !holiday.workingDayOverride).map(holiday => holiday.date));
     const signals = new Map();
     const addSignal = (userId, type, evidence) => {
       if (!signals.has(userId)) signals.set(userId, []);

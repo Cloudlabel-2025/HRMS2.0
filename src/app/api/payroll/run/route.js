@@ -40,7 +40,7 @@ export async function POST(req) {
 
     const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
     const workingDays = workingCalendar.workingDays;
-    const holidayDocs = workingCalendar.holidays.map(date => ({ date }));
+    const holidayDocs = workingCalendar.holidays.map(date => ({ date, workingDayOverride: (workingCalendar.workingDayOverrides || []).includes(date) }));
     // Full calendar classification for the cycle: every date is exactly one
     // of working | holiday | weekly_off. The attendance register is
     // materialised against this same map (see syncEmployeeCalendarRows), so

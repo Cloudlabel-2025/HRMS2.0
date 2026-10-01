@@ -2889,6 +2889,9 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
 
   const handleAbsenceReasonChange = async (recordId, reason) => {
     try {
+      // Virtual "not-arrived" rows are display-only — there is no DB
+      // record to update yet, so skip the PUT instead of 404ing.
+      if (!recordId || String(recordId).startsWith('notarrived_')) return;
       await api.put('/api/attendance', { recordId, absenceReason: reason });
       setRecords(prev => prev.map(r => r._id === recordId ? { ...r, absenceReason: reason } : r));
     } catch (e) {
@@ -3087,7 +3090,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                   </div>
                 ))}
               </div>
-              {(row.status === 'absent' || row.status === 'late') && (
+              {(row.status === 'absent' || row.status === 'late') && !row._virtual && !(row.notArrived || row.displayStatus === 'not_arrived') && (
                 <div style={{ marginTop: 8, fontSize: 12, color: '#64748b' }}>
                   <strong>Absence Reason:</strong>{' '}
                   {isAdmin ? (

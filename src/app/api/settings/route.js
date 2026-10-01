@@ -29,7 +29,7 @@ const HOLIDAY_SOURCES = ['manual', 'saturday_alternate'];
 const FIELD_ALLOWLIST = {
   departments:  ['name', 'head', 'members', 'visibleDepartments'],
   shifts:       ['name', 'startTime', 'endTime', 'days', 'expectedHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
-  holidays:     ['name', 'date', 'type', 'source'],
+  holidays:     ['name', 'date', 'type', 'source', 'workingDayOverride', 'overrideReason'],
   config:       ['key', 'value'],
   roles:        ['name', 'description'],
   designations: ['name', 'department', 'description'],
@@ -47,6 +47,11 @@ function localTodayStr() {
   return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
 }
 
+function isSaturdayDate(dateStr) {
+  const d = new Date(String(dateStr || '') + 'T00:00:00');
+  return !Number.isNaN(d.getTime()) && d.getDay() === 6;
+}
+
 /**
  * Immediately propagate a holiday add/remove to attendance rows for that
  * single date, so past-date holidays reflect everywhere without waiting
@@ -56,7 +61,9 @@ function localTodayStr() {
  */
 async function syncHolidayDate(dateStr, { allowAbsent }) {
   const config = await getGlobalConfig();
-  const holidays = await Holiday.find({}).select('date').lean().catch(() => []);
+  // Include the override flag — without it the sync would treat a compensated
+  // Saturday as a holiday and flip the rows the wrong way.
+  const holidays = await Holiday.find({}).select('date workingDayOverride').lean().catch(() => []);
   const users = await User.find({ status: 'active' }).select('_id').lean().catch(() => []);
   return syncCalendarRowsForUsers({
     userIds: users.map(u => u._id),
@@ -150,6 +157,12 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
     if (data.source !== undefined && !HOLIDAY_SOURCES.includes(data.source))
       return { error: fail('Invalid holiday source', 400) };
     if (data.source === undefined && !isUpdate) data.source = 'manual';
+    // Compensated working day: normalise the boolean; the Saturday-only rule
+    // is enforced in POST/PUT where the effective date (payload or existing
+    // row) is known.
+    if (data.workingDayOverride !== undefined) {
+      data.workingDayOverride = data.workingDayOverride === true || data.workingDayOverride === 'true';
+    }
   }
 
   if (type === 'config') {
@@ -209,9 +222,18 @@ export async function POST(req) {
   }
 
   if (type === 'holidays') {
-    const conflict = await approvedLeaveOn(data.date);
-    if (conflict) {
-      return fail(`Cannot mark holiday on ${data.date} — an approved leave (${conflict.type}) already exists for this date`, 400);
+    // An override is not "marking a holiday" — it makes the date working, and
+    // any approved leave on it is re-evaluated rather than blocking creation.
+    // A Saturday-only gate applies to both paths below.
+    const isOverride = data.workingDayOverride === true;
+    if (!isOverride) {
+      const conflict = await approvedLeaveOn(data.date);
+      if (conflict) {
+        return fail(`Cannot mark holiday on ${data.date} — an approved leave (${conflict.type}) already exists for this date`, 400);
+      }
+    }
+    if (isOverride && !isSaturdayDate(data.date)) {
+      return fail('Only Saturdays can be marked as working days', 400);
     }
     const dup = await Holiday.findOne({ date: data.date }).select('_id').lean();
     if (dup) {
@@ -265,6 +287,14 @@ export async function PUT(req) {
     const dup = await Holiday.findOne({ date: data.date, _id: { $ne: id } }).select('_id').lean();
     if (dup) {
       return fail(`A holiday already exists on ${data.date}`, 409);
+    }
+  }
+  // The override flag alone (no date move) still needs the Saturday-only rule,
+  // checked against the row's effective date.
+  if (type === 'holidays' && data.workingDayOverride === true) {
+    const effectiveDate = data.date || prev?.date;
+    if (!isSaturdayDate(effectiveDate)) {
+      return fail('Only Saturdays can be marked as working days', 400);
     }
   }
   const doc = await MODEL_MAP[type].findByIdAndUpdate(id, data, { new: true, runValidators: true });

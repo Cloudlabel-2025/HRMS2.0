@@ -31,7 +31,14 @@ export function isWorkingDay(dateStr, config, holidays) {
   const dayOfWeek = d.getDay();
   if (dayOfWeek === 0) return false;
 
-  if (holidays?.some(h => h.date === dateStr)) return false;
+  // Compensated working day: a Holiday row flagged workingDayOverride makes
+  // the date working even though a Holiday record exists (Saturdays only —
+  // enforced where the flag is written). Every other Holiday row still wins.
+  // Rows may be date strings or { date, workingDayOverride } objects.
+  const rows = Array.isArray(holidays) ? holidays : [];
+  const sameDate = (h) => (typeof h === 'string' ? h === dateStr : h?.date === dateStr);
+  if (rows.some(h => sameDate(h) && h?.workingDayOverride)) return true;
+  if (rows.some(sameDate)) return false;
 
   // Saturday policy is authoritative (Settings → General → Saturday Working,
   // changeable at any time, default 'alternate').
@@ -60,6 +67,10 @@ export function isWorkingDay(dateStr, config, holidays) {
  */
 export function buildCalendarMap(fromDate, toDate, config = {}, holidays = []) {
   const holidaySet = new Set((holidays || []).map(h => (typeof h === 'string' ? h : h.date)));
+  // Dates booked as compensated working days. The direct membership test
+  // above would label them 'holiday' before isWorkingDay is ever consulted,
+  // so they are carved out here to keep the whole map consistent.
+  const overrideSet = new Set((holidays || []).filter(h => typeof h !== 'string' && h.workingDayOverride).map(h => h.date));
   const working = new Set();
   const holidayDates = new Set();
   const weeklyOff = new Set();
@@ -67,7 +78,7 @@ export function buildCalendarMap(fromDate, toDate, config = {}, holidays = []) {
   for (let cursor = new Date(`${fromDate}T00:00:00`), end = new Date(`${toDate}T00:00:00`); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
     const date = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
     let kind;
-    if (holidaySet.has(date)) kind = 'holiday';
+    if (holidaySet.has(date) && !overrideSet.has(date)) kind = 'holiday';
     else if (!isWorkingDay(date, config, holidays)) kind = 'weekly_off';
     else kind = 'working';
     byDate.set(date, kind);
@@ -95,13 +106,20 @@ export function buildWorkingDateSet(fromDate, toDate, config = {}, holidays = []
  */
 export function countWorkingDaysInRange(fromStr, toStr, config = {}, holidays = [], { countWeekends = false, countHolidays = false } = {}) {
   const holidayDates = new Set((holidays || []).map(h => (typeof h === 'string' ? h : h.date)));
+  // A compensated working day is not a holiday for counting purposes even
+  // though it holds a Holiday row — it counts as a working day below.
+  const overrideDates = new Set((holidays || []).filter(h => typeof h !== 'string' && h.workingDayOverride).map(h => h.date));
   let days = 0;
   for (let d = new Date(`${fromStr}T00:00:00`), last = new Date(`${toStr}T00:00:00`); d <= last; d.setDate(d.getDate() + 1)) {
     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const dow = d.getDay();
-    const isWeekendDay = dow === 0 || dow === 6;
-    if (isWeekendDay && !countWeekends) continue;
-    if (holidayDates.has(dateStr) && !countHolidays) continue;
+    // Sundays are never leave days unless the policy counts weekends.
+    if (dow === 0 && !countWeekends) continue;
+    // Saturdays defer to the working calendar: a working Saturday is a leave
+    // day even when countWeekends is off; an off Saturday never is.
+    // countWeekends therefore governs Sundays only.
+    if (dow === 6 && !isWorkingDay(dateStr, config, holidays)) continue;
+    if (holidayDates.has(dateStr) && !overrideDates.has(dateStr) && !countHolidays) continue;
     // When weekends are counted, still exclude Sundays/holidays via isWorkingDay
     // so payroll and leave agree; Saturdays follow saturdayWorking mode.
     if (countWeekends && !isWorkingDay(dateStr, config, holidays)) {
@@ -127,7 +145,7 @@ export async function getWorkingDayCalendar(fromDate, toDate, config = {}) {
     if (d.getDay() === 6 && holidayDates.includes(dateStr)) saturdayHolidays++;
     if (isWorkingDay(dateStr, config, holidays)) workingDays++;
   }
-  return { workingDays, holidays: holidayDates, sundays, saturdayHolidays };
+  return { workingDays, holidays: holidayDates, workingDayOverrides: holidays.filter(h => h.workingDayOverride).map(h => h.date), sundays, saturdayHolidays };
 }
 
 export function getCycleRange(payrollStartDay, payrollEndDay, year, month) {

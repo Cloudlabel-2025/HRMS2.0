@@ -125,7 +125,7 @@ export async function GET(req) {
             syncUids = (all || []).map(u => String(u._id));
           }
         }
-        holidayDocs = await Holiday.find({ date: { $gte: syncFrom, $lte: syncTo } }).select('date name type').lean().catch(() => []);
+        holidayDocs = await Holiday.find({ date: { $gte: syncFrom, $lte: syncTo } }).select('date name type workingDayOverride').lean().catch(() => []);
         if (syncUids.length) {
           const tKey = `${syncFrom}|${syncTo}|${syncUids.length}|${syncUids[0] || ''}`;
           const lastSync = _attendanceSyncThrottle.get(tKey);
@@ -604,6 +604,34 @@ export async function PUT(req) {
 
         return ok(record);
       }
+    }
+
+    // Update by record ID (e.g. absence reason from the Team view).
+    // The old date-based path below resolves to the caller's own "today"
+    // when userId/date are omitted, so a { recordId } payload would miss
+    // and return 404 ("Attendance record not found").
+    const recordId = body.recordId || (!body.action ? body.attendanceId : null);
+    if (recordId) {
+      if (typeof recordId === 'string' && recordId.startsWith('notarrived_')) {
+        return fail('No attendance record exists for this day yet', 400);
+      }
+      if (!['super_admin', 'admin_full', 'team_lead', 'team_admin'].includes(user.role)) {
+        return fail('Access denied', 403);
+      }
+      const record = await Attendance.findById(recordId).catch(() => null);
+      if (!record) return fail('Attendance record not found', 404);
+      // Scope team leads / team admins to their own departments.
+      if (['team_lead', 'team_admin'].includes(user.role)) {
+        const depts = await getAccessibleDepartments(user);
+        if (depts !== null) {
+          const targetUser = await User.findById(record.userId).select('department').lean();
+          if (!targetUser || !depts.includes(targetUser.department)) return fail('Access denied', 403);
+        }
+      }
+      if ('absenceReason' in body) record.absenceReason = body.absenceReason;
+      else return fail('Nothing to update', 400);
+      await record.save();
+      return ok(record);
     }
 
     const targetUserId = body.userId || user._id;

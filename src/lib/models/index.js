@@ -433,6 +433,11 @@ const HolidaySchema = new mongoose.Schema({
   name: { type: String, required: true },
   date: { type: String, required: true },
   type: { type: String, enum: ['National','Optional','Company'], default: 'National' },
+  // Compensated working day: when true, this date counts as a WORKING day even
+  // though it holds a Holiday record. Only meaningful on Saturdays (enforced
+  // in the settings route) — e.g. a leave Saturday worked in lieu of a holiday.
+  workingDayOverride: { type: Boolean, default: false },
+  overrideReason:   { type: String, default: '' },
   // Provenance for auto-generated rows. The Saturday generator tags its rows
   // so the opt-in cleanup can remove exactly those and never touch manual
   // holidays. Pre-existing generator rows have no source (matched by name).

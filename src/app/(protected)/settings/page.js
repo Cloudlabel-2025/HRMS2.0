@@ -106,6 +106,11 @@ export default function SettingsPage() {
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  // Retroactive leave re-evaluation after a Saturday is bookmarked working.
+  const [reevalDate, setReevalDate] = useState(null);
+  const [reevalPreview, setReevalPreview] = useState(null);
+  const [reevalLoading, setReevalLoading] = useState(false);
+  const [reevalConfirming, setReevalConfirming] = useState(false);
   const [notifications, setNotifications] = useState(
     Object.fromEntries(NOTIFICATION_RULES.map(([title, , def]) => [title, def]))
   );
@@ -155,6 +160,35 @@ export default function SettingsPage() {
       showToast(e.message, 'error');
     } finally {
       setCleaning(false);
+    }
+  };
+
+  const previewReeval = async (date) => {
+    setReevalDate(date);
+    setReevalPreview(null);
+    setReevalLoading(true);
+    try {
+      const res = await api.post('/api/settings/reevaluate-leaves', { date, preview: true });
+      setReevalPreview(res);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setReevalLoading(false);
+    }
+  };
+
+  const doReeval = async () => {
+    if (!reevalDate) return;
+    setReevalConfirming(true);
+    try {
+      const res = await api.post('/api/settings/reevaluate-leaves', { date: reevalDate, confirm: true });
+      showToast(`Re-evaluated ${res?.applied?.length || 0} leave(s) overlapping ${reevalDate}`);
+      setReevalDate(null);
+      setReevalPreview(null);
+    } catch (e) {
+      showToast(e.message, 'error');
+    } finally {
+      setReevalConfirming(false);
     }
   };
   const saturdayPatternLabel = () => {
@@ -259,6 +293,11 @@ export default function SettingsPage() {
       showToast(res?.synced ? `Saved — ${(res.synced.updated || 0) + (res.synced.inserted || 0)} attendance row(s) updated` : 'Saved successfully');
       setShowModal(null);
       load();
+      // A newly-bookmarked working Saturday changes the leave calendar:
+      // offer the retroactive re-evaluation (preview → confirm).
+      if (res?.workingDayOverride && res?.date) {
+        previewReeval(res.date);
+      }
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -550,10 +589,11 @@ export default function SettingsPage() {
                           while (out.length < 10) {
                             if (cur.getDay() === 6) {
                               const ds = cur.getFullYear() + '-' + String(cur.getMonth() + 1).padStart(2, '0') + '-' + String(cur.getDate()).padStart(2, '0');
-                              const off = isSaturdayOff(ds, { saturdayWorking: 'alternate', saturdayAlternatePattern: config.saturdayAlternatePattern, payrollStartDay: config.payrollStartDay });
+                              const overridden = (holidays || []).some(h => h.date === ds && h.workingDayOverride);
+                              const off = overridden ? false : isSaturdayOff(ds, { saturdayWorking: 'alternate', saturdayAlternatePattern: config.saturdayAlternatePattern, payrollStartDay: config.payrollStartDay });
                               out.push(
                                 <span key={ds} className="badge" style={{ background: off ? '#fee2e2' : '#dcfce7', color: off ? '#b91c1c' : '#16a34a', fontSize: 11, fontWeight: 600 }}>
-                                  {ds.slice(8)}/{ds.slice(5, 7)} · {off ? 'Holiday' : 'Working'}
+                                  {ds.slice(8)}/{ds.slice(5, 7)} · {off ? 'Holiday' : overridden ? 'Working (override)' : 'Working'}
                                 </span>
                               );
                             }
@@ -1059,6 +1099,31 @@ export default function SettingsPage() {
                       {['National', 'Optional', 'Company'].map(t => <option key={t}>{t}</option>)}
                     </select>
                   </div>
+                  {(() => {
+                    const d = new Date(String(modalForm.date || '') + 'T00:00:00');
+                    const isSat = !Number.isNaN(d.getTime()) && d.getDay() === 6;
+                    return (
+                      <div className="col-12">
+                        <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, cursor: isSat ? 'pointer' : 'not-allowed', color: isSat ? '#1e293b' : '#94a3b8', fontWeight: 600 }}>
+                          <input type="checkbox" checked={!!modalForm.workingDayOverride} disabled={!isSat}
+                            onChange={e => setModalForm(p => ({ ...p, workingDayOverride: e.target.checked }))} />
+                          Treat as working day (compensated Saturday)
+                        </label>
+                        {!isSat && (
+                          <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>Only Saturdays can be bookmarked as working days.</div>
+                        )}
+                        {isSat && (
+                          <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>The date counts as a full working day for attendance, leave and payroll. Existing leave on it is offered for re-evaluation after saving.</div>
+                        )}
+                        {!!modalForm.workingDayOverride && (
+                          <div style={{ marginTop: 8 }}>
+                            <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Reason</label>
+                            <input className="form-control" value={modalForm.overrideReason || ''} onChange={e => setModalForm(p => ({ ...p, overrideReason: e.target.value }))} placeholder="e.g. Worked in lieu of festival holiday" />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
               <div className="modal-footer">
@@ -1134,6 +1199,55 @@ export default function SettingsPage() {
           holiday(s) listed above? Manual holidays are not affected. Re-run{' '}
           <strong>Generate Saturday Holidays</strong> afterwards to rebuild them under the active pattern.
         </p>
+      </ConfirmModal>
+      <ConfirmModal
+        open={!!reevalDate}
+        title={`Re-evaluate leave on ${reevalDate || ''}`}
+        confirmText={reevalPreview ? `Apply to ${reevalPreview?.totals?.leavesChanged || 0} leave(s)` : 'Apply'}
+        variant="primary"
+        confirming={reevalConfirming || reevalLoading}
+        onClose={() => { if (!reevalConfirming && !reevalLoading) { setReevalDate(null); setReevalPreview(null); } }}
+        onConfirm={doReeval}
+      >
+        {reevalLoading || !reevalPreview ? (
+          <p style={{ fontSize: 13, color: '#64748b', margin: 0 }}>
+            <span className="spinner-border spinner-border-sm me-2" />Computing affected leave…
+          </p>
+        ) : (
+          <div style={{ fontSize: 13, color: '#334155' }}>
+            <p style={{ margin: '0 0 8px' }}>
+              <strong>{reevalPreview.totals.leavesChanged}</strong> leave record(s) change by{' '}
+              <strong>{reevalPreview.totals.dayDelta > 0 ? '+' : ''}{reevalPreview.totals.dayDelta}</strong> day(s),
+              balance impact <strong>{reevalPreview.totals.balanceDelta > 0 ? '+' : ''}{reevalPreview.totals.balanceDelta}</strong> day(s).
+            </p>
+            {reevalPreview.totals.closedCycles?.length > 0 && (
+              <p style={{ fontSize: 12, color: '#92400e', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 8, padding: '8px 10px', margin: '0 0 8px' }}>
+                <i className="bi bi-exclamation-triangle me-1" />
+                Cycle(s) already closed: <strong>{reevalPreview.totals.closedCycles.join(', ')}</strong>. The
+                difference moves through the retro adjustment on the next run — no payroll is re-run.
+              </p>
+            )}
+            {reevalPreview.attendance && (
+              <p style={{ fontSize: 12, color: '#64748b', margin: '0 0 8px' }}>
+                Attendance on {reevalDate}: {reevalPreview.attendance.worked} worked, {reevalPreview.attendance.onLeave} on leave,{' '}
+                {reevalPreview.attendance.nonWorked} without clock-in (past rows flip to Absent on apply).
+              </p>
+            )}
+            {(reevalPreview.changed || []).slice(0, 8).map(c => (
+              <div key={c.leaveId} style={{ fontSize: 12, padding: '6px 0', borderTop: '1px solid #f1f5f9' }}>
+                <strong>{c.type}</strong> {c.from} → {c.to} ({c.status}): {c.oldDays} → <strong>{c.newDays}</strong> day(s),
+                balance {c.balanceDelta > 0 ? '+' : ''}{c.balanceDelta}
+                {c.payrollClosed && <span style={{ color: '#92400e' }}> · cycle {c.payrollMonth} closed</span>}
+              </div>
+            ))}
+            {(reevalPreview.changed || []).length > 8 && (
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>…and {reevalPreview.changed.length - 8} more.</div>
+            )}
+            {(reevalPreview.skipped || []).length > 0 && (
+              <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>{reevalPreview.skipped.length} record(s) skipped (see preview for reasons).</div>
+            )}
+          </div>
+        )}
       </ConfirmModal>
       <ConfirmModal
         open={confirmArchive}

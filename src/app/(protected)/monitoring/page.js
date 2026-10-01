@@ -91,7 +91,7 @@ export default function MonitoringPage() {
       ]);
 
       const leaveArr = Array.isArray(leaves) ? leaves : [];
-      const holidaySet = new Set((Array.isArray(holidays) ? holidays : []).map(h => h.date).filter(Boolean));
+      const holidaySet = new Set((Array.isArray(holidays) ? holidays : []).filter(h => !h.workingDayOverride).map(h => h.date).filter(Boolean));
 
       const attMap = {};
       for (const r of [...(Array.isArray(attendanceYest) ? attendanceYest : [])]) {

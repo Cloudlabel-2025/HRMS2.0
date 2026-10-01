@@ -123,9 +123,10 @@ export default function CalendarPage() {
         id: `holiday-${h._id}`,
         refId: h._id,
         title: h.name,
-        subtitle: h.type,
+        subtitle: h.workingDayOverride ? `${h.type} · Working day` : h.type,
         date: h.date,
         type: 'holiday',
+        workingDayOverride: !!h.workingDayOverride,
       });
     }
 
@@ -382,7 +383,11 @@ export default function CalendarPage() {
                       if (!day) return <div key={i} />;
                       const dayEvents = getEventsForDay(day);
                       const isSelected = selectedDay === day;
-                      const isHolidaySat = isHolidaySaturday(year, month, day, saturdayConfig);
+                      // A Saturday bookmarked as a compensated working day is
+                      // never painted as a weekend, even though its Holiday
+                      // row still exists (and still shows its event dot).
+                      const isHolidaySat = isHolidaySaturday(year, month, day, saturdayConfig)
+                        && !dayEvents.some(e => e.type === 'holiday' && e.workingDayOverride);
                       const isWeekend = (i % 7 === 0) || (isHolidaySat);
                       const count = eventCounts[`${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`] || 0;
                       const typeColors = [...new Set(dayEvents.map(e => e.type))].map(t => TYPE_COLORS[t]?.color).filter(Boolean);

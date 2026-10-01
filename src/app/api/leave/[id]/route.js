@@ -9,6 +9,7 @@ import { isWorkingDay, getGlobalConfig } from '@/lib/payroll-cycle';
 import { z } from 'zod';
 import { canApproveLeave, canViewUser } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
+import { getRelativePeriod, recordPeriodUsageSplit, recordPeriodUsage } from '@/lib/leave/accrual';
 
 const ActionSchema = z.object({
   action:     z.enum(['approved', 'rejected', 'held']),
@@ -37,7 +38,6 @@ async function revertPeriodUsage(balanceEntry, typeConfig, cycleStart, fromStr, 
   try {
     if (!typeConfig || !(typeConfig.maxUsagePerPeriod > 0) || !(paidDays > 0)) return;
     const arr = balanceEntry.periodUsage || [];
-    const { getRelativePeriod } = require('@/lib/leave/accrual');
     const code = getRelativePeriod(typeConfig.usagePeriod, cycleStart, new Date(fromStr));
     const row = arr.find(p => (p.period || p.periodCode) === code);
     if (row) row.used = Math.max(0, Number(row.used || 0) - Number(paidDays || 0));
@@ -201,7 +201,6 @@ export async function PUT(req, { params }) {
 
               // Update periodic usage metrics — split across working days for cross-period spans
               if (typeConfig && typeConfig.maxUsagePerPeriod > 0) {
-                const { recordPeriodUsageSplit } = require('@/lib/leave/accrual');
                 recordPeriodUsageSplit(entry, typeConfig.usagePeriod, balance.cycleStart, leave.from, leave.to, paidDays, { halfDay: !!leave.halfDay });
               }
 
@@ -458,7 +457,6 @@ export async function PUT(req, { params }) {
             }
 
             if (typeConfig && typeConfig.maxUsagePerPeriod > 0) {
-              const { recordPeriodUsage } = require('@/lib/leave/accrual');
               recordPeriodUsage(entry, typeConfig.usagePeriod, balance.cycleStart, new Date(leave.from), paidDays);
             }
 

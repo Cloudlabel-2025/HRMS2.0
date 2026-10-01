@@ -29,7 +29,15 @@ function eachDateStr(fromDate, toDate) {  const out = [];
  * The calendar (Holiday docs + Sunday + Saturday policy) is authoritative:
  * every date is exactly one of 'working' | 'holiday' | 'weekly_off'.
  */
-export function classifyCalendarDate(dateStr, config = {}, holidaySet = new Set()) {
+export function classifyCalendarDate(dateStr, config = {}, holidaySet = new Set(), overrideSet = new Set()) {
+  // A compensated working Saturday never classifies as a holiday. Sunday is
+  // still non-working unconditionally (server validation also refuses the
+  // flag on Sundays), and any other day keeps its normal judgement below.
+  if (overrideSet.has(dateStr)) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (d.getDay() === 0) return 'weekly_off';
+    return 'working';
+  }
   if (holidaySet.has(dateStr)) return 'holiday';
   const d = new Date(dateStr + 'T00:00:00');
   if (d.getDay() === 0) return 'weekly_off';
@@ -114,6 +122,7 @@ export async function syncCalendarRowsForUsers({
       return n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0') + '-' + String(n.getDate()).padStart(2, '0');
     })();
   const holidaySet = new Set((holidays || []).map(h => (typeof h === 'string' ? h : h.date)));
+  const overrideSet = new Set((holidays || []).filter(h => typeof h !== 'string' && h.workingDayOverride).map(h => h.date));
   const dates = eachDateStr(fromDate, toDate).filter(d => d <= today);
   if (!dates.length || !uids.length) return { inserted: 0, updated: 0, skipped: 0 };
 
@@ -214,7 +223,7 @@ export async function syncCalendarRowsForUsers({
     for (const d of dates) {
       // Pre-joining dates are never materialised — no phantom absences.
       if (startDate && d < startDate) { skipped++; continue; }
-      const kind = classifyCalendarDate(d, config, holidaySet);
+      const kind = classifyCalendarDate(d, config, holidaySet, overrideSet);
       const ex = byDate.get(d);
       // Source-aware: the schema materialises an empty importedPresence
       // object (all nulls) on every row, which is truthy — only a real
