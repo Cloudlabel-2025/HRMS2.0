@@ -35,7 +35,7 @@ export default function PayrollPage() {
   const [structurePage, setStructurePage] = useState(1);
   const [rules, setRules] = useState([]);
   const [showRuleModal, setShowRuleModal] = useState(false);
-  const [ruleForm, setRuleForm] = useState({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true } });
+  const [ruleForm, setRuleForm] = useState({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0, lateLopMode: 'half', lateGraceMinutes: 0, halfDayThresholdFullLop: true } });
   const [savingRule, setSavingRule] = useState(false);
   const [alert, setAlert] = useState(null); // { mode: 'missing'|'finalize'|'result', missing, result }
   const pageSize = 10;
@@ -164,6 +164,7 @@ export default function PayrollPage() {
         <div class='row'><span style='color:#64748b'>Days Present (credit)</span><span>${slip.presentDays ?? '—'}</span></div>
         <div class='row'><span style='color:#64748b'>Days Worked</span><span>${slip.daysWorked ?? '—'}</span></div>
         <div class='row'><span style='color:#64748b'>Absent Days</span><span>${slip.absentDays ?? '—'}</span></div>
+        ${(slip.lateLopDays > 0) ? `<div class='row'><span style='color:#64748b'>Late LOP Days</span><span>${slip.lateLopDays}<span style='font-size:11px'> (${slip.slightLateDays || 0} late × 0.5${(slip.pastThresholdLateDays || 0) > 0 ? `, ${slip.pastThresholdLateDays} past half-day × 1.0` : ''})</span></span></div>` : ''}
         <div class='row'><span style='color:#64748b'>Paid Leave Days</span><span>${slip.paidLeaveDays ?? '—'}${slip.unpaidLeaveDays ? ` <span style='font-size:11px'>(+${slip.unpaidLeaveDays} unpaid)</span>` : ''}</span></div>
         <div class='row'><span style='color:#64748b'>Holidays / Week-offs</span><span>${((slip.holidayDays || 0) + (slip.weeklyOffDays || 0)) || '—'}</span></div>
         <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.effectiveLopDays ?? slip.lopDays ?? 0}${(slip.graceDaysApplied > 0) ? ` (${slip.lopDays || 0} raw, ${slip.graceDaysApplied} grace)` : ''}${(slip.retroLopDays > 0) ? ` + ${slip.retroLopDays} retro` : ''}</span></div>
@@ -481,7 +482,7 @@ export default function PayrollPage() {
             <div className="card">
               <div style={{ padding: '16px 20px', borderBottom: '1px solid #f1f5f9', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>Payroll Rules</span>
-                <button className="btn btn-primary btn-sm" onClick={() => { setRuleForm({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0 } }); setShowRuleModal(true); }}><i className="bi bi-plus-lg me-1" />Add Rule</button>
+                <button className="btn btn-primary btn-sm" onClick={() => { setRuleForm({ name: '', isDefault: false, earnings: [{ code: 'BASIC', label: 'Basic Pay', type: 'percent_of_gross', value: 50 }], deductions: [], lopConfig: { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0, lateLopMode: 'half', lateGraceMinutes: 0, halfDayThresholdFullLop: true } }); setShowRuleModal(true); }}><i className="bi bi-plus-lg me-1" />Add Rule</button>
               </div>
               <div className="table-responsive">
                 <table className="table mb-0">
@@ -495,7 +496,7 @@ export default function PayrollPage() {
                         <td>{r.isDefault ? <span className="badge status-approved">Default</span> : '—'}</td>
                         <td style={{ fontSize: 12 }}>{r.earnings?.map(e => `${e.label} (${e.value}${e.type.includes('percent') ? '%' : ''})`).join(', ')}</td>
                         <td style={{ fontSize: 12 }}>{r.deductions?.filter(d => d.enabled !== false).map(d => d.label).join(', ') || '—'}</td>
-                        <td style={{ fontSize: 12 }}>{r.lopConfig?.basis === 'calendar_days' ? 'Calendar Days' : 'Working Days'}</td>
+                        <td style={{ fontSize: 12 }}>{({ working_days: 'Working Days', calendar_days: 'Calendar Days', fixed_26: 'Fixed 26 Days', fixed_30: 'Fixed 30 Days' })[r.lopConfig?.basis] || 'Working Days'}</td>
                         <td><button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => { setRuleForm({ ...r }); setShowRuleModal(true); }}><i className="bi bi-pencil" /></button></td>
                       </tr>
                     ))}
@@ -618,7 +619,20 @@ export default function PayrollPage() {
                         <input type="number" min="0" className="form-control form-control-sm" placeholder="e.g. 0" value={ruleForm.lopConfig?.graceDays ?? 0} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, graceDays: +e.target.value } }))} />
                       </div>
                       <div className="col-3 d-flex align-items-end">
-                        <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.lopConfig?.countHalfDay !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, countHalfDay: e.target.checked } }))} id="halfDayLop" /><label className="form-check-label" htmlFor="halfDayLop" style={{ fontSize: 12 }} title="Approved half-day leave counts 0.5 day. Late arrival always counts a full day and is never LOP.">Half-day leave = 0.5 day</label></div>
+                        <div className="form-check"><input className="form-check-input" type="checkbox" checked={ruleForm.lopConfig?.countHalfDay !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, countHalfDay: e.target.checked } }))} id="halfDayLop" /><label className="form-check-label" htmlFor="halfDayLop" style={{ fontSize: 12 }} title="Approved half-day leave credits a 0.5 day. When off, it is paid as a full day instead.">Half-day leave = 0.5 day</label></div>
+            <div className="form-group mt-2"><label className="form-label" style={{ fontSize: 11 }}>Late-Arrival LOP</label>
+              <select className="form-control form-control-sm" value={ruleForm.lopConfig?.lateLopMode ?? 'half'} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, lateLopMode: e.target.value } }))}>
+                <option value="none">None - late never deducts pay</option>
+                <option value="half">Half day - 0.5 day withheld</option>
+                <option value="full">Full day - 1 day withheld</option>
+              </select>
+            </div>
+            <div className="form-group mt-2"><label className="form-label" style={{ fontSize: 11 }}>Late Grace (minutes, free)</label>
+              <input type="number" min="0" className="form-control form-control-sm" value={ruleForm.lopConfig?.lateGraceMinutes ?? 0} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, lateGraceMinutes: Number(e.target.value) || 0 } }))} />
+              <div className="form-text" style={{ fontSize: 10 }}>0 means the first minute past the shift's late threshold is already deducted.</div>
+            </div>
+            <div className="form-check mt-1"><input type="checkbox" className="form-check-input" checked={ruleForm.lopConfig?.halfDayThresholdFullLop !== false} onChange={e => setRuleForm(p => ({ ...p, lopConfig: { ...p.lopConfig, halfDayThresholdFullLop: e.target.checked } }))} id="halfThresholdFullLop" /><label className="form-check-label" htmlFor="halfThresholdFullLop" style={{ fontSize: 12 }} title="Arriving at or after the shift's halfDayThreshold escalates the deduction to a full day.">Past half-day threshold = full-day LOP</label></div>
+            <div className="form-text mt-2" style={{ fontSize: 10, color: '#64748b' }}>Short hours, break excess and permission are never deducted, regardless of these settings. Overtime for a late clock-out is not implemented yet and adds nothing.</div>
                       </div>
                     </div>
                   </div>

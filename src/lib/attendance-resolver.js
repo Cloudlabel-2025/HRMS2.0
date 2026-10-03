@@ -23,7 +23,8 @@ function toMins(timeStr) {
  *     Mid-day permissions (window does not include shift start) never
  *     affect late — they only consume the monthly allowance.
  *  4. lateThreshold from shift -> 'late' | 'present'.
- *     Late is display-only: payroll always credits a full day for it.
+ *     'late' is money-bearing: past the threshold the day is worth half, and
+ *     at/over halfDayThreshold nothing. See classifyDayPay below.
  *
  * @param {Object} params
  * @param {string|null} params.clockIn - HH:MM actually clocked (wall time, never faked)
@@ -96,35 +97,92 @@ export function resolveDayStatus({
 }
 
 /**
- * Single payroll day classifier shared by payroll/run and absence marking.
- * Priority: approved half-day (0.5) > clocked present/late (1, half_day 0.5)
- * > approved paid leave (overlap handled by caller) > permission/shortHours
- * informational (never LOP) > absent/missing (0, LOP via stored record).
+ * Day-count classifier for attendance/report surfaces (no money).
  *
- * Late NEVER reduces pay: any clocked-in late day credits a full day.
- * `countHalfDay` is not consulted here. A half-day leave always credits 0.5
- * presence; the "pay a half-day leave as a full day" behaviour lives entirely
- * on the leave-credit side of payroll (payroll-run-engine), which also keeps
- * the unworked-half-of-a-half-day-leave rule consistent. Crediting 1 here AND
- * 0.5 on the leave side used to make one working day worth 1.5 payable days.
- *
- * @param {Object} rec - Attendance record (lean or doc)
- * @param {Object} lopConfig - { countHalfDay } (accepted for call compatibility)
- * @returns {number} presence credit 0 | 0.5 | 1
+ * Delegates to classifyDayPay with lateLopMode 'none' so a late-arrival LOP
+ * rule can never change an attendance report figure. See classifyDayPay below
+ * for the payroll money rules.
  */
 export function classifyPresence(rec, lopConfig = {}) { // eslint-disable-line no-unused-vars
+  // Attendance/report consumers only need the day count, never the money.
+  // Passing lateLopMode 'none' guarantees this stays independent of the late
+  // LOP rule so a payslip change can never shift an attendance figure.
+  return classifyDayPay(rec, { lateLopMode: 'none' }).presence;
+}
+
+/**
+ * Single classifier for a working day's MONEY: how much presence it credits
+ * and how many LOP days it withholds.
+ *
+ *   Situation                              presence  lopDays
+ *   --------------------------------------  --------  -------
+ *   on time / present                            1.0       0
+ *   short hours, break excess, permission         1.0       0   <- never LOP
+ *   imported presence (bulk-import correction)    1.0       0
+ *   approved half-day leave (worked other half)   0.5       0
+ *   late, within lateGraceMinutes                 1.0       0
+ *   late, past lateGraceMinutes (default)         0.5      0.5
+ *   late, at/over halfDayThreshold                0.0      1.0
+ *   absent (no clock-in)                          0.0      1.0
+ *   paid leave day (no clock-in)                  0.0       0
+ *
+ * Late deduction is governed by lopConfig.lateLopMode:
+ *   'half' (default) 0.5 day · 'full' 1.0 day · 'none' no deduction at all.
+ * Crossing the shift's halfDayThreshold escalates to a full day whenever
+ * lopConfig.halfDayThresholdFullLop is true, unless the mode is 'none'.
+ *
+ * INVARIANT — shortHours, shortfallMins, breakExcessMins, payableHours and
+ * permission are INFORMATIONAL ONLY and must never contribute lopDays. Only an
+ * absence, an explicitly unpaid leave type, or a late arrival may deduct.
+ *
+ * The late tiers rely on `status === 'late'` and `halfDayThresholdExceeded`,
+ * both of which the payroll run recomputes from the frozen shift snapshot
+ * before calling this. The stored flag may be stale — never trust it without
+ * that recompute.
+ *
+ * @param {Object} rec - Attendance record (lean or doc)
+ * @param {Object} lopConfig - { lateLopMode, lateGraceMinutes, halfDayThresholdFullLop, countHalfDay }
+ * @param {number|null} [minutesLate] - minutes past shift start; only used to
+ *   apply lateGraceMinutes. Derived from the frozen shift snapshot by the caller.
+ * @returns {{ presence: 0|0.5|1, lopDays: 0|0.5|1 }}
+ */
+export function classifyDayPay(rec, lopConfig = {}, minutesLate = null) {
+  const mode = lopConfig.lateLopMode ?? 'half';
+
   // Admin-imported presence correction (bulk attendance import): a full
   // present day with no clock-in. Must come before the clockIn guard, and
   // must require a real source — the schema materialises an empty
   // importedPresence object (all nulls) on every row, which is truthy.
   if (hasImportedPresence(rec) && ['present', 'late'].includes(rec.status)) {
-    return 1;
+    return { presence: 1, lopDays: 0 };
   }
-  if (!rec?.clockIn) return 0;
-  // Approved half-day leave: worked one half, so half a day's presence.
-  if (rec.approvedHalfDayLeave || rec.status === 'half_day') return 0.5;
-  // Late always credits a full day — late is never LOP, including arrivals
-  // past the shift's half-day threshold (that is display-only).
-  if (['present', 'late'].includes(rec.status)) return 1;
-  return 0;
+
+  // Absent: no clock-in and no approved leave. Deducted via the absentDays
+  // counter by the caller, so report 0 here to avoid double counting.
+  if (rec?.status === 'absent' && !rec?.clockIn) return { presence: 0, lopDays: 0 };
+
+  if (!rec?.clockIn) return { presence: 0, lopDays: 0 };
+
+  // Approved half-day leave: the employee worked the other half, so half a
+  // day's presence. The leave side credits the remaining half.
+  if (rec.approvedHalfDayLeave || rec.status === 'half_day') return { presence: 0.5, lopDays: 0 };
+
+  if (rec.status === 'late') {
+    if (mode === 'none') return { presence: 1, lopDays: 0 };
+    // Free grace band: still inside tolerance, nothing is withheld.
+    const grace = Number(lopConfig.lateGraceMinutes) || 0;
+    if (grace > 0 && Number.isFinite(minutesLate) && minutesLate <= grace) {
+      return { presence: 1, lopDays: 0 };
+    }
+    // Crossed the half-day threshold -> escalate to a full day's LOP.
+    if (rec.halfDayThresholdExceeded && lopConfig.halfDayThresholdFullLop !== false) {
+      return { presence: 0, lopDays: 1 };
+    }
+    if (mode === 'full') return { presence: 0, lopDays: 1 };
+    return { presence: 0.5, lopDays: 0.5 };
+  }
+
+  if (rec.status === 'present') return { presence: 1, lopDays: 0 };
+
+  return { presence: 0, lopDays: 0 };
 }

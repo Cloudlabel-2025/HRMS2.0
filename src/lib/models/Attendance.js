@@ -64,6 +64,11 @@ const AttendanceSchema = new mongoose.Schema({
   regularizationOutOpen: { type: Boolean, default: false },
   lateLogoutReason: { type: String, default: '' },
   lateLogoutReasonProvidedAt: { type: Date, default: null },
+  // Overtime minutes from a late clock-out. STORED ONLY — no calculation rule
+  // exists yet (see computeOvertimeMinutes in attendance-constants.js). This
+  // field must not be read by any money code until that rule is defined; it
+  // does not affect presentDays, lopDays, or net pay today.
+  overtimeMinutes: { type: Number, default: 0 },
   smeId:      { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
   earlyLogin: { type: Boolean, default: false },
   geoLocation: {

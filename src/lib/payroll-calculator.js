@@ -26,8 +26,11 @@ export const DEFAULT_RULE = {
  * @param {number}  params.grossLPA     - Annual gross salary
  * @param {number}  params.workingDays  - Working days in the cycle
  * @param {number}  params.totalDaysInMonth - Calendar days in the month/cycle
- * @param {number}  params.lopDays      - Loss of Pay days
+ * @param {number}  params.lopDays      - Loss of Pay days (absent + late + unpaid leave)
  * @param {number}  params.retroLopDays - Retroactive LOP days from prior locked cycles
+ * @param {number}  params.lopBreakdownAbsent - optional: share of lopDays from absences
+ * @param {number}  params.lopBreakdownLate   - optional: share of lopDays from late arrivals
+ * @param {number}  params.lopBreakdownUnpaid - optional: share of lopDays from unpaid leave
  * @param {Array}   params.overrides    - Per-employee overrides from SalaryStructure
  * @param {Array}   params.adhocBonuses - One-time bonuses for this run [{code,label,amount}]
  */
@@ -38,6 +41,12 @@ export function calculatePayroll({
   totalDaysInMonth,
   lopDays = 0,
   retroLopDays = 0,
+  // Optional component breakdown of lopDays. When omitted the calculator
+  // cannot attribute LOP to absence vs late vs unpaid leave, and the payslip
+  // shows the total only.
+  lopBreakdownAbsent = 0,
+  lopBreakdownLate = 0,
+  lopBreakdownUnpaid = 0,
   overrides = [],
   adhocBonuses = [],
 }) {
@@ -172,6 +181,11 @@ export function calculatePayroll({
   totalBonuses = round(totalBonuses);
 
   // ── Net Pay ─────────────────────────────────────────────────────────────────
+  // OVERTIME EXTENSION POINT — intentionally absent. A late clock-out should
+  // eventually be paid; the rule (grace band, rate, whether it attaches to
+  // gross or an OT-only component, paid-out vs banked, daily/monthly caps)
+  // is undecided, so no overtime term is added here. `overtimeMinutes` stays
+  // 0 in the database until computeOvertimeMinutes is given real rules.
   const netPay = round(monthlyGross + totalBonuses - totalDeductions);
 
   // ── Legacy flat fields (backward compatibility) ─────────────────────────────
@@ -201,6 +215,15 @@ export function calculatePayroll({
     salaryPerDay,
     lopBase,
     payableDays,
+    // Component breakdown of lopDays, for the payslip and for auditing that
+    // only absence / late / unpaid-leave ever contribute.
+    lopBreakdown: {
+      absentDays: Number(lopBreakdownAbsent || 0),
+      lateLopDays: Number(lopBreakdownLate || 0),
+      unpaidLeaveDays: Number(lopBreakdownUnpaid || 0),
+      retroLopDays: retroDays,
+    },
+    overtimeMinutes: 0,
     retroLopDays: retroDays,
     lopDays,
     effectiveLopDays,

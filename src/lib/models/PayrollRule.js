@@ -29,6 +29,19 @@ const PayrollRuleSchema = new mongoose.Schema({
     deductFrom:   { type: String, enum: ['gross', 'basic', 'basic_da'], default: 'gross' },
     countHalfDay: { type: Boolean, default: true },
     graceDays:    { type: Number, default: 0 },
+    // ── Late-arrival LOP ────────────────────────────────────────────────────
+    // How much of a day is withheld for a LATE arrival:
+    //   'half' → 0.5 day deducted (default)
+    //   'full' → 1.0 day deducted
+    //   'none' → late never deducts (reverts to the pre-2026-09 behaviour and
+    //            reproduces historical payroll figures exactly)
+    lateLopMode:  { type: String, enum: ['none', 'half', 'full'], default: 'half' },
+    // Minutes of lateness that are free before any deduction applies. 0 = the
+    // first minute past the shift's lateThreshold is already deducted.
+    lateGraceMinutes: { type: Number, default: 0 },
+    // When true (default), crossing the shift's halfDayThreshold escalates the
+    // deduction to a full day regardless of lateLopMode.
+    halfDayThresholdFullLop: { type: Boolean, default: true },
   },
 }, { timestamps: true });
 

@@ -5,7 +5,7 @@ import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
 import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, buildWorkingDateSet, buildCalendarMap } from '@/lib/payroll-cycle';
 import { calculatePayroll } from '@/lib/payroll-calculator';
-import { classifyPresence } from '@/lib/attendance-resolver';
+import { classifyDayPay } from '@/lib/attendance-resolver';
 import { isWorkedDay } from '@/lib/attendance-stats';
 import { syncEmployeeCalendarRows } from '@/lib/attendance-sync';
 import { auditLog } from '@/lib/middleware';
@@ -14,7 +14,15 @@ import { isEmployer } from '@/lib/permissions';
 import { resolveShiftForDate } from '@/lib/shift-utils';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 
-const DEFAULT_LOP_CONFIG = { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0 };
+const DEFAULT_LOP_CONFIG = { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0, lateLopMode: 'half', lateGraceMinutes: 0, halfDayThresholdFullLop: true };
+
+/** 'HH:MM' → minutes since midnight, or null when unparseable. */
+function toMinsOf(timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  if (Number.isNaN(h) || Number.isNaN(m)) return null;
+  return h * 60 + m;
+}
 
 /** A leave is unpaid ONLY when its own type is explicitly unpaid (Loss of Pay). */
 function isUnpaidLeave(leave) {
@@ -113,6 +121,10 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
       let retroLopDaysVal = 0;
       let lopDays = 0;
       let retroLeaveIdsVal = [];
+      // Late-arrival LOP, split by tier so the payslip can show its working.
+      let lateLopDaysVal = 0;
+      let slightLateDaysVal = 0;
+      let pastThresholdLateDaysVal = 0;
 
       if (isEmployer(emp.role)) {
         presentDays = workingDays;
@@ -147,18 +159,17 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           date: { $gte: fromDate, $lte: toDate },
         });
 
-        // Any clocked working day is present. Late arrival always credits a
-        // full day (late is display-only, never LOP — including arrivals past
-        // the shift's half-day threshold); short hours and permission are
-        // deliberately informational and never become LOP. Half-day leave +
-        // clock-in credits 0.5 via classifyPresence. Admin-imported presence
-        // (bulk attendance import, no clock-in) also counts — classifyPresence
-        // credits it a full day. Source-aware: only real clock-ins (or a real
-        // bulk-import source) enter the present-day pool — the schema's empty
-        // importedPresence object must not qualify.
+        // Recompute status and the half-day-threshold flag from the frozen
+        // shift snapshot. The stored flag is unreliable — seed data set it true
+        // on every late row and nothing corrected it — and the late LOP tiers
+        // are money-bearing, so they must be derived here every run.
+        //
+        // PERMISSION: an approved window exempts lateness only while the
+        // employee clocked in within it. Inside the window the day is Present
+        // with no LOP; past the window end the normal late tiers apply.
         const eligibleRecords = records.filter(r => workingDateSet.has(r.date) && isWorkedDay(r));
         for (const record of eligibleRecords) {
-          if (!record.clockIn || record.approvedHalfDayLeave || record.permission?.requestId || record.permission?.startTime || ['leave', 'holiday'].includes(record.status)) continue;
+          if (!record.clockIn || record.approvedHalfDayLeave || ['leave', 'holiday'].includes(record.status)) continue;
           const shift = await resolveShiftForDate(emp, record.date).catch(() => null);
           if (!shift?.startTime) continue;
           const cfg = getShiftConfig(shift, config);
@@ -167,6 +178,17 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           let minutes = (h - sh) * 60 + (mi - sm);
           if (minutes < -720) minutes += 1440;
           if (minutes > 720) minutes -= 1440;
+          record._minutesLate = minutes;
+
+          // Approved permission covering this arrival -> authorised lateness.
+          const permEnd = toMinsOf(record.permission?.endTime);
+          const hasWindow = !!(record.permission?.requestId || record.permission?.startTime);
+          if (hasWindow && permEnd !== null && toMinsOf(record.clockIn) <= permEnd) {
+            record.status = 'present';
+            record.lateFlag = false;
+            record.halfDayThresholdExceeded = false;
+            continue;
+          }
           const result = determineStatus(minutes, cfg);
           record.status = result.status;
           record.lateFlag = result.lateFlag;
@@ -176,10 +198,17 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         // Explicit day counting from the stored register — no gap arithmetic.
         // A working date with no row at this point is a safety-net absent
         // (the sync above should have written it).
+        //
+        // lopDays = absentDays + lateLopDays + unpaidLeaveDays.
+        // classifyDayPay returns 0 lopDays for absent rows because they are
+        // counted by absentDays above, so the two can never double-count.
         const byDate = new Map(records.map(r => [r.date, r]));
         presentDays = 0;
         absentDaysVal = 0;
         daysWorked = 0;
+        let lateLopDays = 0;
+        let slightLateDays = 0;
+        let pastThresholdLateDays = 0;
         for (const d of workingDateSet) {
           const r = byDate.get(d);
           if (!r) { absentDaysVal += 1; continue; }
@@ -188,8 +217,20 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           // (same definition as the Team report card — not the fractional
           // payroll credit, which lives in presentDays).
           if (isWorkedDay(r)) daysWorked += 1;
-          presentDays += classifyPresence(r, lopConfig);
+          if (r.status === 'late') {
+            if (r.halfDayThresholdExceeded && lopConfig.halfDayThresholdFullLop !== false && (lopConfig.lateLopMode ?? 'half') !== 'none') {
+              pastThresholdLateDays += 1;
+            } else {
+              slightLateDays += 1;
+            }
+          }
+          const { presence, lopDays: dayLop } = classifyDayPay(r, lopConfig, r._minutesLate ?? null);
+          presentDays += presence;
+          lateLopDays += dayLop;
         }
+        lateLopDaysVal = Number(lateLopDays.toFixed(2));
+        slightLateDaysVal = slightLateDays;
+        pastThresholdLateDaysVal = pastThresholdLateDays;
         holidayDaysVal = [...calMap.holidays].filter(d => d <= todayStr).length;
         weeklyOffDaysVal = [...calMap.weeklyOff].filter(d => d <= todayStr).length;
 
@@ -231,9 +272,10 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         paidLeaveDaysVal = Math.round(paidLeaveDays * 100) / 100;
         unpaidLeaveDaysVal = Math.round(unpaidLeaveDays * 100) / 100;
 
-        // LOP = stored absent days + unpaid leave days. Nothing is inferred
-        // from a residual gap, so the figure always matches the register.
-        lopDays = Math.max(0, absentDaysVal + unpaidLeaveDaysVal);
+        // LOP = stored absent days + late-arrival LOP + unpaid leave days.
+        // Nothing is inferred from a residual gap, so the figure always matches
+        // the register. Short hours and break excess are NOT here by design.
+        lopDays = Math.max(0, absentDaysVal + lateLopDaysVal + unpaidLeaveDaysVal);
 
         // Retroactive Leave Adjustments for prior locked cycles. Scoped to
         // leaves that closed BEFORE this cycle started — an unscoped query
@@ -263,6 +305,9 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         totalDaysInMonth: calendarStats.totalDays,
         lopDays,
         retroLopDays: retroLopDaysVal,
+        lopBreakdownAbsent: absentDaysVal,
+        lopBreakdownLate: lateLopDaysVal,
+        lopBreakdownUnpaid: unpaidLeaveDaysVal,
         overrides: structure.overrides || [],
         adhocBonuses: [],
       });
@@ -293,6 +338,12 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           presentDays,
           daysWorked,
           absentDays: absentDaysVal,
+          lateLopDays: lateLopDaysVal,
+          slightLateDays: slightLateDaysVal,
+          pastThresholdLateDays: pastThresholdLateDaysVal,
+          // Always 0 — the overtime rule is not defined yet. Persisted so the
+          // storage exists ahead of the rule; deliberately not in net pay.
+          overtimeMinutes: 0,
           paidLeaveDays: paidLeaveDaysVal,
           unpaidLeaveDays: unpaidLeaveDaysVal,
           holidayDays: holidayDaysVal,
