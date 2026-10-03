@@ -16,6 +16,7 @@ import {
 import { classifyDayPay } from '@/lib/attendance-resolver';
 import { resolveShiftForDate } from '@/lib/shift-utils';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
+import { getEmploymentStartDate, countUnpaidWorkingDays } from '@/lib/payroll-lop-utils';
 
 const DEFAULT_LOP_CONFIG = {
   basis: 'working_days',
@@ -172,29 +173,38 @@ export async function GET(req) {
       }
       const clockedDates = new Set(records.filter((r) => r.clockIn).map((r) => r.date));
 
+      // Same employment-start guard as the payroll engine: pre-joining dates
+      // are never LOP rows.
+      const employmentStartDate = await getEmploymentStartDate(empId);
+
       const rows = [];
       for (const d of orderedWorkingDates) {
+        if (employmentStartDate && d < employmentStartDate) continue;
         const r = byDate.get(d);
         const covering = leavesByDate.get(d) || [];
+        const coveredByLeave = covering.length > 0;
 
         // 1. Absent (no row, or absent with no clock-in) → Full day LOP.
+        // A date covered by an approved leave is credited by the leave
+        // branch below, never as absent (avoids absent + unpaid double LOP).
         if (!r || (r.status === 'absent' && !r.clockIn)) {
-          rows.push({
-            date: d,
-            day: dayNameOf(d),
-            status: 'absent',
-            clockIn: '',
-            lopType: 'Absent',
-            quantum: 'Full',
-            dayLop: 1,
-            amount: round(salaryPerDay * 1),
-            basis: ruleLabel,
-          });
-          continue;
-        }
-
-        // 2. Late arrival LOP via the shared money classifier.
-        if (r.status === 'late') {
+          if (coveredByLeave) {
+            // fall through to the leave branch
+          } else {
+            rows.push({
+              date: d,
+              day: dayNameOf(d),
+              status: 'absent',
+              clockIn: '',
+              lopType: 'Absent',
+              quantum: 'Full',
+              dayLop: 1,
+              amount: round(salaryPerDay * 1),
+              basis: ruleLabel,
+            });
+            continue;
+          }
+        } else if (r && r.status === 'late') {
           const { lopDays: dayLop } = classifyDayPay(r, lopConfig, r._minutesLate ?? null);
           if (dayLop > 0) {
             const full = dayLop >= 1;
@@ -223,14 +233,16 @@ export async function GET(req) {
           const halfDayCountsAsFull = leave.halfDay && lopConfig.countHalfDay === false;
           const credit = leave.halfDay && !halfDayCountsAsFull ? 0.5 : 1;
           let dayLop = credit;
-          if (leave.halfDay && !workedThatDay) dayLop += 0.5;
+          // Remainder is LOP-only and only when the half-day credit did not
+          // already cover the whole day (parity with the payroll engine).
+          if (leave.halfDay && !workedThatDay && !halfDayCountsAsFull) dayLop += 0.5;
           dayLop = round(dayLop);
           if (dayLop <= 0) continue;
           rows.push({
             date: d,
             day: dayNameOf(d),
             status: `leave (${leave.typeCode || leave.type || 'LOP'})`,
-            clockIn: r.clockIn || '',
+            clockIn: r?.clockIn || '',
             lopType: 'Unpaid Leave',
             quantum: dayLop >= 1 ? 'Full' : 'Half',
             dayLop,
@@ -249,7 +261,9 @@ export async function GET(req) {
           status: 'approved',
         }).lean();
         for (const rl of retroLeaves) {
-          const days = Number(rl.unpaidDays) || (rl.typeCode === 'LOP' ? Number(rl.days) : 0) || 0;
+          // Working-day count on the payroll calendar (parity with the
+          // engine) — not the stored span days.
+          const days = await countUnpaidWorkingDays(rl, config, lopConfig);
           if (days <= 0) continue;
           retroRows.push({
             date: rl.to || rl.from || '',

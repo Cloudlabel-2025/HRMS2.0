@@ -1,6 +1,7 @@
 import { connectDB } from '@/lib/db';
 import { Payroll } from '@/lib/models/Payroll';
 import { requireAuth, auditLog } from '@/lib/middleware';
+import { getGlobalConfig, getPayrollDay, getCycleRange } from '@/lib/payroll-cycle';
 import { notify } from '@/lib/notify';
 import User from '@/lib/models/User';
 import { ok, fail } from '@/lib/jwt';
@@ -18,6 +19,30 @@ export async function POST(req) {
 
     const filter = payrollId ? { _id: payrollId } : { month };
     const ip = req.headers.get('x-forwarded-for') || '';
+
+    // Never lock a mid-cycle preview: its salaryPerDay uses the elapsed-day
+    // divisor, so approving/finalizing now would freeze an inflated LOP rate.
+    // Resolve the cycle month from the targeted record when only payrollId
+    // was supplied.
+    let cycleMonth = month;
+    if (!cycleMonth && payrollId) {
+      const doc = await Payroll.findById(payrollId).select('month').lean().catch(() => null);
+      cycleMonth = doc?.month || null;
+    }
+    if (cycleMonth && /^\d{4}-\d{2}$/.test(cycleMonth)) {
+      const config = await getGlobalConfig().catch(() => ({}));
+      const [cy, cm] = cycleMonth.split('-').map(Number);
+      const { toDate } = getCycleRange(
+        getPayrollDay(config.payrollStartDay, 26),
+        getPayrollDay(config.payrollEndDay, 25),
+        cy,
+        cm - 1
+      );
+      const todayStr = new Date().toISOString().slice(0, 10);
+      if (todayStr <= toDate) {
+        return fail(`Cycle ${cycleMonth} ends ${toDate} — approve/finalize is blocked while the cycle is in progress (preview only).`, 400);
+      }
+    }
 
     if (action === 'approve') {
       const records = await Payroll.find({ ...filter, status: 'draft' }).select('userId');
