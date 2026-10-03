@@ -56,7 +56,7 @@ export async function POST(req) {
     if (result.endedLate && record && !['leave', 'holiday'].includes(record.status)) {
       await Attendance.collection.updateOne(
         { _id: record._id },
-        { $set: { status: 'late', lateFlag: true, shortHours: false } }
+        { $set: { status: 'late', lateFlag: true, shortHours: false, shortfallMins: 0, breakExcessMins: 0 } }
       );
       record = await Attendance.findOne({ userId: user._id, date: today });
     }
