@@ -580,7 +580,27 @@ export async function PUT(req) {
           };
 
           const rows = attendance.workProgress || [];
-          if (!rows.some(w => w.type === 'permission' && String(w.permissionRequestId || '') === String(attendance.permission.requestId || ''))) {
+          const permissionRowIdx = rows.findIndex(w =>
+            w.type === 'permission' && String(w.permissionRequestId || '') === String(attendance.permission.requestId || '')
+          );
+          if (permissionRowIdx >= 0) {
+            // Re-regularization can reuse the same approved request. Refresh
+            // its existing work-log row so the actual end and overrun stay
+            // aligned with the newly approved regularization values.
+            attendance.workProgress = rows.map((row, idx) => idx === permissionRowIdx ? {
+              ...row,
+              taskDetails: endedLate
+                ? `Permission (${regPerm.startTime}-${regPerm.endTime}) · ended ${actualEnd} (+${overrunMins}m over)`
+                : `Permission (${regPerm.startTime}-${regPerm.endTime})`,
+              startTime: regPerm.startTime,
+              endTime: actualEnd,
+              status: 'completed',
+              duration: computeWorkRowDuration({ startTime: regPerm.startTime, endTime: actualEnd }),
+              scheduledEndTime: regPerm.endTime,
+              endedLate,
+              overrunMins: overrunMins || null,
+            } : row);
+          } else {
             // Single-active-row invariant: heal first, then push a COMPLETED
             // row (actualEndTime is required, so it can never stay open).
             const healed = closeExtraActiveRows(rows, actualEnd);
