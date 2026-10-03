@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { canApproveLeave, canViewUser } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { getRelativePeriod, recordPeriodUsageSplit, recordPeriodUsage } from '@/lib/leave/accrual';
+import { reopenPayrollForLeave } from '@/lib/payroll-reopen';
 
 const ActionSchema = z.object({
   action:     z.enum(['approved', 'rejected', 'held']),
@@ -213,6 +214,38 @@ export async function PUT(req, { params }) {
         await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved.`, 'leave', leave._id);
       }
 
+      // Re-assert the paid/unpaid split at APPROVAL time, not just at creation.
+      // A PAID leave type is always paid in full — the balance is an
+      // administrative flag and must never clamp payable days. This also
+      // repairs legacy rows written before that rule, which could carry
+      // unpaidDays > 0 on a paid leave type and silently become LOP.
+      let payableWarning = null;
+      if (newStatus === 'approved') {
+        const isPaidType = policy.leaveTypeConfigs?.find(c => c.code === leave.typeCode)?.isPaid ?? true;
+        leave.isPaid = isPaidType;
+        if (isPaidType && (leave.unpaidDays || 0) > 0) {
+          payableWarning = {
+            typeCode: leave.typeCode,
+            typeName: leave.type,
+            repairedDays: Number(leave.unpaidDays || 0),
+            message: `${leave.type} is a paid leave type. ${Number(leave.unpaidDays || 0)} day(s) previously marked unpaid have been restored to paid — no LOP will be applied.`,
+          };
+          leave.paidDays = leave.days;
+          leave.unpaidDays = 0;
+          await auditLog(
+            'Leave LOP Repaired',
+            'Leave',
+            user._id,
+            `Leave ${leave._id} (${leave.from} to ${leave.to}): ${payableWarning.repairedDays} unpaid day(s) restored — ${leave.type} is a paid leave type`,
+            'high',
+            req.headers.get('x-forwarded-for') || '',
+            null,
+            applicantId
+          ).catch(() => {});
+        }
+        if (leave.paidDays == null) leave.paidDays = isPaidType ? leave.days : 0;
+      }
+
       if (newStatus === 'rejected') {
         // Restore pending balance; if balance was already applied (used),
         // reverse used as well and revert period usage symmetrically.
@@ -298,7 +331,38 @@ export async function PUT(req, { params }) {
         applicantId
       );
 
-      return ok(leave);
+      // A leave approved after its payroll cycle was closed would otherwise be
+      // locked out of the money. Reopen the affected cycle(s) to draft and
+      // re-run them scoped to this employee so the leave is honoured instead
+      // of turning into LOP.
+      let reopenedPayrollMonths = [];
+      if (newStatus === 'approved' && !applicantIsEmployer) {
+        try {
+          const ip = req.headers.get('x-forwarded-for') || '';
+          reopenedPayrollMonths = await reopenPayrollForLeave(leave, user, ip);
+          if (reopenedPayrollMonths.length) {
+            const { runPayrollForMonth } = await import('@/lib/payroll-run-engine');
+            for (const m of reopenedPayrollMonths) {
+              // `force` is required: the cycle was finalized/approved until
+              // reopenPayrollForLeave flipped it back to draft moments ago.
+              await runPayrollForMonth({ month: m, userIds: [leave.userId], actor: user, ip, force: true });
+            }
+            await notify(
+              applicantId,
+              'Payroll Reopened',
+              `Your ${leave.type} (${leave.from} to ${leave.to}) was approved after payroll closed. Payroll for ${reopenedPayrollMonths.join(', ')} has been recalculated.`,
+              'payroll',
+              null
+            ).catch(() => {});
+          }
+        } catch (e) {
+          // Never fail the approval because the recompute failed — the leave
+          // is approved and the cycle stays a draft for a manual re-run.
+          console.error('Payroll reopen/re-run failed:', e);
+        }
+      }
+
+      return ok({ ...leave.toObject(), payableWarning, reopenedPayrollMonths });
     }
 
     // ── Fallback to legacy approval logic ──

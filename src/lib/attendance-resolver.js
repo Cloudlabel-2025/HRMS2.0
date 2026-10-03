@@ -102,15 +102,17 @@ export function resolveDayStatus({
  * informational (never LOP) > absent/missing (0, LOP via stored record).
  *
  * Late NEVER reduces pay: any clocked-in late day credits a full day.
- * `halfDayThresholdExceeded` is display-only (absence grid "Half Day" badge)
- * and no longer feeds the payroll credit path. `countHalfDay` now governs
- * only the approved half-day-leave case.
+ * `countHalfDay` is not consulted here. A half-day leave always credits 0.5
+ * presence; the "pay a half-day leave as a full day" behaviour lives entirely
+ * on the leave-credit side of payroll (payroll-run-engine), which also keeps
+ * the unworked-half-of-a-half-day-leave rule consistent. Crediting 1 here AND
+ * 0.5 on the leave side used to make one working day worth 1.5 payable days.
  *
  * @param {Object} rec - Attendance record (lean or doc)
- * @param {Object} lopConfig - { countHalfDay }
+ * @param {Object} lopConfig - { countHalfDay } (accepted for call compatibility)
  * @returns {number} presence credit 0 | 0.5 | 1
  */
-export function classifyPresence(rec, lopConfig = {}) {
+export function classifyPresence(rec, lopConfig = {}) { // eslint-disable-line no-unused-vars
   // Admin-imported presence correction (bulk attendance import): a full
   // present day with no clock-in. Must come before the clockIn guard, and
   // must require a real source — the schema materialises an empty
@@ -119,9 +121,10 @@ export function classifyPresence(rec, lopConfig = {}) {
     return 1;
   }
   if (!rec?.clockIn) return 0;
-  if (rec.approvedHalfDayLeave) return 0.5;
-  if (rec.status === 'half_day') return lopConfig.countHalfDay === false ? 1 : 0.5;
-  // Late always credits a full day — late is never LOP.
+  // Approved half-day leave: worked one half, so half a day's presence.
+  if (rec.approvedHalfDayLeave || rec.status === 'half_day') return 0.5;
+  // Late always credits a full day — late is never LOP, including arrivals
+  // past the shift's half-day threshold (that is display-only).
   if (['present', 'late'].includes(rec.status)) return 1;
   return 0;
 }

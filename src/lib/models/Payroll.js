@@ -59,6 +59,14 @@ const PayrollSchema = new mongoose.Schema({
   effectiveLopDays: { type: Number, default: 0 },
   graceDaysApplied: { type: Number, default: 0 },
   retroLopDays: { type: Number, default: 0 },
+  // Working days actually paid for = workingDays − effectiveLopDays −
+  // retroLopDays. A paid leave (full or half) never reduces it. Computed once
+  // by payroll-calculator so the payslip never re-derives it.
+  payableDays: { type: Number, default: 0 },
+  // LOP deduction base (monthlyGross / BASIC / BASIC+DA per rule
+  // lopConfig.deductFrom) and the derived per-day rate, kept together so the
+  // payslip can show the arithmetic: LOP ₹ = lopBaseAmount ÷ divisor.
+  lopBaseAmount: { type: Number, default: 0 },
   workingDays:{ type: Number, default: 0 },
   fullCycleWorkingDays: { type: Number, default: 0 },
   salaryPerDay:{ type: Number, default: 0 },

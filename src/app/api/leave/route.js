@@ -468,22 +468,34 @@ export async function POST(req) {
       return fail(`No balance record found or you are not eligible for ${typeConfig.name}`, 400);
     }
 
-    // Calculate paid and unpaid (LOP) split if requested days exceed available/allowed quota
+    // Paid/unpaid split. A PAID leave type is ALWAYS paid in full: the leave
+    // balance is an administrative flag and must never silently convert paid
+    // leave into LOP. Availability is still computed so the applicant and the
+    // approver are told when the balance is exhausted (balanceWarning).
     let paidDays = days;
     let unpaidDays = 0;
+    let balanceWarning = null;
 
-    if (typeConfig.isPaid) {
-      const periodAllowed = Math.max(0, calculatePeriodAllowance(typeConfig, balanceEntry, balance.cycleStart, fromDate));
-      const overallAvailable = Math.max(0, balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending);
-      const allowedPaidDays = Math.min(overallAvailable, periodAllowed);
-
-      if (days > allowedPaidDays) {
-        paidDays = allowedPaidDays;
-        unpaidDays = Number((days - allowedPaidDays).toFixed(2));
-      }
-    } else {
+    if (!typeConfig.isPaid) {
+      // Only an explicitly unpaid type (Loss of Pay) creates LOP.
       paidDays = 0;
       unpaidDays = days;
+    } else {
+      const periodAllowed = Math.max(0, calculatePeriodAllowance(typeConfig, balanceEntry, balance.cycleStart, fromDate));
+      const overallAvailable = Math.max(0, balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending);
+      const available = Math.min(overallAvailable, periodAllowed);
+
+      if (days > available) {
+        balanceWarning = {
+          typeCode,
+          typeName: typeConfig.name,
+          available: Number(available.toFixed(2)),
+          requestedDays: days,
+          shortfallDays: Number((days - available).toFixed(2)),
+          paidInFull: true,
+          message: `${typeConfig.name} balance is exhausted (${Number(available.toFixed(2))} of ${days} day(s) available). This leave is still paid in full — no LOP will be applied.`,
+        };
+      }
     }
 
     // Build workflow approvals from policy
@@ -517,6 +529,7 @@ export async function POST(req) {
       days,
       paidDays,
       unpaidDays,
+      isPaid: !!typeConfig.isPaid,
       halfDay,
       halfDayType: halfDay ? halfDayType : null,
       reason,
@@ -558,7 +571,10 @@ export async function POST(req) {
     }
 
     await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${typeConfig.name} (${from} to ${to})`, 'low', ip, null, user._id);
-    return ok(leave, 201);
+    if (balanceWarning) {
+      await auditLog('Leave Balance Exhausted', 'Leave', user._id, `${days} day(s) of ${typeConfig.name} applied with only ${balanceWarning.available} available — paid in full, no LOP`, 'medium', ip, null, user._id).catch(() => {});
+    }
+    return ok({ ...leave.toObject(), balanceWarning }, 201);
   } catch (e) {
     console.error('[LEAVE POST ERROR]:', e);
     return fail(e.message || 'An error occurred processing leave request', 500);

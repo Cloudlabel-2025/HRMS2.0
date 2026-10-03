@@ -164,9 +164,11 @@ export default function PayrollPage() {
         <div class='row'><span style='color:#64748b'>Days Present (credit)</span><span>${slip.presentDays ?? '—'}</span></div>
         <div class='row'><span style='color:#64748b'>Days Worked</span><span>${slip.daysWorked ?? '—'}</span></div>
         <div class='row'><span style='color:#64748b'>Absent Days</span><span>${slip.absentDays ?? '—'}</span></div>
-        <div class='row'><span style='color:#64748b'>Paid Leave Days</span><span>${slip.paidLeaveDays ?? '—'}</span></div>
+        <div class='row'><span style='color:#64748b'>Paid Leave Days</span><span>${slip.paidLeaveDays ?? '—'}${slip.unpaidLeaveDays ? ` <span style='font-size:11px'>(+${slip.unpaidLeaveDays} unpaid)</span>` : ''}</span></div>
         <div class='row'><span style='color:#64748b'>Holidays / Week-offs</span><span>${((slip.holidayDays || 0) + (slip.weeklyOffDays || 0)) || '—'}</span></div>
         <div class='row'><span style='color:#64748b'>LOP Days</span><span>${slip.effectiveLopDays ?? slip.lopDays ?? 0}${(slip.graceDaysApplied > 0) ? ` (${slip.lopDays || 0} raw, ${slip.graceDaysApplied} grace)` : ''}${(slip.retroLopDays > 0) ? ` + ${slip.retroLopDays} retro` : ''}</span></div>
+        <div class='row'><span style='color:#64748b;font-size:11px'>LOP calculation</span><span style='font-size:11px'>₹${slip.salaryPerDay || 0} × ${(slip.effectiveLopDays ?? slip.lopDays ?? 0)} day(s)${(slip.retroLopDays > 0) ? ` + ${slip.retroLopDays} retro` : ''}</span></div>
+        <div class='row' style='border-top:1px solid #e2e8f0;margin-top:6px;padding-top:6px'><span style='font-weight:600'>Payable Days</span><span style='font-weight:700'>${slip.payableDays ?? Math.max(0, (slip.workingDays || 0) - (slip.effectiveLopDays ?? slip.lopDays ?? 0) - (slip.retroLopDays || 0))}</span></div>
       </div>
       <div style='display:flex;gap:12px'>
         <div class='box' style='flex:1'>
@@ -183,6 +185,7 @@ export default function PayrollPage() {
           <div class='row ded'><span>EPFO</span><span>${fmt(slip.pf)}</span></div>
           <div class='row ded'><span>ESI</span><span>${fmt(slip.esi)}</span></div>
           <div class='row ded'><span>Loss of Pay</span><span>${fmt(slip.lossOfPay)}</span></div>
+          ${(slip.retroLopDays > 0) ? `<div class='row ded'><span>Retro LOP Adj.</span><span>${fmt((slip.salaryPerDay || 0) * slip.retroLopDays)}</span></div>` : ''}
           <div class='row ded'><span>Total Deductions</span><span>${fmt(slip.totalDeductions)}</span></div>
         </div>
       </div>
@@ -346,7 +349,14 @@ export default function PayrollPage() {
                           </div>
                         </td>
                         {[p.monthlyGross, p.basicPay, p.hra, p.dearnessAllowance, p.conveyanceAllowance, p.medicalAllowance].map((v, i) => <td key={i} style={{ fontSize: 13 }}>{fmt(v)}</td>)}
-                        {[p.pf, p.esi, p.lossOfPay].map((v, i) => <td key={i} style={{ fontSize: 13, color: '#ef4444' }}>{fmt(v)}</td>)}
+                        {[p.pf, p.esi, p.lossOfPay].map((v, i) => <td key={i} style={{ fontSize: 13, color: '#ef4444' }}>
+                            {fmt(v)}
+                            {/* Retro LOP is a separate deduction and was previously
+                                invisible in this column. */}
+                            {i === 2 && p.retroLopDays > 0 && (
+                              <div style={{ fontSize: 10, color: '#94a3b8' }}>+{p.retroLopDays} retro</div>
+                            )}
+                          </td>)}
                         <td style={{ fontSize: 13, fontWeight: 700, color: '#10b981' }}>{fmt(p.netPay)}</td>
                         <td><span className={`badge ${p.status === 'finalized' ? 'status-approved' : p.status === 'approved' ? 'status-approved' : p.status === 'draft' ? 'status-pending' : 'status-pending'}`} style={p.status === 'draft' ? { background: '#dbeafe', color: '#2563eb' } : p.status === 'approved' ? { background: '#fef3c7', color: '#d97706' } : {}}>{p.status}</span></td>
                         <td>
