@@ -11,6 +11,13 @@ const LeaveSchema = new mongoose.Schema({
   days:   { type: Number, required: true },
   paidDays: { type: Number, default: 0 },
   unpaidDays: { type: Number, default: 0 },
+  // Snapshot of the policy's `isPaid` at creation time. A PAID leave type is
+  // always paid in full — the balance is an administrative flag and never
+  // clamps payable days (see leave/route.js). Payroll reads this snapshot
+  // instead of `paidDays / days`, which used to dilute a leave's paid ratio
+  // whenever the leave straddled a cycle boundary. Only an explicitly unpaid
+  // type (typeCode 'LOP') carries unpaidDays.
+  isPaid: { type: Boolean, default: true },
   halfDay:{ type: Boolean, default: false },
   halfDayType:{ type: String, enum: ['first_half', 'second_half'], default: null },
   // Optional custom window for a half-day leave (HH:MM, 24-hour). When both

@@ -127,7 +127,7 @@ export function calculatePayroll({
 
   // Apply grace days if configured
   const graceDays = Number(lopCfg.graceDays) || 0;
-  const effectiveLopDays = Math.max(0, lopDays - graceDays);
+  const effectiveLopDays = Math.max(0, Number(lopDays || 0) - graceDays);
   const lossOfPayDeduction = round(salaryPerDay * effectiveLopDays);
 
   if (lossOfPayDeduction > 0) {
@@ -143,6 +143,13 @@ export function calculatePayroll({
     deductionsList.push({ code: 'RETRO_LOP_ADJ', label: 'Retroactive Loss of Pay Adjustment', amount: retroLopDeduction });
     totalDeductions += retroLopDeduction;
   }
+
+  // Payable days: the working days actually paid for. A PAID leave — full day
+  // or half day — is always paid in full, so it never reduces this figure; only
+  // LOP (an absence, or an explicitly unpaid leave type) does. This is the
+  // single authoritative "days paid" figure for the payslip, so the UI never
+  // re-derives it from the breakdown.
+  const payableDays = Math.max(0, round(Number(workingDays || 0) - effectiveLopDays - retroDays));
 
   totalDeductions = round(totalDeductions);
 
@@ -192,6 +199,9 @@ export function calculatePayroll({
     netPay,
     workingDays,
     salaryPerDay,
+    lopBase,
+    payableDays,
+    retroLopDays: retroDays,
     lopDays,
     effectiveLopDays,
     graceDaysApplied: Math.min(Number(lopDays) || 0, graceDays),

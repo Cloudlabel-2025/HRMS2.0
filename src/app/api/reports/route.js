@@ -9,6 +9,7 @@ import { SelfServiceRequest, Review, Invoice, Expense } from '@/lib/models/index
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess, getAccessibleDepartments, getManagedUserIds } from '@/lib/rbac';
+import { leaveDayWeight, isHalfDayLeave } from '@/lib/attendance-stats';
 
 const REPORT_TYPES = new Set(['attendance', 'leave', 'payroll', 'tasks', 'performance', 'finance', 'lifecycle']);
 
@@ -68,15 +69,20 @@ export async function GET(req) {
         if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0, leave: 0, halfDay: 0 };
         if (r.status === 'present') byUser[id].present++;
         else if (r.status === 'late') byUser[id].late++;
-        else if (r.status === 'leave') byUser[id].leave++;
-        else if (r.status === 'half_day') byUser[id].halfDay++;
+        // Leave is weighted: a half-day-leave row counts 0.5, a full-day 1.
+        // leaveDayWeight is shared with attendance-stats so this report and the
+        // Team report can never disagree.
+        else if (r.status === 'leave' || r.status === 'half_day' || r.approvedHalfDayLeave) {
+          byUser[id].leave += leaveDayWeight(r);
+          if (isHalfDayLeave(r)) byUser[id].halfDay++;
+        }
         else if (r.status !== 'holiday') byUser[id].absent++;
       }
 
       const rows = Object.values(byUser);
       const totalPresent = rows.reduce((s, r) => s + r.present, 0);
       const totalLate    = rows.reduce((s, r) => s + r.late, 0);
-      const totalLeave   = rows.reduce((s, r) => s + r.leave, 0);
+      const totalLeave   = Number(rows.reduce((s, r) => s + r.leave, 0).toFixed(2));
       const totalHalfDay = rows.reduce((s, r) => s + r.halfDay, 0);
 
       return ok({

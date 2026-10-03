@@ -2,6 +2,7 @@ import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import { requireAuth } from '@/lib/middleware';
 import { fail } from '@/lib/jwt';
+import { leaveDayWeight, isHalfDayLeave } from '@/lib/attendance-stats';
 
 export async function GET(req) {
   try {
@@ -35,11 +36,15 @@ export async function GET(req) {
     }
 
     const headers = ['Date', 'Employee', 'Department', 'Shift', 'Clock In', 'Clock Out',
-      'Status', 'Hours Worked', 'Break Deduction', 'Late Flag', 'Auto Logged Out', 'Correction'];
+      'Status', 'Hours Worked', 'Break Deduction', 'Late Flag', 'Past Half-day Threshold',
+      'Half-day Leave', 'Leave Credit (Days)', 'Auto Logged Out', 'Correction'];
     const csvRows = [headers.join(',')];
 
     records.forEach(r => {
       const correction = r.importedPresence?.at ? `Imported: ${String(r.importedPresence.reason || '').replace(/"/g, '""')}` : '';
+      // Leave weight is fractional: a half-day-leave row is worth 0.5 of a day.
+      // Past Half-day Threshold is the display-only late flag (arrival beyond
+      // the shift threshold) — it never affects pay.
       csvRows.push([
         r.date,
         `"${r.userId?.name || ''}"`,
@@ -51,6 +56,9 @@ export async function GET(req) {
         r.hoursWorked ?? '',
         r.breakDeduction ?? '',
         r.lateFlag ? 'Yes' : 'No',
+        r.halfDayThresholdExceeded ? 'Yes' : 'No',
+        isHalfDayLeave(r) ? 'Yes' : 'No',
+        leaveDayWeight(r) || '',
         r.autoLoggedOut ? 'Yes' : 'No',
         correction ? `"${correction}"` : '',
       ].join(','));

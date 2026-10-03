@@ -10,8 +10,13 @@
  *    are excluded even when worked (see workedOffDays).
  *  - Leave        = leave/half_day rows with NO clock-in. A half-day-leave
  *    day with a clock-in counts as worked, never both.
+ *  - leaveDays    = fractional leave total: 1 per full-day leave row, 0.5 per
+ *    approved half-day-leave row. This is what the report and exports DISPLAY.
+ *    `leave` itself stays an integer ROW count because it is an operand of the
+ *    reconciliation identity — do not swap the two.
  *  - Late         = every 'late' row, including arrivals past the half-day
- *    threshold. Late is never LOP for payroll; this is display only.
+ *    threshold. Late is never LOP for payroll; this is display only, surfaced
+ *    by isLatePastThreshold().
  *
  * Reconciliation identity (always holds when the register is complete):
  *   workingDays === daysWorked + leave + absent + notArrived
@@ -52,6 +57,16 @@ export function isLatePastThreshold(rec) {
 
 export function isHalfDayLeave(rec) {
   return rec?.status === 'half_day' || !!rec?.approvedHalfDayLeave;
+}
+
+/**
+ * Leave day-weight for fractional totals: a full-day leave row is worth 1 day,
+ * an approved half-day-leave row is worth 0.5. Shared by the Team report UI,
+ * the Excel/PDF exports and /api/reports so those surfaces cannot drift.
+ */
+export function leaveDayWeight(rec) {
+  if (rec?.status !== 'leave' && rec?.status !== 'half_day' && !rec?.approvedHalfDayLeave) return 0;
+  return isHalfDayLeave(rec) ? 0.5 : 1;
 }
 
 export function hasApprovedPermission(rec) {
@@ -123,6 +138,10 @@ export function computeAttendanceStats(records) {
   const decided = notWorked.filter(r => !isNotArrived(r));
   const absent = decided.filter(r => r.status === 'absent');
   const leave = decided.filter(r => r.status === 'leave' || r.status === 'half_day');
+  // Fractional leave weight: a half-day leave counts 0.5, a full-day leave 1.
+  // `leave` above stays an integer ROW count because it is an operand of the
+  // reconciliation identity — `leaveDays` is the display/payroll-facing figure.
+  const leaveDays = Number(leave.reduce((s, r) => s + leaveDayWeight(r), 0).toFixed(2));
   // Data-integrity bucket: rows that are neither worked, leave, absent nor
   // not-arrived (e.g. a 'present' row with no clock-in). Normally 0; when
   // non-zero the reconciliation below fails loudly instead of hiding them.
@@ -133,6 +152,7 @@ export function computeAttendanceStats(records) {
   const latePastThreshold = worked.filter(isLatePastThreshold).length;
   const shortHours = worked.filter(isShortHours).length;
   const permission = worked.filter(hasApprovedPermission).length;
+  const halfDayLeaveRows = leave.filter(isHalfDayLeave).length;
   const halfDayLeaveWorked = worked.filter(isHalfDayLeave).length;
 
   const holidays = off.filter(isNamedHoliday).length;
@@ -152,8 +172,12 @@ export function computeAttendanceStats(records) {
     latePastThreshold,
     shortHours,
     permission,
+    // Row count — operand of the reconciliation identity below.
     leave: leave.length,
-    halfDayLeave: leave.filter(isHalfDayLeave).length + halfDayLeaveWorked,
+    // Fractional leave total: 1 per full-day leave row, 0.5 per half-day row.
+    leaveDays,
+    fullDayLeave: leave.length - halfDayLeaveRows,
+    halfDayLeave: halfDayLeaveRows + halfDayLeaveWorked,
     halfDayLeaveWorked,
     absent: absent.length,
     notArrived: notArrived.length,

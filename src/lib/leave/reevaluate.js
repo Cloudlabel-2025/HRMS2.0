@@ -41,13 +41,20 @@ async function loadBalanceForLeave(userId, leave) {
   return null;
 }
 
-// Same paid/unpaid split as leave creation (leave/route.js). The leave's own
-// prior reservation is restored into a working copy first — into `used` for
-// approved leaves, `pending` for pending ones — so neither the overall
-// availability nor the period cap double-counts its current deduction.
-// Exported for unit tests.
+// Paid/unpaid split, mirroring leave creation (leave/route.js) EXACTLY — the
+// two must never disagree or a re-evaluation would reintroduce LOP that the
+// creation path refuses to apply.
+//
+// A PAID leave type is always paid in full. The balance is an administrative
+// flag: it still moves `used`/`pending` (so over-consumption stays visible) but
+// it never clamps payable days. Only an explicitly unpaid type creates LOP.
+//
+// `available` is returned for reporting/warnings only. The leave's own prior
+// reservation is restored into a working copy first — into `used` for approved
+// leaves, `pending` for pending ones — so availability does not double-count
+// its current deduction. Exported for unit tests.
 export function recomputePaidSplit(typeConfig, balanceEntry, balance, days, fromDate, restorePaidDays, restoreField = 'used') {
-  if (!typeConfig?.isPaid) return { paidDays: 0, unpaidDays: days };
+  if (!typeConfig?.isPaid) return { paidDays: 0, unpaidDays: days, available: 0 };
   const restored = {
     ...balanceEntry,
     [restoreField]: Math.max(0, Number(balanceEntry?.[restoreField] || 0) - Number(restorePaidDays || 0)),
@@ -56,11 +63,8 @@ export function recomputePaidSplit(typeConfig, balanceEntry, balance, days, from
   const overallAvailable = Math.max(0,
     Number(restored.allocated || 0) + Number(restored.carriedForward || 0)
     - Number(restored.used || 0) - Number(restored.pending || 0));
-  const allowedPaidDays = Math.min(overallAvailable, periodAllowed);
-  if (days > allowedPaidDays) {
-    return { paidDays: allowedPaidDays, unpaidDays: Number((days - allowedPaidDays).toFixed(2)) };
-  }
-  return { paidDays: days, unpaidDays: 0 };
+  const available = Number(Math.min(overallAvailable, periodAllowed).toFixed(2));
+  return { paidDays: days, unpaidDays: 0, available };
 }
 
 // Delta twin of recordPeriodUsageSplit: same date enumeration and per-day

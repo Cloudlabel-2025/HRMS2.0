@@ -158,7 +158,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
   sMeta.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
   summary.getRow(2).height = 22;
 
-  const summaryHeaders = ['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours'];
+  const summaryHeaders = ['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave (Days)', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours'];
   const shRow = summary.getRow(4);
   shRow.values = summaryHeaders;
   shRow.height = 26;
@@ -186,14 +186,14 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     totalWorking += st.workingDays;
     totalWorked += st.daysWorked;
     totalPerfect8 += st.present;
-    totalLeave += st.leave;
+    totalLeave += st.leaveDays;
     totalAbsent += st.absent;
     totalNotArrived += st.notArrived;
     totalHoliday += st.offDays;
     totalLate += st.late;
     totalPerm += st.permission;
     totalShort += st.shortHours;
-    const r = summary.addRow([emp.name || '—', emp.department || '—', emp.role || '—', st.workingDays, st.daysWorked, st.present, st.leave, st.absent, st.notArrived, st.offDays, st.late, st.permission, st.shortHours]);
+    const r = summary.addRow([emp.name || '—', emp.department || '—', emp.role || '—', st.workingDays, st.daysWorked, st.present, st.leaveDays, st.absent, st.notArrived, st.offDays, st.late, st.permission, st.shortHours]);
     r.height = 22;
     r.eachCell((cell, col) => {
       cell.font = { size: 10, color: { argb: col <= 3 ? 'FF0F172A' : 'FF334155' }, bold: col <= 3 };
@@ -264,7 +264,7 @@ export async function buildAttendanceExcel(allData, meta = {}) {
     const summaryLabels = [
       `Days Worked: ${st.daysWorked}`,
       `Perfect 8: ${st.present}`,
-      `On Leave: ${st.leave} (${st.halfDayLeave} half-day)`,
+      `On Leave: ${st.leaveDays} (${st.halfDayLeave} half-day)`,
       `Absent: ${st.absent}`,
       `Not Arrived: ${st.notArrived}`,
       `Late: ${st.late}`,
@@ -377,7 +377,7 @@ export async function buildAttendancePdf(allData, meta = {}) {
   const summaryBody = allData.map(({ emp, records }) => {
     const sorted = [...(records || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     const st = computeStats(sorted);
-    return [emp.name || '—', emp.department || '—', emp.role || '—', String(st.workingDays), String(st.daysWorked), String(st.present), String(st.leave), String(st.absent), String(st.notArrived), String(st.offDays), String(st.late), String(st.permission), String(st.shortHours)];
+    return [emp.name || '—', emp.department || '—', emp.role || '—', String(st.workingDays), String(st.daysWorked), String(st.present), String(st.leaveDays), String(st.absent), String(st.notArrived), String(st.offDays), String(st.late), String(st.permission), String(st.shortHours)];
   });
 
   let totalsRow = null;
@@ -394,7 +394,7 @@ export async function buildAttendancePdf(allData, meta = {}) {
 
   autoTable(doc, {
     startY: 30,
-    head: [['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours']],
+    head: [['Employee', 'Department', 'Role', 'Working Days', 'Days Worked', 'Perfect 8', 'On Leave (Days)', 'Absent', 'Not Arr', 'Holidays', 'Late', 'Permission', 'Short Hours']],
     body: totalsRow ? [...summaryBody, totalsRow] : summaryBody,
     styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [30, 58, 95], textColor: [255, 255, 255], fontStyle: 'bold' },
@@ -435,7 +435,7 @@ export async function buildAttendancePdf(allData, meta = {}) {
     doc.setTextColor(15, 23, 42);
     doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
-    doc.text(`Days Worked: ${st.daysWorked}   •   Perfect 8: ${st.present}   •   On Leave: ${st.leave} (${st.halfDayLeave} half-day)   •   Absent: ${st.absent}   •   Not Arrived: ${st.notArrived}   •   Late: ${st.late}   •   Holidays/Off: ${st.offDays}   •   Permission: ${st.permission}   •   Short Hours: ${st.shortHours}`, 14, 31);
+doc.text(`Days Worked: ${st.daysWorked}    •   Perfect 8: ${st.present}    •   On Leave: ${st.leaveDays} (${st.halfDayLeave} half-day)    •   Absent: ${st.absent}    •   Not Arrived: ${st.notArrived}    •   Late: ${st.late}    •   Holidays/Off: ${st.offDays}    •   Permission: ${st.permission}    •   Short Hours: ${st.shortHours}`, 14, 31);
     doc.setFont(undefined, 'normal');
 
     const rows = sorted.map((r) => {

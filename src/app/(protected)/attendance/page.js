@@ -10,7 +10,7 @@ import Time from '@/components/Time';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { formatMins } from '@/lib/format';
 import { STATUS_STYLE, MANAGER_ROLES } from '@/lib/constants';
-import { computeAttendanceStats, reconciliationLine, displayStatusOf, showsAsPresentViaPermission } from '@/lib/attendance-stats';
+import { computeAttendanceStats, reconciliationLine, displayStatusOf, showsAsPresentViaPermission, isLatePastThreshold } from '@/lib/attendance-stats';
 import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, matchBreakRule } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
@@ -3016,12 +3016,13 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           { label: 'Working Days', value: stats.workingDays, color: '#0f172a' },
           { label: 'Days Worked', value: stats.daysWorked, color: '#059669' },
           { label: 'Days Absent', value: stats.absent, color: '#ef4444' },
-          { label: 'Days of Leave', value: stats.leave, color: '#3b82f6' },
+          { label: 'Days of Leave', value: stats.leaveDays, color: '#3b82f6', sub: stats.halfDayLeave > 0 ? `${stats.halfDayLeave} half-day` : null },
         ].map((s, i) => (
           <div key={i} className="col-6 col-md-3">
             <div className="stat-card" style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 26, fontWeight: 800, color: s.color }}>{s.value}</div>
               <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{s.label}</div>
+              {s.sub && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 1 }}>{s.sub}</div>}
             </div>
           </div>
         ))}
@@ -3104,6 +3105,12 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {row.shortHours && !isApprovedPerm && <span className="badge ms-1" title={shortHoursTitle(row)} style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}>Short Hours</span>}
                       {isApprovedPerm && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                       {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
+                      {/* Arrival past the shift's half-day threshold on an otherwise
+                          normal working day. Display-only: the status stays Late
+                          and payroll still credits a full day. */}
+                      {isLatePastThreshold(row) && (
+                        <span className="badge ms-1" title="Clocked in after the shift's half-day threshold. Flagged for review — a late arrival is never LOP." style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day · late</span>
+                      )}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">
                           <button className="btn btn-sm btn-success me-1" style={{ fontSize: 11 }}
@@ -3143,11 +3150,12 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                 </div>
                 <span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>
               </div>
-              {(isApprovedPermM || isPendingPermM || row.approvedHalfDayLeave || row.status === 'half_day') && (
+              {(isApprovedPermM || isPendingPermM || row.approvedHalfDayLeave || row.status === 'half_day' || isLatePastThreshold(row)) && (
                 <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 8 }}>
                   {isApprovedPermM && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                   {isPendingPermM && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
                   {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
+                  {isLatePastThreshold(row) && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day · late</span>}
                 </div>
               )}
               <div className="row g-2">
