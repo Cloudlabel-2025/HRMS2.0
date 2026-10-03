@@ -383,7 +383,8 @@ export async function GET(req) {
         rec.lateFlag = result.lateFlag;
         rec.halfDayThresholdExceeded = !!result.halfDayThresholdExceeded;
       }
-      // Permission day: highlight real hours but never mark shortHours.
+      // Permission time, including any overrun before it is ended, is excused
+      // from short-hours calculation. Overruns are tracked separately as Late.
       // An approved, on-time permission forces Present (even mid-day).
       // An OVER-RUN permission (ended late) keeps the resolver's verdict
       // so the day is marked Late instead of being masked as Present, and
@@ -395,9 +396,9 @@ export async function GET(req) {
           rec.shortHours = (Number(rec.permission?.overrunMins) || 0) > 0;
           rec._permissionStatus = 'approved_late';
         } else {
+          rec.shortHours = false;
           rec.status = 'present';
           rec.lateFlag = false;
-          rec.shortHours = false;
           rec._permissionStatus = 'approved';
         }
         // Keep the breakdown consistent with the suppressed flag so the UI

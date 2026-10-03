@@ -445,7 +445,10 @@ export async function PUT(req) {
         });
       }
 
-      if (reg.requestedOutNotYet) {
+      // "Not yet clocked out" describes the state when the request was
+      // submitted. If the employee has clocked out while awaiting review,
+      // keep that actual clock-out and do not reopen the attendance session.
+      if (reg.requestedOutNotYet && !attendance.clockOut) {
         const oldClockOut = attendance.clockOut;
         attendance.clockOut = null;
         attendance.autoLoggedOut = false;
@@ -761,11 +764,17 @@ export async function PUT(req) {
               shiftStartMins,
               cfg: regCfg,
             });
-            attendance.lateFlag = !!resolved.lateFlag;
+            attendance.lateFlag = !!resolved.lateFlag || !!attendance.permission?.endedLate;
             attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate >= (regCfg?.halfDayThreshold || 180);
             if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
             else if (!attendance.lateFlag && attendance.status === 'late') attendance.status = 'present';
           }
+        }
+        // A permission overrun is Late even when the regularized clock-in was
+        // covered by the approved window. It remains separate from shortHours.
+        if (attendance.permission?.endedLate && !attendance.approvedHalfDayLeave) {
+          attendance.lateFlag = true;
+          attendance.status = 'late';
         }
       }
 
