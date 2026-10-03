@@ -13,6 +13,7 @@ import { notify } from '@/lib/notify';
 import { isEmployer } from '@/lib/permissions';
 import { resolveShiftForDate } from '@/lib/shift-utils';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
+import { getEmploymentStartDate, countUnpaidWorkingDays } from '@/lib/payroll-lop-utils';
 
 const DEFAULT_LOP_CONFIG = { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0, lateLopMode: 'half', lateGraceMinutes: 0, halfDayThresholdFullLop: true };
 
@@ -139,6 +140,25 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           to: { $gte: fromDate },
         });
 
+        // Employment-start guard (same rule as attendance-sync): pre-joining
+        // dates are never LOP. The sync skips materialising them, so without
+        // this filter the safety-net below would count every pre-joining
+        // working date as an absence.
+        const employmentStartDate = await getEmploymentStartDate(emp._id);
+
+        // Approved-leave coverage clipped to this cycle. A date covered by an
+        // approved leave is credited by the leave loop below, so the absent
+        // branches must not count it even when its register row is missing
+        // or stale — otherwise one day becomes absent 1.0 + unpaid 1.0.
+        const leaveCoveredDates = new Set();
+        for (const leave of approvedLeaves) {
+          const start = leave.from < fromDate ? fromDate : leave.from;
+          const end = leave.to > toDate ? toDate : leave.to;
+          for (let cursor = new Date(`${start}T00:00:00`), last = new Date(`${end}T00:00:00`); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
+            leaveCoveredDates.add(cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0'));
+          }
+        }
+
         // Materialise the calendar register first: every elapsed date gets a
         // row (missing working days become absent, non-working days become
         // holiday, approved-leave days become leave). Clocked rows are never
@@ -210,9 +230,10 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         let slightLateDays = 0;
         let pastThresholdLateDays = 0;
         for (const d of workingDateSet) {
+          if (employmentStartDate && d < employmentStartDate) continue;
           const r = byDate.get(d);
-          if (!r) { absentDaysVal += 1; continue; }
-          if (r.status === 'absent' && !r.clockIn) { absentDaysVal += 1; continue; }
+          if (!r) { if (!leaveCoveredDates.has(d)) absentDaysVal += 1; continue; }
+          if (r.status === 'absent' && !r.clockIn) { if (!leaveCoveredDates.has(d)) absentDaysVal += 1; continue; }
           // Days Worked: integer count of working dates actually turned up
           // (same definition as the Team report card — not the fractional
           // payroll credit, which lives in presentDays).
@@ -260,12 +281,16 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           for (let cursor = new Date(`${start}T00:00:00`), last = new Date(`${end}T00:00:00`); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
             const d = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
             if (!workingDateSet.has(d)) continue;
+            if (employmentStartDate && d < employmentStartDate) continue;
             const workedThatDay = clockedDates.has(d);
             if (workedThatDay && !leave.halfDay) continue;
             const credit = leave.halfDay && !halfDayCountsAsFull ? 0.5 : 1;
             paidLeaveDays += credit * paidRatio;
             unpaidLeaveDays += credit * (1 - paidRatio);
-            if (leave.halfDay && !workedThatDay) unpaidHalfDayRemainder += 0.5;
+            // Remainder is LOP-only: a paid half-day leave never creates LOP,
+            // and when countHalfDay is false the full-day credit already
+            // covers the whole working day.
+            if (leave.halfDay && !workedThatDay && paidRatio === 0 && !halfDayCountsAsFull) unpaidHalfDayRemainder += 0.5;
           }
         }
         unpaidLeaveDays += unpaidHalfDayRemainder;
@@ -291,9 +316,13 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         let retroLopDays = 0;
         const retroLeaveIds = [];
         for (const rLeave of retroLeaves) {
-          retroLopDays += Number(rLeave.unpaidDays) || (rLeave.typeCode === 'LOP' ? Number(rLeave.days) : 0);
+          // Working-day count on the payroll calendar — the same figure the
+          // in-cycle loop would have produced. Stored unpaidDays may include
+          // weekends/holidays (leave-policy flags) or legacy bulk values.
+          retroLopDays += await countUnpaidWorkingDays(rLeave, config, lopConfig);
           retroLeaveIds.push(rLeave._id);
         }
+        retroLopDays = Math.round(retroLopDays * 100) / 100;
         retroLopDaysVal = retroLopDays;
         retroLeaveIdsVal = retroLeaveIds;
       }

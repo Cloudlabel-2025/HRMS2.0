@@ -413,6 +413,23 @@ export async function PUT(req, { params }) {
       }
       await leave.save();
       if (action === 'approved') await materializeLeaveAttendance(leave);
+      // Same payroll reopen/re-run as the dynamic-workflow path: a leave
+      // approved after its cycle closed must recompute that cycle instead of
+      // silently becoming LOP in an already-locked run.
+      if (action === 'approved' && !applicantIsEmployer) {
+        try {
+          const ip = req.headers.get('x-forwarded-for') || '';
+          const reopened = await reopenPayrollForLeave(leave, user, ip);
+          if (reopened.length) {
+            const { runPayrollForMonth } = await import('@/lib/payroll-run-engine');
+            for (const m of reopened) {
+              await runPayrollForMonth({ month: m, userIds: [leave.userId], actor: user, ip, force: true });
+            }
+          }
+        } catch (e) {
+          console.error('Payroll reopen/re-run failed (SME path):', e);
+        }
+      }
       await auditLog(`Leave ${action}`, 'Leave', user._id, `${action} SME leave for ${leave.days} days (${leave.from} to ${leave.to})`, action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, applicantId);
       return ok(leave);
     }
@@ -580,6 +597,26 @@ export async function PUT(req, { params }) {
         }
       } catch (e) {
         console.error('Failed to create leave attendance records:', e);
+      }
+    }
+
+    // Legacy path never reopened/recomputed payroll (only the dynamic path
+    // did), so a leave approved here after its cycle closed stayed invisible
+    // to the money. Mirror the dynamic path: reopen + scoped force re-run.
+    if (newStatus === 'approved' && !applicantIsEmployer) {
+      try {
+        const ip = req.headers.get('x-forwarded-for') || '';
+        const reopened = await reopenPayrollForLeave(leave, user, ip);
+        if (reopened.length) {
+          const { runPayrollForMonth } = await import('@/lib/payroll-run-engine');
+          for (const m of reopened) {
+            await runPayrollForMonth({ month: m, userIds: [leave.userId], actor: user, ip, force: true });
+          }
+        }
+      } catch (e) {
+        // Never fail the approval because the recompute failed — the leave
+        // is approved and the cycle stays a draft for a manual re-run.
+        console.error('Payroll reopen/re-run failed (legacy path):', e);
       }
     }
 

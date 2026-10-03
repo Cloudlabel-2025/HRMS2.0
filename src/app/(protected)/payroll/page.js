@@ -144,10 +144,10 @@ export default function PayrollPage() {
     }
   };
 
-  const doRun = async () => {
+  const doRun = async (force = false) => {
     setRunning(true);
     try {
-      const res = await api.post('/api/payroll/run', { month });
+      const res = await api.post('/api/payroll/run', { month, force });
       const empById = new Map(employees.map(e => [String(e.userId || e._id), e]));
       const enriched = {
         ...res,
@@ -157,6 +157,7 @@ export default function PayrollPage() {
         }),
       };
       setAlert({ mode: 'result', result: enriched });
+      if (force && (res.reopened || 0) > 0) showToast(`Force re-run — ${res.reopened} locked record(s) reopened and recomputed`);
       load();
       // Auto-download the payroll Excel report (summary + per-date LOP) after
       // every run. Export failure must never fail the run itself.
@@ -325,6 +326,9 @@ export default function PayrollPage() {
             </button>
             <button className="btn btn-primary" onClick={runPayroll} disabled={running} title={!cycleReady ? 'Generates draft calculations for cycle in progress' : 'Generates draft calculations for cycle'}>
               {running ? <><span className="spinner-border spinner-border-sm me-2" />Running...</> : <><i className="bi bi-play-circle me-2" />{cycleReady ? 'Run Payroll' : 'Run Preview Draft'}</>}
+            </button>
+            <button className="btn btn-outline-warning" onClick={() => doRun(true)} disabled={running || exporting} title="Reopen approved/finalized records to draft and recompute LOP with current rules (audited)">
+              <i className="bi bi-arrow-repeat me-2" />Re-run Locked
             </button>
             {!cycleReady && <span className="badge" style={{ background: '#dbeafe', color: '#1d4ed8', fontSize: 12, padding: '6px 12px', borderRadius: 8, alignSelf: 'center' }}><i className="bi bi-info-circle me-1" />Cycle in progress — Preview mode</span>}
           </>}
