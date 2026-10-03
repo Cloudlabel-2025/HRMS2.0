@@ -15,8 +15,12 @@
  *    `leave` itself stays an integer ROW count because it is an operand of the
  *    reconciliation identity — do not swap the two.
  *  - Late         = every 'late' row, including arrivals past the half-day
- *    threshold. Late is never LOP for payroll; this is display only, surfaced
- *    by isLatePastThreshold().
+ *    threshold. A late arrival DOES cost pay: past lateThreshold it withholds
+ *    half a day, and at/over halfDayThreshold a full day (see classifyDayPay
+ *    in attendance-resolver.js). isLatePastThreshold() separates the two
+ *    tiers for display and reporting.
+ *  - Short hours, break excess and permission NEVER cost pay — they are
+ *    informational only.
  *
  * Reconciliation identity (always holds when the register is complete):
  *   workingDays === daysWorked + leave + absent + notArrived

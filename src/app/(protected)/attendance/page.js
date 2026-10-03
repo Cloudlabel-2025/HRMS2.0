@@ -3032,7 +3032,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
           <strong>Days Worked breakdown:</strong>
           <span style={{ marginLeft: 8 }}>Present {stats.present}</span>
           <span style={{ marginLeft: 12 }}>·</span>
-          <span style={{ marginLeft: 12 }}>Late {stats.late}{stats.latePastThreshold > 0 ? ` (${stats.latePastThreshold} past half-day)` : ''}</span>
+          <span style={{ marginLeft: 12 }}>Late {stats.late}{stats.latePastThreshold > 0 ? ` (${stats.latePastThreshold} past half-day threshold = full-day LOP, ${stats.late - stats.latePastThreshold} slight = half-day LOP)` : ` (${stats.late} slight = half-day LOP)`}</span>
           <span style={{ marginLeft: 12 }}>·</span>
           <span style={{ marginLeft: 12 }}>Short-hours {stats.shortHours}</span>
           <span style={{ marginLeft: 12 }}>·</span>
@@ -3106,10 +3106,10 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                       {isApprovedPerm && <span className="badge ms-1" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                       {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge ms-1" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
                       {/* Arrival past the shift's half-day threshold on an otherwise
-                          normal working day. Display-only: the status stays Late
-                          and payroll still credits a full day. */}
+                          normal working day. This is money-bearing: the day
+                          carries a FULL-DAY LOP, so no pay is credited. */}
                       {isLatePastThreshold(row) && (
-                        <span className="badge ms-1" title="Clocked in after the shift's half-day threshold. Flagged for review — a late arrival is never LOP." style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day · late</span>
+                        <span className="badge ms-1" title="Clocked in after the shift's half-day threshold. FULL-DAY LOP - no pay is credited for this day." style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day (late)</span>
                       )}
                       {row.leaveOverride?.status === 'pending' && isAdmin && (
                         <div className="mt-1">
@@ -3155,7 +3155,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                   {isApprovedPermM && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}>Permission · Approved</span>}
                   {isPendingPermM && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}>Permission · Pending</span>}
                   {(row.approvedHalfDayLeave || row.status === 'half_day') && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>Half-day</span>}
-                  {isLatePastThreshold(row) && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day · late</span>}
+                  {isLatePastThreshold(row) && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}>Half-day (late)</span>}
                 </div>
               )}
               <div className="row g-2">

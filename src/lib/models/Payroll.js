@@ -56,6 +56,16 @@ const PayrollSchema = new mongoose.Schema({
   holidayDays:{ type: Number, default: 0 },
   weeklyOffDays:{ type: Number, default: 0 },
   lopDays:    { type: Number, default: 0 },
+  // Late-arrival LOP, split by tier so the payslip is auditable:
+  // lopDays = absentDays + lateLopDays + unpaidLeaveDays
+  lateLopDays:           { type: Number, default: 0 },
+  // Lates past lateThreshold but within halfDayThreshold (0.5 day each).
+  slightLateDays:        { type: Number, default: 0 },
+  // Lates at/over halfDayThreshold (1.0 day each).
+  pastThresholdLateDays: { type: Number, default: 0 },
+  // Overtime from a late clock-out. Placeholder only — always 0 until the
+  // overtime rule is defined. Never contributes to net pay.
+  overtimeMinutes:       { type: Number, default: 0 },
   effectiveLopDays: { type: Number, default: 0 },
   graceDaysApplied: { type: Number, default: 0 },
   retroLopDays: { type: Number, default: 0 },

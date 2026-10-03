@@ -169,3 +169,29 @@ export function determineStatus(minutesSinceShiftStart, cfg) {
   }
   return { status: 'present', lateFlag: false, halfDayThresholdExceeded: false };
 }
+
+/**
+ * OVERTIME — INTENTIONALLY NOT IMPLEMENTED. Reserved extension point.
+ *
+ * The intended future rule is: a clock-out later than the shift's end time
+ * yields overtime minutes. Deliberately NOT decided here, because each of
+ * these is a policy question that must be answered before any money moves:
+ *
+ *   - the grace band before overtime starts counting
+ *   - whether a late clock-out is paid at the same rate as a normal hour
+ *   - whether overtime attaches to gross, basic, or only an OT-specific component
+ *   - whether overtime is paid out, or banked and paid later
+ *   - whether overtime is capped per day / per month
+ *   - whether an auto-logout (system-forced clock-out) counts as overtime —
+ *     it almost certainly must NOT
+ *
+ * Until those are settled this returns 0 and MUST NOT be added to net pay.
+ * `Attendance.overtimeMinutes` is storage for the eventual value only.
+ *
+ * @param {Object} rec - Attendance record
+ * @param {Object} cfg - shift config
+ * @returns {number} always 0 for now
+ */
+export function computeOvertimeMinutes(rec, cfg) { // eslint-disable-line no-unused-vars
+  return 0;
+}
