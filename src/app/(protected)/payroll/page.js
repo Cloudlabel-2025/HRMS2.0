@@ -25,6 +25,7 @@ export default function PayrollPage() {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [showSlip, setShowSlip] = useState(null);
   const [showStructureModal, setShowStructureModal] = useState(false);
   const [structureForm, setStructureForm] = useState({ userId: '', grossLPA: '', ruleId: '', overrides: [] });
@@ -113,6 +114,36 @@ export default function PayrollPage() {
 
   useEffect(() => { if (user) load(); }, [user, month]);
 
+  const handleExportExcel = async (silent = false) => {
+    if (exporting) return;
+    if (running && !silent) return; // auto-download after a run passes silent=true
+    setExporting(true);
+    try {
+      const data = await api.get(`/api/payroll/report?month=${month}`);
+      const list = Array.isArray(data?.payrolls) ? data.payrolls : [];
+      if (list.length === 0) {
+        if (!silent) showToast(`No payroll records for ${month} to export`, 'error');
+        return;
+      }
+      const { buildPayrollExcel } = await import('@/lib/payroll-report-export');
+      const buffer = await buildPayrollExcel(data);
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `payroll_report_${month}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      if (!silent) showToast(`Payroll report downloaded — ${list.length} employee(s)`);
+    } catch (e) {
+      if (!silent) showToast(e.message, 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const doRun = async () => {
     setRunning(true);
     try {
@@ -127,6 +158,9 @@ export default function PayrollPage() {
       };
       setAlert({ mode: 'result', result: enriched });
       load();
+      // Auto-download the payroll Excel report (summary + per-date LOP) after
+      // every run. Export failure must never fail the run itself.
+      try { await handleExportExcel(true); } catch { /* non-fatal */ }
     } catch (e) {
       showToast(e.message, 'error');
     } finally {
@@ -280,6 +314,9 @@ export default function PayrollPage() {
             {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
           {isAdmin && <>
+            <button className="btn btn-outline-secondary" onClick={() => handleExportExcel()} disabled={exporting || running} title="Download payroll Excel report (summary + per-date LOP)">
+              {exporting ? <><span className="spinner-border spinner-border-sm me-2" />Exporting...</> : <><i className="bi bi-file-earmark-excel me-2" />Export Excel</>}
+            </button>
             <button className="btn btn-outline-primary" onClick={() => approvePayroll('approve')}>
               <i className="bi bi-check-circle me-2" />Approve
             </button>
