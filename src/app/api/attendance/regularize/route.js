@@ -8,6 +8,7 @@ import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateReques
 import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
+import { preClockInPermissionMins } from '@/lib/permission-hours';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
@@ -91,25 +92,109 @@ export async function GET(req) {
 
     // Approval queue scoping: no self-approval, no cross-department, and only
     // requests the viewer's role is actually allowed to act on.
+    const canSeeApproval = (viewer, req) => {
+      const requester = req.userId;
+      if (!requester?._id) return false;
+      if (String(requester._id) === String(viewer._id)) return false;
+      if (viewer.role === 'super_admin') return true;
+      if (viewer.role === 'admin_full') return requester.role !== 'admin_full';
+      if (viewer.role === 'team_lead') {
+        return requester.department === viewer.department &&
+          ['team_admin', 'employee', 'intern', 'sme'].includes(requester.role);
+      }
+      if (viewer.role === 'team_admin') {
+        return requester.department === viewer.department &&
+          ['employee', 'intern', 'sme'].includes(requester.role);
+      }
+      return false;
+    };
     if (scope === 'approvals') {
-      const canSeeApproval = (viewer, req) => {
-        const requester = req.userId;
-        if (!requester?._id) return false;
-        if (String(requester._id) === String(viewer._id)) return false;
-        if (viewer.role === 'super_admin') return true;
-        if (viewer.role === 'admin_full') return requester.role !== 'admin_full';
-        if (viewer.role === 'team_lead') {
-          return requester.department === viewer.department &&
-            ['team_admin', 'employee', 'intern', 'sme'].includes(requester.role);
-        }
-        if (viewer.role === 'team_admin') {
-          return requester.department === viewer.department &&
-            ['employee', 'intern', 'sme'].includes(requester.role);
-        }
-        return false;
-      };
       requests = requests.filter(r => canSeeApproval(user, r));
     }
+
+    // Standalone permission requests (applied via self-service, not bundled
+    // in a regularization). Mapped to the regularization row shape with
+    // kind: 'permission' so the tab lists and acts on both uniformly.
+    try {
+      const permQuery = { requestType: 'permission' };
+      if (scope === 'approvals') permQuery.status = 'pending';
+      const permDocs = await SelfServiceRequest.find(permQuery)
+        .select('identityId profileId payload reason status createdAt')
+        .sort({ createdAt: -1 }).lean();
+      const idIds = [...new Set(permDocs.map(p => String(p.identityId || '')).filter(Boolean))];
+      const pfIds = [...new Set(permDocs.map(p => String(p.profileId || '')).filter(Boolean))];
+      const orConds = [];
+      if (idIds.length) orConds.push({ identityId: { $in: idIds } });
+      if (pfIds.length) orConds.push({ profileId: { $in: pfIds } });
+      let permUsers = [];
+      if (orConds.length) {
+        permUsers = await User.find({ $or: orConds }).select('_id name avatar department role identityId profileId shift shiftId').lean();
+      }
+      const userByIdId = new Map(), userByPfId = new Map();
+      for (const u of permUsers) {
+        if (u.identityId) userByIdId.set(String(u.identityId), u);
+        if (u.profileId) userByPfId.set(String(u.profileId), u);
+      }
+      // Mirror the regularization scoping above using the already-built query.
+      const matchUser = (u) => {
+        const q = query.userId;
+        if (!q) return true;
+        const idStr = String(u._id || u);
+        if (q.$in) return q.$in.some(x => String(x) === idStr);
+        if (q.$nin) return !q.$nin.some(x => String(x) === idStr);
+        return String(q) === idStr;
+      };
+      for (const p of permDocs) {
+        const u = userByIdId.get(String(p.identityId || '')) || userByPfId.get(String(p.profileId || ''));
+        if (!u || !matchUser(u)) continue;
+        const row = {
+          _id: p._id,
+          kind: 'permission',
+          userId: { _id: u._id, name: u.name, avatar: u.avatar, department: u.department, role: u.role },
+          date: p.payload?.date || '',
+          requestedIn: null,
+          requestedOut: null,
+          requestedOutNotYet: false,
+          requestedBreaks: [],
+          requestedPermission: {
+            startTime: p.payload?.startTime || null,
+            endTime: p.payload?.endTime || null,
+            actualEndTime: p.payload?.actualEndTime || null,
+            source: 'permission',
+          },
+          reason: p.reason || '',
+          status: p.status,
+          createdAt: p.createdAt,
+          _shiftUser: { _id: u._id, shift: u.shift, shiftId: u.shiftId },
+        };
+        if (scope === 'approvals') {
+          if (!canSeeApproval(user, row)) continue;
+        }
+        requests.push(row);
+      }
+      requests.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    } catch (e) { console.error('standalone permission list failed (non-fatal):', e?.message || e); }
+
+    // Resolve the shift effective on each request's date (overnight-aware),
+    // plus the advisory shift-excess for permission windows. Never blocks.
+    try {
+      const { permissionExcessMins } = await import('@/lib/permission-hours');
+      for (const r of requests) {
+        try {
+          const su = r._shiftUser || r.userId;
+          const shift = su && r.date ? await resolveShiftForDate(su, r.date).catch(() => null) : null;
+          if (shift) {
+            r.shift = { name: shift.name || '', startTime: shift.startTime || '', endTime: shift.endTime || '' };
+          }
+          const rp = r.requestedPermission;
+          if (rp?.startTime && rp?.endTime && r.shift?.startTime && r.shift?.endTime) {
+            const excess = permissionExcessMins({ startTime: rp.startTime, endTime: rp.endTime }, r.shift);
+            if (excess > 0) r.shiftExcessMins = excess;
+          }
+        } catch { /* per-row non-fatal */ }
+        delete r._shiftUser;
+      }
+    } catch (e) { console.error('shift attach failed (non-fatal):', e?.message || e); }
 
     return ok(requests);
   } catch (e) {
@@ -549,6 +634,12 @@ export async function PUT(req) {
             shiftStartMins,
             lateThreshold: regCfg?.lateThreshold ?? 15,
           });
+          // Overrun parity with the clock-out path: only the requested time
+          // is ever deducted, and the excess is late hours (never LOP).
+          if (overrunMins > 0 && regPermDuration > 0) {
+            usage.used = regPermDuration;
+            usage.refunded = 0;
+          }
           const effectiveClockIn = usage.applied && shiftStartMins !== null
             ? `${String(Math.floor(shiftStartMins / 60)).padStart(2, '0')}:${String(shiftStartMins % 60).padStart(2, '0')}`
             : attendance.clockIn || null;
@@ -573,6 +664,7 @@ export async function PUT(req) {
             endedEarly: true,
             endedLate: endedLate || !!prevPerm.endedLate,
             endedLateMins: overrunMins > 0 ? overrunMins : (prevPerm.endedLateMins ?? null),
+            overrunMins: overrunMins > 0 ? overrunMins : (prevPerm.overrunMins ?? null),
             endedBy: 'manual',
           };
 
@@ -584,13 +676,13 @@ export async function PUT(req) {
             attendance.workProgress = healed.rows;
             attendance.workProgress.push({
               type: 'permission',
-              taskDetails: `Permission (${regPerm.startTime}-${regPerm.endTime})`,
+              taskDetails: endedLate ? `Permission (${regPerm.startTime}-${regPerm.endTime}) · ended ${actualEnd} (+${overrunMins}m over)` : `Permission (${regPerm.startTime}-${regPerm.endTime})`,
               startTime: regPerm.startTime,
-              endTime: actualEnd,
+              endTime: endedLate ? regPerm.endTime : actualEnd,
               status: 'completed',
               remarks: '',
               feedback: '',
-              duration: computeWorkRowDuration({ startTime: regPerm.startTime, endTime: actualEnd }),
+              duration: computeWorkRowDuration({ startTime: regPerm.startTime, endTime: endedLate ? regPerm.endTime : actualEnd }),
               permissionRequestId: attendance.permission.requestId,
               scheduledEndTime: regPerm.endTime,
               endedLate,
@@ -632,11 +724,13 @@ export async function PUT(req) {
             clockOut: attendance.clockOut,
             shiftEndMins: regShiftEndMins,
             breakExcessMins: attendance.breakDeduction,
+            overrunMins: Number(attendance.permission?.overrunMins) || 0,
+            permissionMins: preClockInPermissionMins(attendance.permission, attendance.clockIn),
           });
         attendance.hoursWorked = hoursWorked;
         attendance.payableHours = payableHours;
         const hasRegPermission = !!(attendance.permission?.requestId || attendance.permission?.startTime);
-        attendance.shortHours = hasRegPermission ? false : rawShortHours;
+        attendance.shortHours = (hasRegPermission && !attendance.permission?.endedLate) ? false : rawShortHours;
         attendance.shortfallMins = hasRegPermission ? 0 : shortfallMins;
         attendance.breakExcessMins = hasRegPermission ? 0 : breakExcessMins;
         attendance.status = 'present';

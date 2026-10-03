@@ -12,6 +12,7 @@ import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils
 import { resolveShift, getShiftEndMinutes } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
+import { preClockInPermissionMins } from '@/lib/permission-hours';
 import { computePermissionUsage, permissionCoversShiftStart } from '@/lib/permission-allowance';
 import { reconcilePermissionWorkProgress, closePermissionEarly } from '@/lib/permission-work';
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
@@ -515,17 +516,43 @@ export async function POST(req) {
         row.start && !row.end ? { ...(row.toObject ? row.toObject() : row), end: finalClockOut } : row
       ));
       const deduction = calculateBreakDeduction(updatedBreaks, cfg.breaks);
-      // Short hours is clock-out-before-shift-end OR break excess — never a
-      // strict 8-hour comparison. Shift end is wrap-aware so overnight shifts
-      // measure correctly.
+      // Permission auto-end on clock-out: an open permission is closed at
+      // the clock-out time and flagged late when past its window, so the
+      // employee is never wedged by a forgotten permission. Runs before the
+      // hours maths so an overrun feeds shortHours.
+      let permEndedLate = false;
+      if (outRecord.permission?.requestId && !outRecord.permission?.endedAt) {
+        try {
+          const permObj = outRecord.toObject();
+          const endRes = closePermissionEarly(permObj, timeStr, 'clockout');
+          if (!endRes.error) {
+            outRecord.workProgress = permObj.workProgress;
+            outRecord.permission = permObj.permission;
+            permEndedLate = !!endRes.endedLate;
+            if (endRes.touchedRequest) {
+              const { SelfServiceRequest } = await import('@/lib/models/index');
+              await SelfServiceRequest.updateOne(
+                { _id: permObj.permission.requestId },
+                { $set: { 'payload.usedDuration': endRes.usedDuration, 'payload.refundedMins': endRes.refundedDuration } }
+              ).catch(() => {});
+            }
+          }
+        } catch (e) { console.error('Permission clock-out auto-end failed:', e?.message || e); }
+      }
+      // Short hours is clock-out-before-shift-end OR break excess OR
+      // permission overrun — never a strict hours comparison. Shift end is
+      // wrap-aware so overnight shifts measure correctly.
       const shiftEndMins = shiftDoc ? getShiftEndMinutes(shiftDoc, cfg) : null;
+      const overrun = Number(outRecord.permission?.overrunMins) || 0;
       const { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours: rawShortHours } =
-        calculateHoursWorked(finalMinutes, deduction, cfg, { clockOut: finalClockOut, shiftEndMins, breakExcessMins: deduction });
-      // Permission day: keep real hours worked for display (highlight Xh Ym / 8h)
-      // but never flag shortHours / early clock-out — the excused time has no
-      // business impact. Employee may still voluntarily work the full 8 hours.
+        calculateHoursWorked(finalMinutes, deduction, cfg, { clockOut: finalClockOut, shiftEndMins, breakExcessMins: deduction, overrunMins: overrun, permissionMins: preClockInPermissionMins(outRecord.permission, outRecord.clockIn) });
+      // An on-time permission day keeps real hours worked for display
+      // (highlight Xh Ym vs shift target) but never flags shortHours /
+      // early clock-out — the excused time has no business impact. An
+      // overrun day keeps the overrun-driven shortHours (informational,
+      // never LOP).
       const hasPermission = !!(outRecord.permission?.requestId || outRecord.permission?.startTime);
-      const shortHours = hasPermission ? false : rawShortHours;
+      const shortHours = (hasPermission && !outRecord.permission?.endedLate) ? false : rawShortHours;
       deductionBreakdown = {
         totalDeduction: deduction,
         breakLog: updatedBreaks.map(b => ({
@@ -542,21 +569,6 @@ export async function POST(req) {
       // (present, never late on the leave-adjusted day). The marker drives
       // the 0.5 payroll credit and the Half Day display.
 
-      // Permission auto-end on clock-out: an open permission is closed at
-      // the clock-out time and flagged late when past its window, so the
-      // employee is never wedged by a forgotten permission.
-      let permEndedLate = false;
-      if (outRecord.permission?.requestId && !outRecord.permission?.endedAt) {
-        try {
-          const permObj = outRecord.toObject();
-          const endRes = closePermissionEarly(permObj, timeStr, 'clockout');
-          if (!endRes.error) {
-            outRecord.workProgress = permObj.workProgress;
-            outRecord.permission = permObj.permission;
-            permEndedLate = !!endRes.endedLate;
-          }
-        } catch (e) { console.error('Permission clock-out auto-end failed:', e?.message || e); }
-      }
       if (permEndedLate && !outRecord.approvedHalfDayLeave) {
         status = 'late';
         outRecord.lateFlag = true;

@@ -114,7 +114,10 @@ const AttendanceSchema = new mongoose.Schema({
     endedEarly: { type: Boolean, default: false },
     endedLate: { type: Boolean, default: false },
     endedLateMins: { type: Number, default: null },
-    endedBy: { type: String, enum: ['manual', 'clockout', 'auto_logout', 'approval_overdue'], default: null },
+    // Minutes past the requested end. Only requested time counts as
+    // permission time; the remainder is ordinary (late) worked time.
+    overrunMins: { type: Number, default: null },
+    endedBy: { type: String, enum: ['manual', 'clockout', 'auto_logout', 'approval_overdue', 'sweep_overdue'], default: null },
   },
 }, { timestamps: true });
 

@@ -68,7 +68,8 @@ export function hasPendingPermission(rec) {
 }
 
 export function isShortHours(rec) {
-  return !!(rec?.shortHours) && !hasApprovedPermission(rec);
+  // An on-time permission day never shows short hours; an overrun day does.
+  return !!(rec?.shortHours) && (!hasApprovedPermission(rec) || !!rec?.permission?.endedLate);
 }
 
 /**

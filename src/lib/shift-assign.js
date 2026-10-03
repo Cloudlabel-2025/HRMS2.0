@@ -73,7 +73,7 @@ export async function snapshotUserShiftAssignments(userIds = [], targetShift) {
   const snapshot = (shift, name = '') => shift ? {
     name: shift.name || name,
     startTime: shift.startTime || '', endTime: shift.endTime || '',
-    expectedHours: shift.expectedHours ?? 480, absentThreshold: shift.absentThreshold ?? 240,
+    absentThreshold: shift.absentThreshold ?? 240,
     lateThreshold: shift.lateThreshold ?? 15, earlyLoginWindow: shift.earlyLoginWindow ?? 120,
     breaks: shift.breaks || [], autoLogoutAfterShiftEnd: shift.autoLogoutAfterShiftEnd ?? 360,
     halfDayThreshold: shift.halfDayThreshold ?? 180,

@@ -15,7 +15,6 @@ export const DEFAULT_SHIFT_FORM = {
   name: '',
   startTime: '',
   endTime: '',
-  expectedHours: 480,
   absentThreshold: 240,
   lateThreshold: 15,
   earlyLoginWindow: 120,
@@ -66,16 +65,9 @@ export default function ShiftFormModal({ form, setForm, errors, setErrors, savin
                 <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Work Hours Policy</span>
               </div>
               <div className="col-md-4">
-                <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Expected Work Hours</label>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input type="number" min="0" max="23" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                    value={minutesToHrMin(form.expectedHours ?? 480).hours}
-                    onChange={e => { const cur = minutesToHrMin(form.expectedHours ?? 480); setForm(p => ({ ...p, expectedHours: hrMinToMinutes(Number(e.target.value), cur.minutes) })); }} />
-                  <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>h</span>
-                  <input type="number" min="0" max="59" className="form-control form-control-sm" style={{ fontSize: 14, width: 64, height: 38, textAlign: 'center', padding: '0 8px' }}
-                    value={minutesToHrMin(form.expectedHours ?? 480).minutes}
-                    onChange={e => { const cur = minutesToHrMin(form.expectedHours ?? 480); setForm(p => ({ ...p, expectedHours: hrMinToMinutes(cur.hours, Number(e.target.value)) })); }} />
-                  <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>m</span>
+                <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Shift Length <span className="text-muted" style={{ fontSize: 10 }}>(from start–end)</span></label>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', height: 38 }}>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: '#475569' }}>{(() => { const s = String(form.startTime || ''); const e = String(form.endTime || ''); if (!/^\d{2}:\d{2}$/.test(s) || !/^\d{2}:\d{2}$/.test(e)) return '—'; const [sh, sm] = s.split(':').map(Number); const [eh, em] = e.split(':').map(Number); let d = (eh * 60 + em) - (sh * 60 + sm); if (d <= 0) d += 1440; return `${Math.floor(d / 60)}h ${d % 60}m`; })()}</span>
                 </div>
               </div>
               <div className="col-md-4">

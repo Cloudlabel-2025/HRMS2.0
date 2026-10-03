@@ -9,7 +9,8 @@ import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
-import { getShiftConfig, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
+import { preClockInPermissionMins } from '@/lib/permission-hours';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
 import { isWorkedDay } from '@/lib/attendance-stats';
@@ -385,12 +386,13 @@ export async function GET(req) {
       // Permission day: highlight real hours but never mark shortHours.
       // An approved, on-time permission forces Present (even mid-day).
       // An OVER-RUN permission (ended late) keeps the resolver's verdict
-      // so the day is marked Late instead of being masked as Present.
+      // so the day is marked Late instead of being masked as Present, and
+      // keeps the overrun-driven shortHours (informational, never LOP).
       if (rec.permission?.requestId || rec.permission?.startTime) {
         if (rec.permission?.endedLate) {
           rec.status = rec.status === 'present' ? 'late' : rec.status;
           rec.lateFlag = true;
-          rec.shortHours = false;
+          rec.shortHours = (Number(rec.permission?.overrunMins) || 0) > 0;
           rec._permissionStatus = 'approved_late';
         } else {
           rec.status = 'present';
@@ -453,10 +455,15 @@ export async function GET(req) {
             const uid = rec.userId?._id?.toString() || String(rec.userId || '');
             const key = uid + '|' + rec.date;
             const hasApproved = !!(rec.permission?.requestId || rec.permission?.startTime);
-            if (hasApproved) {
-              rec._permissionStatus = 'approved';
-            } else if (pendingByUserDate.has(key)) {
+            // A pending request is listed even when an approved permission
+            // already exists for the day (they are separate requests).
+            if (pendingByUserDate.has(key)) {
               rec.pendingPermission = pendingByUserDate.get(key);
+            }
+            if (hasApproved) {
+              // Never clobber an 'approved_late' verdict set by the recompute.
+              if (rec._permissionStatus !== 'approved_late') rec._permissionStatus = 'approved';
+            } else if (rec.pendingPermission) {
               rec._permissionStatus = 'pending';
             } else {
               rec._permissionStatus = rec._permissionStatus || null;
@@ -701,13 +708,15 @@ export async function PUT(req) {
             clockOut: current.clockOut,
             shiftEndMins,
             breakExcessMins: deduction,
+            overrunMins: Number(current.permission?.overrunMins) || 0,
+            permissionMins: preClockInPermissionMins(current.permission, current.clockIn),
           });
         const hasPermission = !!(current.permission?.requestId || current.permission?.startTime);
         update.breakDeduction = deduction;
         update.baseHoursWorked = baseHours;
         update.hoursWorked = hoursWorked;
         update.payableHours = payableHours;
-        update.shortHours = hasPermission ? false : shortHours;
+        update.shortHours = (hasPermission && !current.permission?.endedLate) ? false : shortHours;
         update.shortfallMins = hasPermission ? 0 : shortfallMins;
         update.breakExcessMins = hasPermission ? 0 : breakExcessMins;
       }

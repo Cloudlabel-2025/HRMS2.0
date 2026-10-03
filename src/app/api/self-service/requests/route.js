@@ -102,6 +102,9 @@ export async function POST(req) {
       return fail('Super administrators cannot submit permission requests', 403);
     }
 
+    // Advisory shift-excess warning for permission requests (never blocks).
+    let shiftWarning = null;
+
     if (body.requestType === 'permission' && String(body.reason || '').trim().length > 300) {
       return fail('Reason must be 300 characters or less for permission requests', 400);
     }
@@ -175,6 +178,20 @@ export async function POST(req) {
         return fail(windowCheck.error, 400);
       }
       const durationMins = permissionDurationMins(startTime, endTime);
+
+      // Advisory only: a window extending past the shift end is allowed and
+      // will be approved for the requested time, but the excess is late
+      // hours. Never blocks submit or approval.
+      try {
+        const { permissionExcessMins } = await import('@/lib/permission-hours');
+        const excess = permissionExcessMins(
+          { startTime, endTime },
+          { startTime: dayInfo.shiftStart, endTime: dayInfo.shiftEnd }
+        );
+        if (excess > 0 && dayInfo.shiftStart && dayInfo.shiftEnd) {
+          shiftWarning = `Requested window extends ${excess} min past your shift end (${dayInfo.shiftEnd}). The excess will be counted as late hours.`;
+        }
+      } catch { /* non-fatal */ }
 
       // Only one permission per day — block if an approved OR pending
       // permission already exists for this date.
@@ -273,7 +290,7 @@ export async function POST(req) {
       request._id
     );
 
-    return ok({ request }, 201);
+    return ok({ request, warning: shiftWarning || undefined }, 201);
   } catch (e) {
     return fail(e.message, 500);
   }

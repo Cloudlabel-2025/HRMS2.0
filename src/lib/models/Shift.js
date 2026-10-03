@@ -5,7 +5,6 @@ const ShiftSchema = new mongoose.Schema({
   startTime:        { type: String, required: true },
   endTime:          { type: String, required: true },
   days:             [{ type: String }],
-  expectedHours:    { type: Number, default: 480 },
   absentThreshold:  { type: Number, default: 240 },
   lateThreshold:    { type: Number, default: 15 },
   earlyLoginWindow: { type: Number, default: 120 },

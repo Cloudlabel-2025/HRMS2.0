@@ -28,7 +28,7 @@ const HOLIDAY_SOURCES = ['manual', 'saturday_alternate'];
 
 const FIELD_ALLOWLIST = {
   departments:  ['name', 'head', 'members', 'visibleDepartments'],
-  shifts:       ['name', 'startTime', 'endTime', 'days', 'expectedHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
+  shifts:       ['name', 'startTime', 'endTime', 'days', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
   holidays:     ['name', 'date', 'type', 'source', 'workingDayOverride', 'overrideReason'],
   config:       ['key', 'value'],
   roles:        ['name', 'description'],
@@ -116,10 +116,6 @@ function validateSettingsPayload(type, body, { isUpdate = false } = {}) {
     if (data.name !== undefined) data.name = data.name.trim();
     if (data.days !== undefined && !Array.isArray(data.days))
       return { error: fail('Shift days must be an array', 400) };
-    if (data.expectedHours !== undefined) {
-      data.expectedHours = Number(data.expectedHours);
-      if (isNaN(data.expectedHours) || data.expectedHours < 0) return { error: fail('Expected hours must be a positive number', 400) };
-    }
     if (data.absentThreshold !== undefined) {
       data.absentThreshold = Number(data.absentThreshold);
       if (isNaN(data.absentThreshold) || data.absentThreshold < 0) return { error: fail('Absent threshold must be a positive number', 400) };

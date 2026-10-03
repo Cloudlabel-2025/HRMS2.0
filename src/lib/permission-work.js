@@ -1,4 +1,5 @@
 import { computeWorkRowDuration } from './attendance-constants';
+import { permissionOverrunMins } from './permission-window';
 
 function toMins(t) {
   if (!t || typeof t !== 'string') return null;
@@ -120,7 +121,8 @@ export function reconcilePermissionWorkProgress(record, nowTimeStr) {
     // Any overlapping open task is closed first (clamped to its own start
     // so no negative/overnight duration is ever fabricated) to preserve
     // the single-active-row invariant enforced by PUT /api/attendance.
-    const overrun = Math.max(0, nowMins - endMinsRaw);
+    // Wrap-aware: an overnight window never reports a phantom +1350m.
+    const overrun = permissionOverrunMins(perm.startTime, perm.endTime, nowTimeStr);
     if (permIdx === -1) {
       const openTaskIdx = wp.findIndex(r => r.type !== 'permission' && r.startTime && !r.endTime);
       if (openTaskIdx >= 0) {
@@ -183,8 +185,12 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
   // over-run permissions impossible to close, so they just disappeared.
   if (perm.endedAt) return { error: 'Permission already ended', already: true };
 
-  const late = endMins !== null && nowMins > endMins;
-  const overrunMins = late ? nowMins - endMins : 0;
+  // Wrap-aware overrun: only the requested [start, end] window counts as
+  // permission time. Anything past perm.endTime is ordinary worked time
+  // recorded as overrun (late hours), never permission time.
+  const overrunMins = permissionOverrunMins(perm.startTime, perm.endTime, endTimeStr);
+  const late = overrunMins > 0;
+  const permRowEnd = late ? perm.endTime : endTimeStr;
 
   if (!Array.isArray(record.workProgress)) record.workProgress = [];
   const wp = record.workProgress;
@@ -209,24 +215,25 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
       wp[activeIdx].status = 'completed';
       wp[activeIdx].duration = computeWorkRowDuration(wp[activeIdx]);
     }
+    const clampedRow = { startTime: perm.startTime, endTime: permRowEnd };
     wp.push({
       type: 'permission',
       taskDetails: late
         ? `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`
         : `Permission (${perm.startTime}-${perm.endTime})`,
       startTime: perm.startTime,
-      endTime: endTimeStr,
+      endTime: permRowEnd,
       status: 'completed',
       remarks: '',
       feedback: '',
-      duration: computeWorkRowDuration({ startTime: perm.startTime, endTime: endTimeStr }),
+      duration: computeWorkRowDuration(clampedRow),
       permissionRequestId: perm.requestId,
       scheduledEndTime: perm.endTime,
       endedLate: late,
       overrunMins: late ? overrunMins : null,
     });
   } else {
-    wp[permIdx].endTime = endTimeStr;
+    wp[permIdx].endTime = permRowEnd;
     wp[permIdx].status = 'completed';
     wp[permIdx].duration = computeWorkRowDuration(wp[permIdx]);
     wp[permIdx].endedLate = late;
@@ -240,7 +247,7 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
     wp.push({
       type: 'task',
       taskDetails: '',
-      startTime: endTimeStr,
+      startTime: permRowEnd,
       endTime: null,
       status: 'work_in_progress',
       remarks: '',
@@ -253,6 +260,109 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
   perm.endedEarly = true;
   perm.endedLate = late;
   perm.endedLateMins = late ? overrunMins : 0;
+  perm.overrunMins = late ? overrunMins : null;
   perm.endedBy = endedBy;
-  return { ok: true, endedLate: late, overrunMins };
+  // Allowance settlement: only the requested (granted) time is ever
+  // deducted. On an overrun the full grant is consumed; an on-time or
+  // early end keeps whatever the clock-in reconcile already wrote.
+  const granted = Number(perm.grantedDuration ?? perm.duration) || 0;
+  let touchedRequest = false;
+  if (late && granted > 0) {
+    perm.usedDuration = granted;
+    perm.refundedDuration = 0;
+    touchedRequest = true;
+  }
+  return { ok: true, endedLate: late, overrunMins, usedDuration: perm.usedDuration ?? null, refundedDuration: perm.refundedDuration ?? null, touchedRequest };
+}
+
+/**
+ * Settle a permission on a record whose session is already closed
+ * (`clockOut` set — e.g. force-closed by checkAndApplyAutoLogout, which
+ * never settles the permission). `closePermissionEarly` rejects such
+ * records, so this path clamps the permission row to the requested end,
+ * stamps the fields and opens nothing. Callers persist the mutated record
+ * and mirror used/refunded to the SelfServiceRequest when touchedRequest.
+ *
+ * @param {Object} record - Attendance doc (mutated in place)
+ * @param {Object} [opts]
+ * @param {string} [opts.endedBy] - defaults to 'sweep_overdue'
+ * @param {string|null} [opts.endTimeStr] - explicit end for an open session
+ *   (e.g. the shift end when sweeping a past date that was never closed).
+ *   Defaults to the requested end (no overrun).
+ * @returns {{ ok, endedLate, overrunMins, usedDuration, refundedDuration, touchedRequest }|{ error }}
+ */
+export function settlePermissionOverrun(record, { endedBy = 'sweep_overdue', endTimeStr = null } = {}) {
+  const perm = record?.permission;
+  if (!perm?.requestId) return { error: 'No approved permission on this date' };
+  if (perm.endedAt) {
+    return {
+      ok: true, already: true, endedLate: !!perm.endedLate,
+      overrunMins: Number(perm.overrunMins ?? perm.endedLateMins) || 0,
+      usedDuration: perm.usedDuration ?? null, refundedDuration: perm.refundedDuration ?? null,
+      touchedRequest: false,
+    };
+  }
+  if (!record?.clockIn) return { error: 'Clock in first' };
+  // Open session -> the full close path (also opens the resumed task row).
+  if (!record.clockOut) {
+    return closePermissionEarly(record, endTimeStr || perm.endTime, endedBy);
+  }
+  // Closed session: the employee implicitly ended the permission at
+  // clock-out. Clamp the row, stamp the fields, open nothing.
+  const overrunMins = permissionOverrunMins(perm.startTime, perm.endTime, record.clockOut);
+  const late = overrunMins > 0;
+  if (!Array.isArray(record.workProgress)) record.workProgress = [];
+  const wp = record.workProgress;
+  const permIdStr = String(perm.requestId);
+  let permIdx = wp.findIndex(r => r.type === 'permission' && String(r.permissionRequestId || '') === permIdStr);
+  if (permIdx === -1) {
+    const legacyIdx = wp.findIndex(r => r.type === 'permission');
+    if (legacyIdx !== -1) {
+      wp[legacyIdx].permissionRequestId = perm.requestId;
+      permIdx = legacyIdx;
+    }
+  }
+  const rowEnd = late ? perm.endTime : record.clockOut;
+  if (permIdx === -1) {
+    const clamped = { startTime: perm.startTime, endTime: rowEnd };
+    wp.push({
+      type: 'permission',
+      taskDetails: late
+        ? `Permission (${perm.startTime}-${perm.endTime}) · ended ${record.clockOut} (+${overrunMins}m over)`
+        : `Permission (${perm.startTime}-${perm.endTime})`,
+      startTime: perm.startTime,
+      endTime: rowEnd,
+      status: 'completed',
+      remarks: '',
+      feedback: '',
+      duration: computeWorkRowDuration(clamped),
+      permissionRequestId: perm.requestId,
+      scheduledEndTime: perm.endTime,
+      endedLate: late,
+      overrunMins: late ? overrunMins : null,
+    });
+  } else if (!wp[permIdx].endTime) {
+    wp[permIdx].endTime = rowEnd;
+    wp[permIdx].status = 'completed';
+    wp[permIdx].duration = computeWorkRowDuration(wp[permIdx]);
+    wp[permIdx].endedLate = late;
+    wp[permIdx].overrunMins = late ? overrunMins : null;
+    if (late) {
+      wp[permIdx].taskDetails = `Permission (${perm.startTime}-${perm.endTime}) · ended ${record.clockOut} (+${overrunMins}m over)`;
+    }
+  }
+  perm.endedAt = record.clockOut;
+  perm.endedEarly = true;
+  perm.endedLate = late;
+  perm.endedLateMins = late ? overrunMins : 0;
+  perm.overrunMins = late ? overrunMins : null;
+  perm.endedBy = endedBy;
+  const granted = Number(perm.grantedDuration ?? perm.duration) || 0;
+  let touchedRequest = false;
+  if (late && granted > 0) {
+    perm.usedDuration = granted;
+    perm.refundedDuration = 0;
+    touchedRequest = true;
+  }
+  return { ok: true, endedLate: late, overrunMins, usedDuration: perm.usedDuration ?? null, refundedDuration: perm.refundedDuration ?? null, touchedRequest };
 }

@@ -9,6 +9,7 @@ import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
 import { closePermissionEarly } from '@/lib/permission-work';
+import { preClockInPermissionMins } from '@/lib/permission-hours';
 import { getShiftEndMinutes, resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { publishAttendance } from '@/lib/sse';
@@ -127,19 +128,29 @@ export async function POST(req) {
         ));
         // Recompute from actual break records — never trust stored deduction.
         const deduction = calculateBreakDeduction(updatedBreaks, recordShiftCfg.breaks);
-        const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg);
-        const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
-        const shortHours = hasPermission ? false : rawShortHours;
-
         // Permission auto-end on server-side logout: an open permission is
         // closed at the logout time and flagged late when past its window.
+        // Runs before the hours maths so an overrun feeds shortHours.
         let permEndedLate = false;
         if (record.permission?.requestId && !record.permission?.endedAt) {
           try {
             const endRes = closePermissionEarly(record, finalClockOut, 'auto_logout');
-            if (!endRes.error) permEndedLate = !!endRes.endedLate;
+            if (!endRes.error) {
+              permEndedLate = !!endRes.endedLate;
+              if (endRes.touchedRequest) {
+                const { SelfServiceRequest } = await import('@/lib/models/index');
+                await SelfServiceRequest.updateOne(
+                  { _id: record.permission.requestId },
+                  { $set: { 'payload.usedDuration': endRes.usedDuration, 'payload.refundedMins': endRes.refundedDuration } }
+                ).catch(() => {});
+              }
+            }
           } catch (e) { console.error('Permission auto-logout end failed:', e?.message || e); }
         }
+        const overrun = Number(record.permission?.overrunMins) || 0;
+        const { baseHours, hoursWorked, payableHours, shortHours: rawShortHours } = calculateHoursWorked(finalMinutes, deduction, recordShiftCfg, { overrunMins: overrun, permissionMins: preClockInPermissionMins(record.permission, record.clockIn) });
+        const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
+        const shortHours = (hasPermission && !record.permission?.endedLate) ? false : rawShortHours;
         // A worked half of an approved half-day leave finalises as Present
         // (never late on the leave-adjusted day); the marker drives the 0.5
         // credit and the Half Day display.

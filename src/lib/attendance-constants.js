@@ -72,11 +72,23 @@ export function closeExtraActiveRows(rows, nowTime) {
   return { rows: out, healed };
 }
 
+/**
+ * Gross shift length in minutes, derived purely from the shift window
+ * (startTime -> endTime), wrap-aware for overnight shifts. Returns null
+ * when the window is unresolvable — callers must not cap in that case.
+ * There is no fixed-hours target anywhere in the system.
+ */
+export function shiftGrossMins(shiftDoc) {
+  const s = shiftDoc?.startTime, e = shiftDoc?.endTime;
+  if (!s || !e || typeof s !== 'string' || typeof e !== 'string') return null;
+  return diffMins(s, e);
+}
+
 export function getShiftConfig(shiftDoc, globalConfig) {
   return {
     startTime:        shiftDoc?.startTime || '',
     endTime:          shiftDoc?.endTime || '',
-    expectedHours:    shiftDoc?.expectedHours ?? 480,
+    grossMins:        shiftGrossMins(shiftDoc),
     absentThreshold:  shiftDoc?.absentThreshold ?? 240,
     halfDayThreshold: shiftDoc?.halfDayThreshold ?? 180,
     lateThreshold:    shiftDoc?.lateThreshold ?? (Number(globalConfig?.lateThreshold) || 15),
@@ -92,15 +104,18 @@ export function getShiftConfig(shiftDoc, globalConfig) {
 /**
  * Hours and the short-hours flag for one completed day.
  *
- * There is NO strict 8-hour rule: `expectedHours` only caps `payableHours`
- * for display. `shortHours` is driven by two independent, additive triggers
- * (both optional via `ctx` so existing 3-arg callers keep working):
+ * There is NO fixed-hours target: `payableHours` is capped only by the
+ * shift's own gross window (`cfg.grossMins`, i.e. startTime -> endTime),
+ * and uncapped when the window is unresolvable. `shortHours` is driven by
+ * three independent, additive triggers (all optional via `ctx` so existing
+ * 3-arg callers keep working):
  *
  *   shortfallMins   — clock-out landed before the scheduled shift end
  *   breakExcessMins — break time taken over the allowances
+ *   overrunMins     — permission time exceeded past the approved end
  *
  * A 3-hour shift whose employee arrives on time and leaves at the expected
- * logout time is a full, non-short day regardless of `expectedHours`.
+ * logout time is a full, non-short day regardless of any hours number.
  * Late arrival is a separate judgement (`determineStatus`) and never sets
  * `shortHours` on its own.
  *
@@ -110,11 +125,16 @@ export function getShiftConfig(shiftDoc, globalConfig) {
  * @param {number|null} [ctx.shiftStartMins]
  * @param {number|null} [ctx.shiftEndMins]   scheduled shift end, wrap-aware
  * @param {number} [ctx.breakExcessMins]
+ * @param {number} [ctx.permissionMins]      approved window minutes before clock-in
+ * @param {number} [ctx.overrunMins]         permission minutes past the approved end
  */
 export function calculateHoursWorked(elapsedMins, breakDeduction, cfg, ctx = {}) {
-  const baseHours = Math.max(0, elapsedMins);
+  const permissionMins = Math.max(0, Number(ctx.permissionMins) || 0);
+  const overrunMins = Math.max(0, Number(ctx.overrunMins) || 0);
+  const baseHours = Math.max(0, elapsedMins + permissionMins);
   const hoursWorked = Math.max(0, baseHours - breakDeduction);
-  const payableHours = Math.min(cfg.expectedHours, hoursWorked);
+  const cap = Number.isFinite(cfg?.grossMins) && cfg.grossMins > 0 ? cfg.grossMins : Number.POSITIVE_INFINITY;
+  const payableHours = Math.min(cap, hoursWorked);
 
   let clockOutMins = ctx.clockOutMins;
   if (clockOutMins == null && ctx.clockOut) clockOutMins = toMinutes(ctx.clockOut);
@@ -137,9 +157,9 @@ export function calculateHoursWorked(elapsedMins, breakDeduction, cfg, ctx = {})
   }
 
   const breakExcessMins = Math.max(0, ctx.breakExcessMins ?? breakDeduction ?? 0);
-  const shortHours = shortfallMins > 0 || breakExcessMins > 0;
+  const shortHours = shortfallMins > 0 || breakExcessMins > 0 || overrunMins > 0;
 
-  return { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours };
+  return { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours, permissionMins, overrunMins };
 }
 
 export function determineStatus(minutesSinceShiftStart, cfg) {

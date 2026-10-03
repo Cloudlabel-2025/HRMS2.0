@@ -64,8 +64,25 @@ export async function PUT(req, { params }) {
     if (rest.payload) request.payload = rest.payload;
     await request.save();
 
+    // Advisory only: warn when the edited window extends past the shift.
+    let editWarning = null;
+    if (request.requestType === 'permission') {
+      try {
+        const dayInfo = await getShiftDayInfo(user._id);
+        const { permissionExcessMins } = await import('@/lib/permission-hours');
+        const p = request.payload?.toObject ? request.payload.toObject() : (request.payload || {});
+        const excess = permissionExcessMins(
+          { startTime: p.startTime, endTime: p.endTime },
+          { startTime: dayInfo.shiftStart, endTime: dayInfo.shiftEnd }
+        );
+        if (excess > 0 && dayInfo.shiftStart && dayInfo.shiftEnd) {
+          editWarning = `Requested window extends ${excess} min past your shift end (${dayInfo.shiftEnd}). The excess will be counted as late hours.`;
+        }
+      } catch { /* non-fatal */ }
+    }
+
     await auditLog('Self-Service Request Updated', 'SelfService', user._id, `Updated ${request.requestType} request`, 'low', req.headers.get('x-forwarded-for') || '', null, user._id);
-    return ok({ request });
+    return ok({ request, warning: editWarning || undefined });
   } catch (e) {
     return fail(e.message, 500);
   }

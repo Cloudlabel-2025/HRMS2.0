@@ -393,7 +393,6 @@ const ShiftRuleSnapshotSchema = new mongoose.Schema({
   name: { type: String, default: '' },
   startTime: { type: String, default: '' },
   endTime: { type: String, default: '' },
-  expectedHours: { type: Number, default: 480 },
   absentThreshold: { type: Number, default: 240 },
   lateThreshold: { type: Number, default: 15 },
   earlyLoginWindow: { type: Number, default: 120 },

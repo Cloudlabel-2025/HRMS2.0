@@ -38,6 +38,15 @@ function toMinutes(timeStr) {
   return h * 60 + m;
 }
 
+// Shift-derived daily target (start -> end, wrap-aware), from the row's
+// frozen shift snapshot. No fixed-hours target exists anywhere.
+function shiftTargetOf(row) {
+  const s = row?.shiftStartTime, e = row?.shiftEndTime;
+  if (!s || !e) return null;
+  const d = diffMins(s, e);
+  return d > 0 ? formatMins(d) : null;
+}
+
 function nowTimeStr() {
   const n = new Date();
   return String(n.getHours()).padStart(2, '0') + ':' + String(n.getMinutes()).padStart(2, '0');
@@ -55,8 +64,10 @@ function shortHoursTitle(row) {
   const parts = [];
   const shortfall = Number(row?.shortfallMins || 0);
   const excess = Number(row?.breakExcessMins || 0);
+  const overrun = Number(row?.permission?.overrunMins || 0);
   if (shortfall > 0) parts.push(`clocked out ${formatMins(shortfall)} before shift end`);
   if (excess > 0) parts.push(`${formatMins(excess)} over break allowance`);
+  if (overrun > 0) parts.push(`${formatMins(overrun)} past permission end`);
   return parts.length ? `Short hours: ${parts.join('; ')}` : 'Short hours';
 }
 
@@ -1076,15 +1087,30 @@ export default function AttendancePage() {
     finally { setRegSaving(false); }
   };
 
-  const reviewRegularization = async (id, action) => {
+  const reviewRegularization = async (row, action) => {
     try {
-      const result = await api.put('/api/attendance/regularize', { id, action });
+      let result;
+      if (row?.kind === 'permission') {
+        // Standalone permission request: reviewed through the self-service
+        // approval route (requires super_admin / admin_full — enforced below).
+        result = await api.put('/api/core/self-service-requests', { id: row._id, action });
+      } else {
+        result = await api.put('/api/attendance/regularize', { id: row._id, action });
+      }
       showToast('Request ' + action);
       loadRegRequests('approvals'); // always reload approvals after review
       // A reopened "still working" day affects the live record — refresh it so
       // tasks become endable and the Clock Out button reflects the new state.
       if (result?.date === today) loadTodayRecord();
     } catch (e) { showToast(e.message, 'error'); }
+  };
+
+  // Standalone permission rows act through the self-service approval route,
+  // which only super_admin / admin_full may call.
+  const canActOnReg = (r) => {
+    if (!canReview || regScope !== 'approvals' || r?.status !== 'pending') return false;
+    if (r?.kind === 'permission') return ['super_admin', 'admin_full'].includes(user?.role);
+    return true;
   };
 
   const handleOverrideAction = async (attendanceId, action) => {
@@ -1276,6 +1302,31 @@ export default function AttendancePage() {
       });
     }
 
+    // Pending permission as a synthetic, non-editable row (dbIdx -1 like the
+    // virtual clock rows). It never counts as the active row, so End Current
+    // Task is unaffected. Inserted in start-time order among the real rows.
+    const pendingPerm = todayRecord?.pendingPermission;
+    if (pendingPerm?.startTime) {
+      const prow = {
+        type: 'permission_pending',
+        taskDetails: `Permission requested (${pendingPerm.startTime}-${pendingPerm.endTime || '—'})`,
+        startTime: pendingPerm.startTime,
+        endTime: pendingPerm.endTime || null,
+        status: 'pending',
+        remarks: '',
+        feedback: '',
+        dbIdx: -1
+      };
+      const at = rows.findIndex(r => r.dbIdx !== -1 && r.startTime && r.startTime > pendingPerm.startTime);
+      if (at === -1) {
+        const co = rows.findIndex(r => r.type === 'clock_out');
+        if (co === -1) rows.push(prow);
+        else rows.splice(co, 0, prow);
+      } else {
+        rows.splice(at, 0, prow);
+      }
+    }
+
     return (
       <div className="card" style={{ marginTop: 16 }}>
         <div style={{ padding: '14px 18px', borderBottom: '1px solid #f1f5f9', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1324,43 +1375,48 @@ export default function AttendancePage() {
         {(() => {
           const perm = todayRecord?.permission;
           const pending = todayRecord?.pendingPermission;
-          const isPending = !!pending || todayRecord?._permissionStatus === 'pending';
-          if (isPending && pending) {
-            return (
-              <div style={{ padding: '10px 14px', background: '#fef3c7', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
+          // Pending and approved stack: a day can hold both (separate
+          // requests), so neither suppresses the other.
+          const banners = [];
+          if (pending) {
+            banners.push(
+              <div key="pending" style={{ padding: '10px 14px', background: '#fef3c7', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
                 <i className="bi bi-hourglass-split" />
                 <span><strong>Permission Requested:</strong> {pending.startTime || '--:--'} – {pending.endTime || '--:--'} · Pending approval</span>
               </div>
             );
           }
           const hasPerm = !!(perm?.requestId || perm?.startTime);
-          if (!hasPerm) return null;
-          const isEnded = !!perm.endedAt;
-          const isLate = !!perm.endedLate;
-          const openRow = (todayRecord?.workProgress || []).find(r => r.type === 'permission' && r.startTime && !r.endTime);
-          const runningOver = !isEnded && !!openRow?.endedLate;
-          if (isLate) {
-            return (
-              <div style={{ padding: '10px 14px', background: '#fef2f2', borderBottom: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#b91c1c' }}>
-                <i className="bi bi-exclamation-triangle" />
-                <span><strong>Permission Ended Late:</strong> {perm.startTime || '--:--'} – {perm.endedAt || '--:--'} (scheduled end {perm.endTime || '--:--'}{Number(perm.endedLateMins) > 0 ? `, exceeded by ${perm.endedLateMins} min` : ''})</span>
-              </div>
-            );
+          if (hasPerm) {
+            const isEnded = !!perm.endedAt;
+            const isLate = !!perm.endedLate;
+            const openRow = (todayRecord?.workProgress || []).find(r => r.type === 'permission' && r.startTime && !r.endTime);
+            const runningOver = !isEnded && !!openRow?.endedLate;
+            if (isLate) {
+              banners.push(
+                <div key="late" style={{ padding: '10px 14px', background: '#fef2f2', borderBottom: '1px solid #fecaca', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#b91c1c' }}>
+                  <i className="bi bi-exclamation-triangle" />
+                  <span><strong>Permission Ended Late:</strong> {perm.startTime || '--:--'} – {perm.endedAt || '--:--'} (scheduled end {perm.endTime || '--:--'}{Number(perm.endedLateMins) > 0 ? `, exceeded by ${perm.endedLateMins} min` : ''})</span>
+                </div>
+              );
+            } else if (runningOver) {
+              banners.push(
+                <div key="over" style={{ padding: '10px 14px', background: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
+                  <i className="bi bi-hourglass-bottom" />
+                  <span><strong>Permission Time Exceeded:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · still running{openRow?.overrunMins ? ` (+${openRow.overrunMins} min over)` : ''} — end it now</span>
+                </div>
+              );
+            } else {
+              banners.push(
+                <div key="ok" style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
+                  <i className="bi bi-patch-check" />
+                  <span><strong>Permission {isEnded ? 'Ended' : 'Approved'}:</strong> {perm.startTime || '--:--'} – {perm.endedAt || perm.endTime || '--:--'}{perm.endedAt ? ` (ended at ${perm.endedAt})` : ''}</span>
+                </div>
+              );
+            }
           }
-          if (runningOver) {
-            return (
-              <div style={{ padding: '10px 14px', background: '#fffbeb', borderBottom: '1px solid #fde68a', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#92400e' }}>
-                <i className="bi bi-hourglass-bottom" />
-                <span><strong>Permission Time Exceeded:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · still running{openRow?.overrunMins ? ` (+${openRow.overrunMins} min over)` : ''} — end it now</span>
-              </div>
-            );
-          }
-          return (
-            <div style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
-              <i className="bi bi-patch-check" />
-              <span><strong>Permission {isEnded ? 'Ended' : 'Approved'}:</strong> {perm.startTime || '--:--'} – {perm.endedAt || perm.endTime || '--:--'}{perm.endedAt ? ` (ended at ${perm.endedAt})` : ''}</span>
-            </div>
-          );
+          if (!banners.length) return null;
+          return <>{banners}</>;
         })()}
         {rows.length === 0 ? (
           <div className="empty-state"><i className="bi bi-list-task" /><p>Clock in to start today&apos;s first task</p></div>
@@ -1383,14 +1439,19 @@ export default function AttendancePage() {
               <tbody>
                 {rows.map((row, idx) => {
                   const isVirtual = row.type === 'clock_in' || row.type === 'clock_out';
-                  const isBreakRow = !isVirtual && isBreakType(row.type);
-                  const isPermissionRow = !isVirtual && row.type === 'permission';
+                  const isPendingRow = row.type === 'permission_pending';
+                  const isBreakRow = !isVirtual && !isPendingRow && isBreakType(row.type);
+                  const isPermissionRow = !isVirtual && !isPendingRow && row.type === 'permission';
                   const active = row.startTime && !row.endTime;
                   return (
                     <tr key={idx} style={{ background: isPermissionRow ? '#eff6ff' : isBreakRow ? '#f8fafc' : isVirtual ? '#f1f5f9' : 'transparent' }}>
                       <td style={{ fontSize: 13, fontWeight: 700 }}>{idx + 1}</td>
                       <td>
-                        {isVirtual ? (
+                        {row.type === 'permission_pending' ? (
+                          <span className="badge" style={{ background: '#fef3c7', color: '#92400e' }}>
+                            <i className="bi bi-hourglass-split me-1" />{row.taskDetails || 'Permission requested'}
+                          </span>
+                        ) : isVirtual ? (
                           row.type === 'clock_in' ? (
                             <span className="badge" style={{ background: '#dcfce7', color: '#16a34a', fontSize: '11.5px', fontWeight: 700 }}>
                               <i className="bi bi-box-arrow-in-right me-1" />Clocked In
@@ -1540,19 +1601,19 @@ export default function AttendancePage() {
                       </td>
                       <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.startTime} fallback="--:--" /></td>
                       <td style={{ fontSize: 13, fontWeight: 600 }}><Time value={row.endTime} fallback={active ? 'Running' : '--:--'} /></td>
-                      <td style={{ fontSize: 13, fontWeight: 600 }}>{isVirtual ? '—' : formatTaskDuration(row)}</td>
+                      <td style={{ fontSize: 13, fontWeight: 600 }}>{isVirtual || isPendingRow ? '—' : formatTaskDuration(row)}</td>
                       <td>
                         <select
                           className="form-select form-select-sm"
                           value={row.carriedForward ? 'pending' : (row.status || (active ? 'work_in_progress' : 'pending'))}
-                          disabled={isBreakRow || isPermissionRow || isVirtual}
+                          disabled={isBreakRow || isPermissionRow || isVirtual || isPendingRow}
                           onChange={e => commitWorkRow(row.dbIdx, { status: e.target.value })}
                           style={{ fontSize: 12 }}>
-                          {isVirtual ? <option value="completed">Completed</option> : WORK_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                          {isPendingRow ? <option value="pending">Pending</option> : isVirtual ? <option value="completed">Completed</option> : WORK_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                         </select>
                       </td>
                       <td>
-                        {isVirtual ? null : (
+                        {isVirtual || isPendingRow ? null : (
                           <textarea
                             className="form-control hide-scrollbar"
                             rows={2}
@@ -1565,7 +1626,7 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td>
-                        {isVirtual ? null : (
+                        {isVirtual || isPendingRow ? null : (
                           <>
                             {renderCompletionMeta(row)}
                             <textarea
@@ -1581,7 +1642,7 @@ export default function AttendancePage() {
                         )}
                       </td>
                       <td>
-                        {isVirtual ? null : isBreakRow ? null : row.resumedAfter === 'break' || row.resumedAfter === 'permission' ? (
+                        {isVirtual || isPendingRow ? null : isBreakRow ? null : row.resumedAfter === 'break' || row.resumedAfter === 'permission' ? (
                           <i className="bi bi-lock-fill" style={{ color: '#94a3b8', fontSize: 14 }} title={row.resumedAfter === 'permission' ? 'Task after permission cannot be deleted' : 'Task after break cannot be deleted'} />
                         ) : (
                           row.dbIdx === 0 && row.type === 'task' ? (
@@ -1780,13 +1841,14 @@ export default function AttendancePage() {
                             </td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockIn} fallback="—" /></td>
                             <td style={{ fontSize: 13 }}><Time value={row.clockOut} fallback="—" /></td>
-                            <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
+                            <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm && shiftTargetOf(row) ? ` / ${shiftTargetOf(row)}` : ''}` : '—'}</td>
                             <td>
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {(row.lateFlag || isPendingPerm) && !isApprovedPerm && (!row.halfDayThresholdExceeded || row.approvedHalfDayLeave) && <span className="badge" style={{ background: '#fef3c7', color: '#d97706', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Late</span>}
                                 {row.halfDayThresholdExceeded && !isApprovedPerm && <span className="badge" style={{ background: '#ffedd5', color: '#ea580c', fontSize: 10 }}><i className="bi bi-sun me-1" />Half Day</span>}
-                                {row.shortHours && !isApprovedPerm && <span className="badge" title={shortHoursTitle(row)} style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
+                                {row.shortHours && (!isApprovedPerm || row.permission?.endedLate) && <span className="badge" title={shortHoursTitle(row)} style={{ background: '#f3e8ff', color: '#7c3aed', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Short Hours</span>}
                                 {isApprovedPerm && <span className="badge" style={{ background: '#eff6ff', color: '#1d4ed8', fontSize: 10 }}><i className="bi bi-patch-check me-1" />Permission · Approved{row.permission?.startTime ? ` (${row.permission.startTime}-${row.permission.endedAt || row.permission.endTime})` : ''}</span>}
+                                {isApprovedPerm && row.permission?.endedLate && <span className="badge" style={{ background: '#fef2f2', color: '#b91c1c', fontSize: 10 }}><i className="bi bi-exclamation-triangle me-1" />Time Exceeded{Number(row.permission?.overrunMins) > 0 ? ` +${row.permission.overrunMins}m` : ''}</span>}
                                 {isPendingPerm && <span className="badge" style={{ background: '#fef3c7', color: '#92400e', fontSize: 10 }}><i className="bi bi-hourglass-split me-1" />Permission · Pending{row.pendingPermission?.startTime ? ` (${row.pendingPermission.startTime}-${row.pendingPermission.endTime})` : ''}</span>}
                                 {row.approvedHalfDayLeave && <span className="badge" style={{ background: '#dbeafe', color: '#2563eb', fontSize: 10 }}>On Leave · Half-day{row.workedHalf ? (row.workedHalf === 'first_half' ? ' · 1st half worked' : ' · 2nd half worked') : ''}</span>}
                                 {row.autoLoggedOut && <span className="badge" style={{ background: '#fffbeb', color: '#d97706', fontSize: 10 }}><i className="bi bi-clock-history me-1" />Auto Logout</span>}
@@ -1840,13 +1902,13 @@ export default function AttendancePage() {
                           ['Hours',     todayRecord.hoursWorked ? formatMins(todayRecord.hoursWorked) : '—'],
                         ].map(([label, val]) => (
                           <div key={label} className="col-6 col-md-3">
-                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}{label === 'Hours' ? ' (target 8h)' : ''}</div>
+                            <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{label}{label === 'Hours' ? ` (target ${shiftTargetOf(todayRecord) || '—'})` : ''}</div>
                             <div style={{ fontSize: 14, fontWeight: 600 }}>{val}</div>
                           </div>
                         ))}
                       </div>
                       <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
-                        8-hour target is informational only — short hours never create payroll deduction (day-based payroll).
+                        Shift target is informational only — short hours never create payroll deduction (day-based payroll).
                       </div>
                       {todayRecord?.earlyLogin && (
                         <span className="badge bg-info ms-2" style={{ fontSize: 11 }}>
@@ -2231,10 +2293,10 @@ export default function AttendancePage() {
                     <thead>
                       <tr>
                         {canReview && <th>Employee</th>}
-                        <th>Date</th><th>Req. In</th><th>Req. Out</th>
+                        <th>Date</th><th>Shift</th><th>Req. In</th><th>Req. Out</th>
                         {regBreakTypes.map(type => <th key={type}>Req. {type}</th>)}
                         <th>Permission</th><th>Reason</th><th>Status</th>
-                        {canReview && <th>Actions</th>}
+                        {canReview && regScope === 'approvals' && regRequests.some(r => canActOnReg(r)) && <th>Actions</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -2249,6 +2311,7 @@ export default function AttendancePage() {
                             </td>
                           )}
                           <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
+                          <td style={{ fontSize: 12 }}>{r.shift?.startTime && r.shift?.endTime ? <span style={{ fontWeight: 600 }}>{r.shift.name ? `${r.shift.name} ` : ''}{formatTime(r.shift.startTime)}–{formatTime(r.shift.endTime)}</span> : <span style={{ color: '#cbd5e1' }}>—</span>}</td>
                           <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn)  || '—'}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                           {regBreakTypes.map(type => (
@@ -2272,6 +2335,8 @@ export default function AttendancePage() {
                                 <span style={{ fontWeight: 600 }}><i className="bi bi-box-arrow-in-right" style={{ marginRight: 4, color: '#3b82f6' }} />{formatTime(p.startTime)} – {formatTime(p.endTime)}</span>
                                 <span style={{ color: '#64748b' }}>Actual end: {formatTime(p.actualEndTime) || '—'}</span>
                                 {late > 0 && <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700, width: 'fit-content' }}>+{late} min over</span>}
+                                {r.kind === 'permission' && <span className="badge" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 10, fontWeight: 700, width: 'fit-content' }}>Standalone permission</span>}
+                                {Number(r.shiftExcessMins) > 0 && <span className="badge" style={{ background: '#ffedd5', color: '#c2410c', fontSize: 10, fontWeight: 700, width: 'fit-content' }}>Beyond shift +{r.shiftExcessMins}m</span>}
                               </span>
                             );
                           })()}</td>
@@ -2282,12 +2347,12 @@ export default function AttendancePage() {
                               {r.status}
                             </span>
                           </td>
-                          {canReview && regScope === 'approvals' && (
+                          {canActOnReg(r) && (
                             <td>
                               {r.status === 'pending' && (
                                 <div style={{ display: 'flex', gap: 4 }}>
-                                  <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => reviewRegularization(r._id, 'approved')}>Approve</button>
-                                  <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => reviewRegularization(r._id, 'rejected')}>Reject</button>
+                                  <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => reviewRegularization(r, 'approved')}>Approve</button>
+                                  <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => reviewRegularization(r, 'rejected')}>Reject</button>
                                 </div>
                               )}
                             </td>
@@ -2325,15 +2390,18 @@ export default function AttendancePage() {
                         <div style={{ fontSize: 12, background: '#eff6ff', border: '1px solid #dbeafe', borderRadius: 8, padding: '6px 8px', marginBottom: 8 }}>
                           <div style={{ fontWeight: 600 }}><i className="bi bi-box-arrow-in-right" style={{ marginRight: 4, color: '#3b82f6' }} />Permission {formatTime(p.startTime)} – {formatTime(p.endTime)}</div>
                           <div style={{ color: '#64748b' }}>Actual end: {formatTime(p.actualEndTime) || '—'}</div>
+                          {r.shift?.startTime && r.shift?.endTime && <div style={{ color: '#64748b' }}>Shift: {r.shift.name ? `${r.shift.name} ` : ''}{formatTime(r.shift.startTime)}–{formatTime(r.shift.endTime)}</div>}
                           {late > 0 && <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10, fontWeight: 700, marginTop: 3 }}>+{late} min over</span>}
+                          {r.kind === 'permission' && <span className="badge" style={{ background: '#f1f5f9', color: '#64748b', fontSize: 10, fontWeight: 700, marginTop: 3, marginLeft: 4 }}>Standalone</span>}
+                          {Number(r.shiftExcessMins) > 0 && <span className="badge" style={{ background: '#ffedd5', color: '#c2410c', fontSize: 10, fontWeight: 700, marginTop: 3, marginLeft: 4 }}>Beyond shift +{r.shiftExcessMins}m</span>}
                         </div>
                       );
                     })()}
-                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: canReview && r.status === 'pending' ? 10 : 0 }}>{r.reason}</div>
-                    {canReview && regScope === 'approvals' && r.status === 'pending' && (
+                    <div style={{ fontSize: 12, color: '#64748b', marginBottom: canActOnReg(r) ? 10 : 0 }}>{r.reason}</div>
+                    {canActOnReg(r) && (
                       <div style={{ display: 'flex', gap: 8 }}>
-                        <button className="btn btn-sm btn-success flex-fill" onClick={() => reviewRegularization(r._id, 'approved')}>Approve</button>
-                        <button className="btn btn-sm btn-danger  flex-fill" onClick={() => reviewRegularization(r._id, 'rejected')}>Reject</button>
+                        <button className="btn btn-sm btn-success flex-fill" onClick={() => reviewRegularization(r, 'approved')}>Approve</button>
+                        <button className="btn btn-sm btn-danger  flex-fill" onClick={() => reviewRegularization(r, 'rejected')}>Reject</button>
                       </div>
                     )}
                   </div>
@@ -3018,7 +3086,7 @@ function TeamAttendanceView({ query, uid, month, formatDate, formatMins, STATUS_
                     <td><span className="badge" style={{ background: s.bg, color: s.color }}>{s.label}</span>{offDayLabel && <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{offDayLabel}</div>}</td>
                     <td style={{ fontSize: 13, ...muted }}><Time value={row.clockIn} fallback="—" /></td>
                     <td style={{ fontSize: 13, ...muted }}><Time value={row.clockOut} fallback="—" /></td>
-                    <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm ? ' / 8h' : ''}` : '—'}</td>
+                    <td style={{ fontSize: 13, fontWeight: isApprovedPerm ? 700 : 400, color: isApprovedPerm ? '#1d4ed8' : undefined }}>{row.hoursWorked ? `${formatMins(row.hoursWorked)}${isApprovedPerm && shiftTargetOf(row) ? ` / ${shiftTargetOf(row)}` : ''}` : '—'}</td>
                     <td style={{ fontSize: 13, maxWidth: 160 }}>
                       {isAdmin && (row.status === 'absent' || row.status === 'late') && !row._virtual && !isNotArrivedRow ? (
                         <input className="form-control form-control-sm" style={{ fontSize: 11 }}

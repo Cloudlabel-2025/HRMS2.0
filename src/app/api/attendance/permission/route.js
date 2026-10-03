@@ -37,6 +37,15 @@ export async function POST(req) {
       { $set: { workProgress: fresh.workProgress, permission: fresh.permission } }
     );
 
+    // Allowance settlement: only the requested time is ever deducted.
+    if (result.touchedRequest && fresh.permission?.requestId) {
+      const { SelfServiceRequest } = await import('@/lib/models/index');
+      await SelfServiceRequest.updateOne(
+        { _id: fresh.permission.requestId },
+        { $set: { 'payload.usedDuration': result.usedDuration, 'payload.refundedMins': result.refundedDuration } }
+      ).catch(() => {});
+    }
+
     record = await Attendance.findOne({ userId: user._id, date: today });
     if (!record) return fail('Failed to persist permission end', 500);
 
@@ -52,11 +61,12 @@ export async function POST(req) {
     }
 
     // A late end marks the day Late immediately (the GET recompute is the
-    // backstop on subsequent reads).
+    // backstop on subsequent reads). An overrun also drives shortHours
+    // (informational, never LOP).
     if (result.endedLate && record && !['leave', 'holiday'].includes(record.status)) {
       await Attendance.collection.updateOne(
         { _id: record._id },
-        { $set: { status: 'late', lateFlag: true, shortHours: false } }
+        { $set: { status: 'late', lateFlag: true, shortHours: (Number(result.overrunMins) || 0) > 0 } }
       );
       record = await Attendance.findOne({ userId: user._id, date: today });
     }

@@ -1,4 +1,5 @@
 import { calculateHoursWorked, computeWorkRowDuration, getShiftConfig } from './attendance-constants';
+import { preClockInPermissionMins } from './permission-hours';
 import { calculateBreakDeduction } from './attendance-breaks';
 import { getShiftEndMinutes, resolveShift } from './shift-utils';
 import { isWorkingDay, getGlobalConfig, parseShiftStartTime } from './payroll-cycle';
@@ -45,7 +46,7 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   if (!now) now = await getTzTime();
   if (!record.clockIn || record.clockOut) return false;
 
-  const shiftCfg = cfg || { expectedHours: 480, absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
+  const shiftCfg = cfg || { absentThreshold: 240, breaks: [{ type: 'break', maxDuration: 30 }, { type: 'lunch', maxDuration: 60 }] };
 
   const [ih, im] = record.clockIn.split(':').map(Number);
   const clockInMinutes = ih * 60 + im;
@@ -70,6 +71,25 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   const om = clockOutMinutes % 60;
   const clockOutTime = String(oh).padStart(2, '0') + ':' + String(om).padStart(2, '0');
 
+  // Settle an open permission before closing: previously the force-close
+  // left permission.endedAt null forever. Runs before the clockOut
+  // assignment so the full close path (resumed task row) applies.
+  if (record.permission?.requestId && !record.permission?.endedAt) {
+    try {
+      const { closePermissionEarly } = await import('./permission-work');
+      const endRes = closePermissionEarly(record, clockOutTime, 'auto_logout');
+      if (!endRes.error && endRes.touchedRequest && record.permission?.requestId) {
+        try {
+          const { SelfServiceRequest } = await import('./models/index');
+          await SelfServiceRequest.updateOne(
+            { _id: record.permission.requestId },
+            { $set: { 'payload.usedDuration': endRes.usedDuration, 'payload.refundedMins': endRes.refundedDuration } }
+          ).catch(() => {});
+        } catch { /* non-fatal */ }
+      }
+    } catch (e) { console.error('Auto-logout permission settle failed (non-fatal):', e?.message || e); }
+  }
+
   record.clockOut = clockOutTime;
   record.autoLoggedOut = true;
   record.regularizationOutOpen = false;
@@ -92,14 +112,15 @@ export async function checkAndApplyAutoLogout(record, now, cfg, shiftDoc, isEmpl
   // Auto-logout writes clockOut at shift end + grace buffer, so shortfall is 0
   // and only break excess can make the day short.
   const { baseHours, hoursWorked, payableHours, shortfallMins, breakExcessMins, shortHours: rawShortHours } =
-    calculateHoursWorked(elapsedMins, deduction, shiftCfg, { clockOutMins: clockOutMinutes, shiftEndMins: endMins, breakExcessMins: deduction });
+    calculateHoursWorked(elapsedMins, deduction, shiftCfg, { clockOutMins: clockOutMinutes, shiftEndMins: endMins, breakExcessMins: deduction, overrunMins: Number(record.permission?.overrunMins) || 0, permissionMins: preClockInPermissionMins(record.permission, record.clockIn) });
   record.baseHoursWorked = baseHours;
   record.breakDeduction = deduction;
   record.hoursWorked = hoursWorked;
   record.payableHours = payableHours;
-  // Permission day: suppress shortHours — highlight hours only, no impact.
+  // An on-time permission day suppresses shortHours — highlight hours only.
+  // An overrun day keeps the overrun-driven shortHours (informational, never LOP).
   const hasPermission = !!(record.permission?.requestId || record.permission?.startTime);
-  record.shortHours = hasPermission ? false : rawShortHours;
+  record.shortHours = (hasPermission && !record.permission?.endedLate) ? false : rawShortHours;
   record.shortfallMins = hasPermission ? 0 : shortfallMins;
   record.breakExcessMins = hasPermission ? 0 : breakExcessMins;
   if (record.approvedHalfDayLeave) {

@@ -30,7 +30,7 @@ export async function GET(req) {
 
     const [employees, attendance, auditCounts] = await Promise.all([
       User.find({ status: 'active', role: { $nin: ['super_admin'] } }).select('name avatar department designation').sort({ name: 1 }).lean(),
-      Attendance.find({ date }).select('userId hoursWorked status clockIn clockOut').lean(),
+      Attendance.find({ date }).select('userId hoursWorked status clockIn clockOut shiftStartTime shiftEndTime').lean(),
       AuditLog.aggregate([{ $match: { createdAt: { $gte: start, $lte: end } } }, { $group: { _id: '$userId', count: { $sum: 1 } } }]),
     ]);
     const attendanceByUser = new Map(attendance.map(item => [item.userId.toString(), item]));

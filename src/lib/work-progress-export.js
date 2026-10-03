@@ -1,7 +1,7 @@
 'use client';
 
 import { api } from '@/lib/api';
-import { computeWorkRowDuration } from '@/lib/attendance-constants';
+import { computeWorkRowDuration, diffMins } from '@/lib/attendance-constants';
 
 export const WORK_PROGRESS_EXPORT_KEY = 'hrms_work_progress_export';
 export const WORK_PROGRESS_EXPORT_EVENT = 'hrms-work-progress-export-change';
@@ -13,6 +13,14 @@ const durationText = minutes => {
   return `${Math.floor(value / 60)}h ${value % 60}m`;
 };
 const effectiveStatus = row => row?.carriedForward ? 'pending' : (row?.status || 'pending');
+// Daily target comes from the row's own shift window (start -> end).
+// Rows without a frozen shift snapshot have no target (never a fixed 8h).
+const shiftTargetMins = entry => {
+  const s = entry?.shiftStartTime, e = entry?.shiftEndTime;
+  if (!s || !e) return null;
+  const d = diffMins(s, e);
+  return d > 0 ? d : null;
+};
 const groupByCalendarMonth = cycles => {
   const months = new Map();
   for (const cycle of cycles || []) {
@@ -99,7 +107,6 @@ function applySheetLayout(sheet) {
   ];
 }
 
-const EIGHT_HOURS_MINUTES = 8 * 60;
 const displayStatus = value => String(value || '—').replaceAll('_', ' ');
 const hasWorkData = row => Boolean(row?.taskDetails || row?.type || row?.startTime || row?.endTime);
 
@@ -136,19 +143,20 @@ function addMonthSheet(workbook, cycle, employeeName) {
   sheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' };
   sheet.getRow(1).height = 34;
   sheet.mergeCells('A2:J2');
-  sheet.getCell('A2').value = `Employee: ${employeeName}  •  Daily target: 8 hours  •  Generated: ${new Date().toLocaleString()}`;
+  sheet.getCell('A2').value = `Employee: ${employeeName}  •  Shift-based daily target  •  Generated: ${new Date().toLocaleString()}`;
   sheet.getCell('A2').font = { color: { argb: '475569' }, italic: true, size: 10 };
   sheet.getCell('A2').alignment = { vertical: 'middle' };
   sheet.getRow(2).height = 22;
 
   const headerRow = sheet.getRow(4);
-  headerRow.values = ['Date', 'Clock In', 'Clock Out', 'Recorded', '8h Target', 'Missing to 8h', 'Overtime', 'Tasks', 'Breaks', 'Attendance'];
+  headerRow.values = ['Date', 'Clock In', 'Clock Out', 'Recorded', 'Shift Target', 'Missing to shift', 'Over shift', 'Tasks', 'Breaks', 'Attendance'];
   styleHeader(headerRow);
   for (const dateEntry of [...(cycle.dates || [])].sort((a, b) => a.date.localeCompare(b.date))) {
     const recorded = Number(dateEntry.hoursWorked) || 0;
+    const target = shiftTargetMins(dateEntry);
     const workRows = (dateEntry.workProgress || []).filter(hasWorkData);
     const tasks = workRows.filter(row => !['break', 'lunch'].includes(String(row.type).toLowerCase())).length;
-    const dataRow = sheet.addRow([dateEntry.date, dateEntry.clockIn || '—', dateEntry.clockOut || '—', durationText(recorded), '8h 0m', durationText(Math.max(0, EIGHT_HOURS_MINUTES - recorded)), durationText(Math.max(0, recorded - EIGHT_HOURS_MINUTES)), tasks, workRows.length - tasks, displayStatus(dateEntry.status)]);
+    const dataRow = sheet.addRow([dateEntry.date, dateEntry.clockIn || '—', dateEntry.clockOut || '—', durationText(recorded), target !== null ? durationText(target) : '—', target !== null ? durationText(Math.max(0, target - recorded)) : '—', target !== null ? durationText(Math.max(0, recorded - target)) : '—', tasks, workRows.length - tasks, displayStatus(dateEntry.status)]);
     styleDataRow(dataRow, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   }
   sheet.autoFilter = { from: 'A4', to: `J${Math.max(4, sheet.rowCount)}` };
@@ -166,11 +174,12 @@ function addDailySheet(workbook, dateEntry, employeeName) {
   sheet.getCell('A1').alignment = { vertical: 'middle' };
   sheet.getRow(1).height = 34;
   const recorded = Number(dateEntry.hoursWorked) || 0;
+  const target = shiftTargetMins(dateEntry);
   [
     ['Employee', employeeName, 'Attendance', displayStatus(dateEntry.status)],
     ['Clock In', dateEntry.clockIn || '—', 'Clock Out', dateEntry.clockOut || '—'],
-    ['Daily Target', '8h 0m', 'Recorded', durationText(recorded)],
-    ['Missing to 8h', durationText(Math.max(0, EIGHT_HOURS_MINUTES - recorded)), 'Overtime', durationText(Math.max(0, recorded - EIGHT_HOURS_MINUTES))],
+    ['Shift', dateEntry.shiftStartTime && dateEntry.shiftEndTime ? `${dateEntry.shiftStartTime}–${dateEntry.shiftEndTime}` : '—', 'Recorded', durationText(recorded)],
+    ['Missing to shift', target !== null ? durationText(Math.max(0, target - recorded)) : '—', 'Over shift', target !== null ? durationText(Math.max(0, recorded - target)) : '—'],
   ].forEach((values, index) => {
     const row = sheet.getRow(index + 2);
     row.values = values;
