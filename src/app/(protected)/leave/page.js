@@ -22,15 +22,42 @@ const EMPTY_FORM = { typeCode: '', from: '', to: '', reason: '', halfDay: false,
 // missed a cross-policy typeCode in All Leaves).
 const FALLBACK_TYPE_COLORS = { CL: '#3b82f6', SL: '#10b981', PL: '#f59e0b', LOP: '#ef4444', ML: '#ec4899', PATL: '#8b5cf6' };
 
-function ApprovalBadge({ value, holdReason }) {
+function ApprovalBadge({ value, holdReason, actorName, at }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
+  const tip = [
+    actorName ? `${value} by ${actorName}` : '',
+    at ? `on ${new Date(at).toLocaleString()}` : '',
+    holdReason ? `Reason: ${holdReason}` : '',
+  ].filter(Boolean).join('\n');
   return (
-    <span title={value === 'held' && holdReason ? `Hold reason: ${holdReason}` : ''}>
-      <span className="badge" style={{ background: s.bg, color: s.color, cursor: value === 'held' ? 'help' : 'default' }}>
+    <span title={tip}>
+      <span className="badge" style={{ background: s.bg, color: s.color, cursor: tip ? 'help' : 'default' }}>
         {value}{value === 'held' ? ' ⚠' : ''}
       </span>
+      {actorName && (
+        <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, maxWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          by {actorName}
+        </div>
+      )}
     </span>
   );
+}
+
+// Resolve a populated actor (object with name, or raw id) to a display name.
+function actorNameOf(ref) {
+  if (!ref) return '';
+  if (typeof ref === 'string') return '';
+  return ref.name || '';
+}
+
+function historyTip(history) {
+  if (!Array.isArray(history) || !history.length) return '';
+  return history.map(h => {
+    const who = actorNameOf(h.actor) || 'Someone';
+    const when = h.at ? new Date(h.at).toLocaleString() : '';
+    const why = h.reason ? ` — ${h.reason}` : '';
+    return `${h.action} by ${who} ${when}${why}`;
+  }).join('\n');
 }
 
 export default function LeavePage() {
@@ -44,6 +71,8 @@ export default function LeavePage() {
   const [showModal, setShowModal]   = useState(false);
   const [holdModal, setHoldModal]   = useState(null);
   const [holdReason, setHoldReason] = useState('');
+  const [rejectModal, setRejectModal] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
   const [form, setForm]             = useState(EMPTY_FORM);
   const [saving, setSaving]         = useState(false);
   const [loading, setLoading]       = useState(true);
@@ -179,10 +208,17 @@ export default function LeavePage() {
 
   const handleAction = async (id, action, reason) => {
     try {
-      await api.put(`/api/leave/${id}`, { action, ...(reason ? { holdReason: reason } : {}) });
+      const payload = { action };
+      if (reason) {
+        if (action === 'rejected') payload.reason = reason;
+        else payload.holdReason = reason;
+      }
+      await api.put(`/api/leave/${id}`, payload);
       showToast(`Leave ${action}`);
       setHoldModal(null);
       setHoldReason('');
+      setRejectModal(null);
+      setRejectReason('');
       load(tab);
     } catch (e) {
       showToast(e.message, 'error');
@@ -190,6 +226,7 @@ export default function LeavePage() {
   };
 
   const openHold = (id) => { setHoldModal({ id, action: 'held' }); setHoldReason(''); };
+  const openReject = (id) => { setRejectModal({ id, action: 'rejected' }); setRejectReason(''); };
 
   const canActOn = (l) => {
     if (l.workflowApprovals?.length > 0) {
@@ -202,6 +239,9 @@ export default function LeavePage() {
   };
 
   const hasObjection = (l) => l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected');
+
+  // Admin-only post-approval Hold/Reject of an already-approved leave.
+  const canReconsider = (l) => isAdmin && l.status === 'approved';
 
   const selectedEmployee = useMemo(() => employees.find(emp => emp.userId?.toString() === selectedEmpId) || null, [employees, selectedEmpId]);
 
@@ -396,7 +436,7 @@ export default function LeavePage() {
                       {!isSme && workflowColumns.map((col, i) => <th key={i}>{col}</th>)}
                       {isSme && <th>Admin</th>}
                       <th>Status</th>
-                      {tab === 'approvals' && <th>Actions</th>}
+                      {(tab === 'approvals' || tab === 'all') && <th>Actions</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -434,44 +474,65 @@ export default function LeavePage() {
                         <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
                         {isSme ? (
-                          <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
+                          <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} actorName={actorNameOf(l.adminApprovedBy)} at={l.adminApprovedAt} /></td>
                         ) : l.workflowApprovals?.length > 0 ? (
                           l.workflowApprovals.map(s => (
                             <td key={s.step}>
-                              <ApprovalBadge value={s.action} holdReason={s.holdReason} />
+                              <ApprovalBadge value={s.action} holdReason={s.holdReason} actorName={actorNameOf(s.approvedBy)} at={s.approvedAt} />
                               {s.holdReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{s.holdReason}</div>}
                             </td>
                           ))
                         ) : (
                           <>
-                            <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} /></td>
+                            <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} actorName={actorNameOf(l.adminApprovedBy)} at={l.adminApprovedAt} /></td>
                             <td>
-                              <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} />
+                              <ApprovalBadge value={l.teamAdminApproval} holdReason={l.teamAdminHoldReason} actorName={actorNameOf(l.teamAdminApprovedBy)} at={l.teamAdminApprovedAt} />
                               {l.teamAdminHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.teamAdminHoldReason}</div>}
                             </td>
                             <td>
-                              <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} />
+                              <ApprovalBadge value={l.tlApproval} holdReason={l.tlHoldReason} actorName={actorNameOf(l.tlApprovedBy)} at={l.tlApprovedAt} />
                               {l.tlHoldReason && <div style={{ fontSize: 10, color: '#7c3aed', marginTop: 2, maxWidth: 120 }}>{l.tlHoldReason}</div>}
                             </td>
                           </>
                         )}
-                        <td><span className="badge" style={{ background: STATUS_STYLE[l.status]?.bg, color: STATUS_STYLE[l.status]?.color }}>{l.status}</span></td>
-                        {tab === 'approvals' && (
+                        <td>
+                          <span title={historyTip(l.actionHistory) || (l.lastActionBy?.name ? `${l.status} by ${l.lastActionBy.name}` : '')}>
+                            <span className="badge" style={{ background: STATUS_STYLE[l.status]?.bg, color: STATUS_STYLE[l.status]?.color, cursor: l.actionHistory?.length ? 'help' : 'default' }}>{l.status}</span>
+                          </span>
+                          {(actorNameOf(l.lastActionBy) || l.lastActionReason) && (l.status !== 'pending' || l.lastAction === 'held') && (
+                            <div style={{ fontSize: 10, color: '#64748b', marginTop: 2, maxWidth: 150 }}>
+                              {l.status === 'approved' && actorNameOf(l.lastActionBy) ? `by ${actorNameOf(l.lastActionBy)}` : null}
+                              {l.status === 'rejected' && actorNameOf(l.lastActionBy) ? `by ${actorNameOf(l.lastActionBy)}` : null}
+                              {l.status === 'pending' && l.lastAction === 'held' && actorNameOf(l.lastActionBy) ? `held by ${actorNameOf(l.lastActionBy)}` : null}
+                              {l.lastActionReason && <span style={{ color: '#7c3aed' }}> — {l.lastActionReason}</span>}
+                            </div>
+                          )}
+                          {l.lastActionAt && (l.status !== 'pending' || l.lastAction === 'held') && (
+                            <div style={{ fontSize: 9, color: '#94a3b8' }}>{new Date(l.lastActionAt).toLocaleDateString()}</div>
+                          )}
+                        </td>
+                        {(tab === 'approvals' || tab === 'all') && (
                           <td>
                             {canActOn(l) && (
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {isAdmin && hasObjection(l) ? (
                                   <>
                                     <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Override Approve</button>
-                                    <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'rejected')}>Reject</button>
+                                    <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openReject(l._id)}>Reject</button>
                                   </>
                                 ) : (
                                   <>
                                     <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Approve</button>
                                     <button className="btn btn-sm btn-warning"  style={{ fontSize: 11, padding: '3px 8px', color: '#fff' }} onClick={() => openHold(l._id)}>Hold</button>
-                                    <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'rejected')}>Reject</button>
+                                    <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openReject(l._id)}>Reject</button>
                                   </>
                                 )}
+                              </div>
+                            )}
+                            {!canActOn(l) && canReconsider(l) && (tab === 'approvals' || tab === 'all') && (
+                              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                <button className="btn btn-sm btn-warning" style={{ fontSize: 11, padding: '3px 8px', color: '#fff' }} onClick={() => openHold(l._id)}>Hold</button>
+                                <button className="btn btn-sm btn-danger" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openReject(l._id)}>Reject</button>
                               </div>
                             )}
                           </td>
@@ -514,6 +575,32 @@ export default function LeavePage() {
                 <button className="btn btn-outline-secondary" onClick={() => setHoldModal(null)}>Cancel</button>
                 <button className="btn btn-warning" style={{ color: '#fff' }} disabled={!holdReason.trim()} onClick={() => handleAction(holdModal.id, 'held', holdReason)}>
                   Submit Hold
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reject Reason Modal */}
+      {rejectModal && (
+        <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Reject Leave — Provide Reason</h5>
+                <button className="btn-close" onClick={() => setRejectModal(null)} />
+              </div>
+              <div className="modal-body">
+                <p style={{ fontSize: 13, color: '#64748b', marginBottom: 12 }}>
+                  The reason will be shown to the employee as Rejected by you.
+                </p>
+                <textarea className="form-control" rows={3} placeholder="Explain why you are rejecting this leave request..." value={rejectReason} onChange={e => setRejectReason(e.target.value)} />
+              </div>
+              <div className="modal-footer">
+                <button className="btn btn-outline-secondary" onClick={() => setRejectModal(null)}>Cancel</button>
+                <button className="btn btn-danger" disabled={!rejectReason.trim()} onClick={() => handleAction(rejectModal.id, 'rejected', rejectReason)}>
+                  Submit Reject
                 </button>
               </div>
             </div>

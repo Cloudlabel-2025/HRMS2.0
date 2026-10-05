@@ -80,6 +80,11 @@ export async function GET(req) {
     let leaves = await Leave.find(query)
       .populate('userId', 'name avatar department role')
       .populate({ path: 'workflowApprovals.approvedBy', select: 'name', strictPopulate: false })
+      .populate('adminApprovedBy', 'name')
+      .populate('teamAdminApprovedBy', 'name')
+      .populate('tlApprovedBy', 'name')
+      .populate('lastActionBy', 'name')
+      .populate({ path: 'actionHistory.actor', select: 'name', strictPopulate: false })
       .sort({ createdAt: -1 })
       .lean();
 
@@ -246,6 +251,11 @@ export async function POST(req) {
         adminApproval: 'approved',
         teamAdminApproval: 'approved',
         tlApproval: 'approved',
+        lastAction: 'applied',
+        lastActionBy: user._id,
+        lastActionAt: new Date(),
+        lastActionReason: '',
+        actionHistory: [{ action: 'applied', actor: user._id, at: new Date(), step: null, label: 'Applied', reason: '' }],
       });
 
       await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${leaveDays} days of ${typeCode} (${from} to ${to})`, 'low', ip, null, user._id);
@@ -294,6 +304,11 @@ export async function POST(req) {
         adminApproval: 'pending',
         teamAdminApproval: 'pending',
         tlApproval: 'pending',
+        lastAction: 'applied',
+        lastActionBy: user._id,
+        lastActionAt: new Date(),
+        lastActionReason: '',
+        actionHistory: [{ action: 'applied', actor: user._id, at: new Date(), step: null, label: 'Applied', reason: '' }],
       });
 
       const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] } }).select('_id');
@@ -538,6 +553,11 @@ export async function POST(req) {
       workflowApprovals,
       status: 'pending',
       isRetroactive,
+      lastAction: 'applied',
+      lastActionBy: user._id,
+      lastActionAt: new Date(),
+      lastActionReason: '',
+      actionHistory: [{ action: 'applied', actor: user._id, at: new Date(), step: null, label: 'Applied', reason: '' }],
 
       // Also set legacy fields for backward compat
       adminApproval: 'pending',

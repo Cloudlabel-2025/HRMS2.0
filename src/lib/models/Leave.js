@@ -52,6 +52,22 @@ const LeaveSchema = new mongoose.Schema({
 
   objectionNotified: { type: Boolean, default: false },
 
+  // ── Final-action attribution (who did what last) + full history ──
+  // Per-step actor fields above are kept for backward compatibility; these
+  // denormalized fields power "Approved by / Rejected by / Held by" display.
+  lastAction: { type: String, enum: ['applied', 'approved', 'rejected', 'held', 'cancelled'], default: null },
+  lastActionBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  lastActionAt: { type: Date, default: null },
+  lastActionReason: { type: String, default: '' },
+  actionHistory: [{
+    action: { type: String, enum: ['applied', 'approved', 'rejected', 'held', 'cancelled'], required: true },
+    actor: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    at: { type: Date, default: Date.now },
+    step: { type: Number, default: null },
+    label: { type: String, default: '' },
+    reason: { type: String, default: '' },
+  }],
+
   // ── Dynamic workflow approvals (used by policy-driven leaves) ──
   workflowApprovals: [{
     step:      { type: Number, required: true },
