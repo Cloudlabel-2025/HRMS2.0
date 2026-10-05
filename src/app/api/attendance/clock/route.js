@@ -13,6 +13,7 @@ import { resolveShift, getShiftEndMinutes } from '@/lib/shift-utils';
 import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { preClockInPermissionMins } from '@/lib/permission-hours';
+import { isFullDayLeaveCovered } from '@/lib/leave-cover';
 import { computePermissionUsage, permissionCoversShiftStart } from '@/lib/permission-allowance';
 import { reconcilePermissionWorkProgress, closePermissionEarly } from '@/lib/permission-work';
 import { calculateBreakDeduction, getBreakAllowanceForEntry } from '@/lib/attendance-breaks';
@@ -282,6 +283,9 @@ export async function POST(req) {
             endTime: clockInPermission.payload?.endTime,
           } : null,
           approvedHalfDayLeave: !!onLeave?.halfDay,
+          // Leave wins: an approved full-day leave keeps status 'leave'
+          // even though the employee clocked in (times still recorded).
+          onApprovedLeave: isOnLeave && !onLeave?.halfDay,
           nonWorkingDayType,
           leaveOverrideStatus: 'none',
           minutesSinceShiftStart,
@@ -570,8 +574,13 @@ export async function POST(req) {
       // the 0.5 payroll credit and the Half Day display.
 
       if (permEndedLate && !outRecord.approvedHalfDayLeave) {
-        status = 'late';
-        outRecord.lateFlag = true;
+        // Leave wins: a permission overrun must never flip an approved
+        // full-day leave day to late (times stay recorded, status stays leave).
+        const leaveCovered = await isFullDayLeaveCovered(outRecord.userId, outRecord.date).catch(() => false);
+        if (!leaveCovered) {
+          status = 'late';
+          outRecord.lateFlag = true;
+        }
       }
 
       const finalized = finalizeDayWork(outRecord.workProgress, finalClockOut, outRecord.date);
