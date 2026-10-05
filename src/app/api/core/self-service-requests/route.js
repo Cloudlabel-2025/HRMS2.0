@@ -183,6 +183,10 @@ async function applyApprovedRequest(request, reviewer) {
           // Nothing to mirror onto yet — skip row creation.
         } else {
           const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
+          // Leave wins: an overdue permission approval must never flip an
+          // approved full-day leave day to late.
+          const { isFullDayLeaveCovered } = await import('@/lib/leave-cover');
+          const permLeaveCovered = await isFullDayLeaveCovered(identity.authUserId, permDate).catch(() => false);
           // Late approval: the window has already fully elapsed. Approve,
           // but record it closed-as-late at once so it never becomes a
           // permanently open, sheet-blocking permission.
@@ -227,7 +231,7 @@ async function applyApprovedRequest(request, reviewer) {
                   ...keepEnded,
                 },
                 note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}${overdueClose.endedLate ? ' — window had already passed, closed as late' : ''}`,
-                ...(overdueClose.endedLate ? { status: 'late', lateFlag: true, shortHours: false } : {}),
+                ...(overdueClose.endedLate && !permLeaveCovered ? { status: 'late', lateFlag: true, shortHours: false } : {}),
               },
               $setOnInsert: { status: 'absent' },
             },

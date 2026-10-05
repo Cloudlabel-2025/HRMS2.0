@@ -252,13 +252,27 @@ export async function syncCalendarRowsForUsers({
 
       // ── Working day ──
       if (hasWork) {
-        // Stale non-working label on a real working day (holiday doc deleted
-        // later, or approved-then-cancelled leave): reset to a neutral present.
-        // Late is recomputed on read paths from the frozen shift snapshot.
-        if (
+        // Leave wins (self-heal): an approved full-day leave still covering
+        // this date restores a flipped row to leave — clock times stay stored
+        // but carry no weight. An admin-approved override (genuinely worked)
+        // is respected and never healed back.
+        if (lv && !lv.halfDay && ex.status !== 'leave' && ex.leaveOverride?.status !== 'approved') {
+          pushUpsert(uid, d, {
+            status: 'leave',
+            lateFlag: false,
+            halfDayThresholdExceeded: false,
+            relatedLeaveId: lv._id,
+            approvedHalfDayLeave: false,
+            nonWorkingDayType: 'none',
+          });
+          updated++;
+        } else if (
           ex.status === 'holiday' ||
           (ex.status === 'leave' && !lv && ex.leaveOverride?.status !== 'rejected')
         ) {
+          // Stale non-working label on a real working day (holiday doc deleted
+          // later, or approved-then-cancelled leave): reset to a neutral present.
+          // Late is recomputed on read paths from the frozen shift snapshot.
           pushUpsert(uid, d, { status: 'present', nonWorkingDayType: 'none', lateFlag: false });
           updated++;
         } else skipped++;

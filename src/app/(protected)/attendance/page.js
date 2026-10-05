@@ -81,8 +81,12 @@ export default function AttendancePage() {
   const [toastQueue, setToastQueue] = useState([]);
   const [regRequests, setRegRequests]   = useState([]);
   const [showRegModal, setShowRegModal] = useState(false);
-  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], requestedPermission: null, reason: '' });
+  const [regForm, setRegForm]           = useState({ date: '', requestedIn: '', requestedOut: '', requestedBreaks: [], requestedPermission: null, reason: '' });
   const [regSaving, setRegSaving]       = useState(false);
+  // Whether an approved permission exists for the selected regularization date.
+  // The "Include permission" checkbox stays disabled until this is true.
+  const [hasApprovedPerm, setHasApprovedPerm] = useState(false);
+  const [regPermLoading, setRegPermLoading]   = useState(false);
   const [todayPage, setTodayPage]       = useState(1);
   const [regPage, setRegPage]           = useState(1);
   const canReview = useMemo(() => MANAGER_ROLES.includes(user?.role), [user?.role]);
@@ -1013,17 +1017,24 @@ export default function AttendancePage() {
   };
 
   // ── Regularization ──────────────────────────────────────────────────────────
-  const EMPTY_REG_FORM = { date: '', requestedIn: '', requestedOut: '', requestedOutNotYet: false, requestedBreaks: [], requestedPermission: null, reason: '' };
+  const EMPTY_REG_FORM = { date: '', requestedIn: '', requestedOut: '', requestedBreaks: [], requestedPermission: null, reason: '' };
 
   // Fetch the approved permission for the selected regularization date.
-  // Returns true when one exists (fields prefill read-only); otherwise the
-  // employee may enter a permission manually.
+  // Returns true when one exists (start/end prefill locked); otherwise the
+  // permission checkbox stays disabled — a permission must be applied and
+  // approved first, it cannot be typed in manually here.
+  // A token guards against stale responses when the date changes rapidly.
+  const regPermTokenRef = useRef(0);
   const fetchRegPermission = async (date) => {
-    if (!date) return false;
+    if (!date) { setHasApprovedPerm(false); return false; }
+    const token = ++regPermTokenRef.current;
+    setRegPermLoading(true);
     try {
       const r = await api.get('/api/attendance/regularize?scope=permission&date=' + encodeURIComponent(date));
+      if (token !== regPermTokenRef.current) return false;
       if (r?.permission?.startTime && r?.permission?.endTime) {
-        setRegForm(p => ({
+        setHasApprovedPerm(true);
+        setRegForm(p => (p.date === date ? {
           ...p,
           requestedPermission: {
             startTime: r.permission.startTime,
@@ -1031,15 +1042,18 @@ export default function AttendancePage() {
             actualEndTime: r.permission.actualEndTime || r.permission.endTime || '',
             source: 'fetched',
           },
-        }));
+        } : p));
         return true;
       }
-    } catch { /* no approved permission — fall through to manual */ }
+    } catch { /* no approved permission — checkbox stays disabled */ }
+    if (token !== regPermTokenRef.current) return false;
+    setHasApprovedPerm(false);
     return false;
   };
 
   const handleRegDateChange = async (value) => {
     setRegForm(p => ({ ...p, date: value, requestedPermission: null }));
+    setHasApprovedPerm(false);
     if (value) await fetchRegPermission(value);
   };
 
@@ -1066,10 +1080,12 @@ export default function AttendancePage() {
     }
     setRegSaving(true);
     try {
-      await api.post('/api/attendance/regularize', regForm);
+      const { requestedOutNotYet: _drop, ...regPayload } = regForm;
+      await api.post('/api/attendance/regularize', regPayload);
       showToast('Regularization request submitted');
       setShowRegModal(false);
       setRegForm(EMPTY_REG_FORM);
+      setHasApprovedPerm(false);
       setRegDateError('');
       loadRegRequests(regScope);
     } catch (e) { showToast(e.message, 'error'); }
@@ -1081,7 +1097,7 @@ export default function AttendancePage() {
       const result = await api.put('/api/attendance/regularize', { id, action });
       showToast('Request ' + action);
       loadRegRequests('approvals'); // always reload approvals after review
-      // A reopened "still working" day affects the live record — refresh it so
+      // An approved timing change affects the live record — refresh it so
       // tasks become endable and the Clock Out button reflects the new state.
       if (result?.date === today) loadTodayRecord();
     } catch (e) { showToast(e.message, 'error'); }
@@ -2211,7 +2227,7 @@ export default function AttendancePage() {
           )}
           <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
             {user?.role !== 'super_admin' && (
-              <button className="btn btn-primary btn-sm" onClick={async () => { setRegForm({ ...EMPTY_REG_FORM, date: today }); setShowRegModal(true); await fetchRegPermission(today); }}>
+              <button className="btn btn-primary btn-sm" onClick={async () => { setRegForm({ ...EMPTY_REG_FORM, date: today }); setHasApprovedPerm(false); setShowRegModal(true); await fetchRegPermission(today); }}>
                 <i className="bi bi-plus-lg me-1" />New Request
               </button>
             )}
@@ -2386,14 +2402,7 @@ export default function AttendancePage() {
                         </div>
                         <div className="col-6">
                           <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock Out</label>
-                          <input type="time" className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} disabled={regForm.requestedOutNotYet} />
-                          {regForm.date === today && (
-                            <label style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b', marginTop: 6 }}>
-                              <input type="checkbox" checked={regForm.requestedOutNotYet}
-                                onChange={e => setRegForm(p => ({ ...p, requestedOutNotYet: e.target.checked, requestedOut: e.target.checked ? '' : p.requestedOut }))} />
-                              I'm still working — remove my clock-out
-                            </label>
-                          )}
+                          <input type="time" className="form-control" style={{ fontSize: 13 }} value={regForm.requestedOut} onChange={e => setRegForm(p => ({ ...p, requestedOut: e.target.value }))} />
                         </div>
                       </div>
                     </div>
@@ -2401,14 +2410,17 @@ export default function AttendancePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                         <i className="bi bi-box-arrow-in-right" style={{ color: '#3b82f6', fontSize: 14 }} />
                         <span style={{ fontSize: 13, fontWeight: 700 }}>Permission</span>
-                        <label style={{ marginLeft: 'auto', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', color: '#64748b' }}>
+                        <label title={!regForm.date ? 'Select a date first' : regPermLoading ? 'Checking approved permission…' : hasApprovedPerm ? 'Approved permission found for this date' : 'No approved permission for this date — apply a permission request first'} style={{ marginLeft: 'auto', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: (!regForm.date || !hasApprovedPerm) ? 'not-allowed' : 'pointer', color: '#64748b' }}>
                           <input type="checkbox" checked={!!regForm.requestedPermission}
-                            onChange={e => setRegForm(p => ({
-                              ...p,
-                              requestedPermission: e.target.checked
-                                ? { startTime: '', endTime: '', actualEndTime: '', source: 'manual' }
-                                : null,
-                            }))} />
+                            disabled={!regForm.date || regPermLoading || !hasApprovedPerm}
+                            onChange={e => {
+                              if (!hasApprovedPerm) return;
+                              if (e.target.checked) {
+                                if (regForm.date) fetchRegPermission(regForm.date);
+                              } else {
+                                setRegForm(p => ({ ...p, requestedPermission: null }));
+                              }
+                            }} />
                           Include permission
                         </label>
                       </div>
@@ -2422,26 +2434,31 @@ export default function AttendancePage() {
                           if (dur < 0) dur += 1440;
                         }
                         const overrun = permissionOverrunMins(perm.startTime, perm.endTime, perm.actualEndTime);
-                        const upd = (field, value) => setRegForm(p => ({
-                          ...p,
-                          requestedPermission: { ...p.requestedPermission, [field]: value },
-                        }));
+                        const fetched = perm.source === 'fetched';
+                        const upd = (field, value) => {
+                          // The approved window is authoritative — start/end stay locked.
+                          if (fetched && (field === 'startTime' || field === 'endTime')) return;
+                          setRegForm(p => ({
+                            ...p,
+                            requestedPermission: { ...p.requestedPermission, [field]: value },
+                          }));
+                        };
                         return (
                           <>
-                            <div style={{ fontSize: 11, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5, color: perm.source === 'fetched' ? '#059669' : '#b45309' }}>
-                              <i className={`bi ${perm.source === 'fetched' ? 'bi-check-circle-fill' : 'bi-pencil-square'}`} />
-                              {perm.source === 'fetched'
-                                ? 'Approved permission found for this date — start/end prefilled.'
-                                : 'No approved permission for this date — enter the window manually.'}
+                            <div style={{ fontSize: 11, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5, color: fetched ? '#059669' : '#b45309' }}>
+                              <i className={`bi ${fetched ? 'bi-check-circle-fill' : 'bi-pencil-square'}`} />
+                              {fetched
+                                ? 'Approved permission found for this date — start/end locked.'
+                                : 'No approved permission for this date — apply a permission request first.'}
                             </div>
                             <div className="row g-2">
                               <div className="col-4">
                                 <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission Start</label>
-                                <input type="time" className="form-control" style={{ fontSize: 13 }} value={perm.startTime || ''} onChange={ev => upd('startTime', ev.target.value)} />
+                                <input type="time" className="form-control" style={{ fontSize: 13, ...(fetched ? { background: '#f1f5f9', cursor: 'not-allowed' } : {}) }} value={perm.startTime || ''} disabled={fetched} onChange={ev => upd('startTime', ev.target.value)} />
                               </div>
                               <div className="col-4">
                                 <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission End</label>
-                                <input type="time" className="form-control" style={{ fontSize: 13 }} value={perm.endTime || ''} onChange={ev => upd('endTime', ev.target.value)} />
+                                <input type="time" className="form-control" style={{ fontSize: 13, ...(fetched ? { background: '#f1f5f9', cursor: 'not-allowed' } : {}) }} value={perm.endTime || ''} disabled={fetched} onChange={ev => upd('endTime', ev.target.value)} />
                               </div>
                               <div className="col-4">
                                 <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Permission Actual End <span style={{ color: '#ef4444' }}>*</span></label>

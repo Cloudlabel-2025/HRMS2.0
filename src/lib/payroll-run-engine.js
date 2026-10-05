@@ -283,7 +283,11 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
             if (!workingDateSet.has(d)) continue;
             if (employmentStartDate && d < employmentStartDate) continue;
             const workedThatDay = clockedDates.has(d);
-            if (workedThatDay && !leave.halfDay) continue;
+            // Leave wins: a clocked-in leave day keeps status 'leave', which
+            // earns no presence in classifyDayPay — so it must still earn its
+            // paid-leave credit. Skip only days counted as worked presence.
+            const dayRec = byDate.get(d);
+            if (workedThatDay && !leave.halfDay && dayRec?.status !== 'leave') continue;
             const credit = leave.halfDay && !halfDayCountsAsFull ? 0.5 : 1;
             paidLeaveDays += credit * paidRatio;
             unpaidLeaveDays += credit * (1 - paidRatio);

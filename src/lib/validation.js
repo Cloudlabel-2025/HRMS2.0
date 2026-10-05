@@ -348,7 +348,6 @@ export const AttendanceRegularizeSchema = z.object({
   date: DateSchema,
   requestedIn: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:MM').optional().or(z.literal('')),
   requestedOut: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Time must be HH:MM').optional().or(z.literal('')),
-  requestedOutNotYet: z.boolean().optional(),
   requestedBreaks: z.array(z.object({
     type: z.string().min(1, 'Break type required'),
     name: z.string().optional().default(''),
@@ -366,11 +365,10 @@ export const AttendanceRegularizeSchema = z.object({
   }).nullish(),
   reason: z.string().min(20, 'Reason must be detailed (min 20 chars)').max(1000),
 }).strict().refine(
-  (data) => data.requestedIn || data.requestedOut || data.requestedOutNotYet || data.requestedBreaks?.length > 0 || data.requestedPermission,
+  (data) => data.requestedIn || data.requestedOut || data.requestedBreaks?.length > 0 || data.requestedPermission,
   { message: 'At least one field (Clock In, Clock Out, Break, Lunch, or Permission) must be requested' }
 ).refine(
   (data) => {
-    if (data.requestedOutNotYet) return true;
     if (data.requestedIn && data.requestedOut && data.requestedIn >= data.requestedOut) return false;
     return true;
   },

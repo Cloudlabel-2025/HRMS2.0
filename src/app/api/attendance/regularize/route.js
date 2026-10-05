@@ -14,6 +14,7 @@ import { isEmployer } from '@/lib/permissions';
 import { computePermissionUsage, permissionDurationMins, getPermissionAllowanceMins, getPermissionUsageForCycle, getCycleRangeForDate } from '@/lib/permission-allowance';
 import { permissionOverrunMins } from '@/lib/permission-window';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
+import { isFullDayLeaveCovered } from '@/lib/leave-cover';
 
 export async function GET(req) {
   try {
@@ -132,7 +133,7 @@ export async function POST(req) {
       return fail('Validation failed: ' + validation.error, 400);
     }
 
-    const { date, requestedIn, requestedOut, requestedOutNotYet, requestedBreaks, requestedPermission, reason } = validation.data;
+    const { date, requestedIn, requestedOut, requestedBreaks, requestedPermission, reason } = validation.data;
 
     const countToday = await AttendanceRegularization.countDocuments({ userId: user._id, date: validation.data.date });
     if (countToday >= 4) {
@@ -144,22 +145,43 @@ export async function POST(req) {
       return fail('You already have a pending regularization request for this date', 400);
     }
 
-    let requestedOutTime = null;
-    if (requestedOutNotYet) {
-      const reqUser = await User.findById(user._id).select('shift shiftId').lean();
-      const reqShift = await resolveShift(reqUser);
-      if (!reqShift?.endTime) {
-        return fail('Cannot use "Not yet logged out" — no shift is assigned/resolvable. Contact your admin.', 400);
+    // A timing-request permission must match an approved permission request
+    // for this user + date. The start/end window is authoritative and cannot
+    // be typed in manually — only the actual end stays editable.
+    let verifiedPermission = null;
+    if (requestedPermission?.startTime && requestedPermission?.endTime) {
+      const permOrConds = [];
+      if (user.identityId) permOrConds.push({ identityId: user.identityId });
+      if (user.profileId) permOrConds.push({ profileId: user.profileId });
+      if (permOrConds.length === 0) {
+        return fail('No approved permission found for this date. Apply a permission request first.', 400);
       }
-      requestedOutTime = reqShift.endTime;
+      const approved = await SelfServiceRequest.findOne({
+        $or: permOrConds,
+        requestType: 'permission',
+        status: 'approved',
+        'payload.date': date,
+      }).select('payload').lean();
+      if (!approved?.payload?.startTime || !approved?.payload?.endTime) {
+        return fail('No approved permission found for this date. Apply a permission request first.', 400);
+      }
+      if (requestedPermission.startTime !== approved.payload.startTime ||
+          requestedPermission.endTime !== approved.payload.endTime) {
+        return fail('Permission start and end must match the approved permission for this date.', 400);
+      }
+      verifiedPermission = {
+        startTime: approved.payload.startTime,
+        endTime: approved.payload.endTime,
+        actualEndTime: requestedPermission.actualEndTime || null,
+        source: 'fetched',
+      };
     }
 
     const request = await AttendanceRegularization.create({
       userId: user._id, date,
       requestedIn: requestedIn || null,
       requestedOut: requestedOut || null,
-      requestedOutNotYet: requestedOutNotYet || false,
-      requestedOutTime,
+      requestedOutTime: null,
       requestedBreaks: (requestedBreaks || []).map(b => ({
         type: b.type,
         name: b.name || '',
@@ -169,14 +191,7 @@ export async function POST(req) {
         end: b.end || null,
         notYet: b.notYet || false,
       })),
-      requestedPermission: requestedPermission?.startTime && requestedPermission?.endTime
-        ? {
-            startTime: requestedPermission.startTime,
-            endTime: requestedPermission.endTime,
-            actualEndTime: requestedPermission.actualEndTime || null,
-            source: requestedPermission.source || 'manual',
-          }
-        : null,
+      requestedPermission: verifiedPermission,
       reason, status: 'pending',
     });
 
@@ -360,33 +375,6 @@ export async function PUT(req) {
         });
       }
 
-      // "Not yet clocked out" describes the state when the request was
-      // submitted. If the employee has clocked out while awaiting review,
-      // keep that actual clock-out and do not reopen the attendance session.
-      if (reg.requestedOutNotYet && !attendance.clockOut) {
-        const oldClockOut = attendance.clockOut;
-        attendance.clockOut = null;
-        attendance.autoLoggedOut = false;
-        attendance.regularizationOutOpen = true;
-        attendance.lateLogoutReason = '';
-        attendance.lateLogoutReasonProvidedAt = null;
-        attendance.hoursWorked = 0;
-        attendance.breakDeduction = 0;
-        attendance.status = 'present';
-        if (oldClockOut) {
-          attendance.workProgress = (attendance.workProgress || []).map(w =>
-            w.endTime === oldClockOut
-              ? { ...w, endTime: null, status: 'work_in_progress', duration: null, carriedForward: false }
-              : w
-          );
-          attendance.breaks = (attendance.breaks || []).map(b =>
-            b.end === oldClockOut
-              ? { ...b, end: null }
-              : b
-          );
-        }
-      }
-
       const oldClockIn = attendance.clockIn;
       if (reg.requestedIn) attendance.clockIn = reg.requestedIn;
       if (reg.requestedIn && oldClockIn && reg.requestedIn !== oldClockIn) {
@@ -407,7 +395,7 @@ export async function PUT(req) {
           end:   b.end   ? shiftTime(b.end, delta)   : b.end,
         }));
       }
-      if (reg.requestedOut && !reg.requestedOutNotYet) attendance.clockOut = reg.requestedOut;
+      if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
 
       // Apply requested breaks from regularization
       const attendanceBreaks = attendance.breaks ? [...attendance.breaks] : [];
@@ -662,13 +650,18 @@ export async function PUT(req) {
         attendance.shortHours = hasRegPermission ? false : rawShortHours;
         attendance.shortfallMins = hasRegPermission ? 0 : shortfallMins;
         attendance.breakExcessMins = hasRegPermission ? 0 : breakExcessMins;
-        attendance.status = 'present';
+        // Leave wins: approving a timing correction for an approved
+        // full-day leave date must not flip the day to present/late.
+        // Clock corrections and hours still apply; only the status is kept.
+        const regLeaveCovered = await isFullDayLeaveCovered(reg.userId, reg.date).catch(() => false);
+        attendance.status = regLeaveCovered ? 'leave' : 'present';
+        if (regLeaveCovered) attendance.lateFlag = false;
 
         // Recalculate late via resolveDayStatus so the permission window is
         // consulted — judging only against shift start would wrongly mark an
         // employee with an approved covering permission as Late (the read-path
         // resolves the same day as Present).
-        if (empUser?.shift || regShiftDoc?.startTime) {
+        if (!regLeaveCovered && (empUser?.shift || regShiftDoc?.startTime)) {
           const lateShiftDoc = regShiftDoc || await resolveShift(empUser);
           if (lateShiftDoc?.startTime && attendance.clockIn) {
             const [sH, sM] = lateShiftDoc.startTime.split(':').map(Number);
@@ -698,7 +691,8 @@ export async function PUT(req) {
         }
         // A permission overrun is Late even when the regularized clock-in was
         // covered by the approved window. It remains separate from shortHours.
-        if (attendance.permission?.endedLate && !attendance.approvedHalfDayLeave) {
+        // Never on an approved full-day leave day — leave wins.
+        if (!regLeaveCovered && attendance.permission?.endedLate && !attendance.approvedHalfDayLeave) {
           attendance.lateFlag = true;
           attendance.status = 'late';
         }

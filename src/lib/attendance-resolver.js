@@ -30,6 +30,7 @@ function toMins(timeStr) {
  * @param {string|null} params.clockIn - HH:MM actually clocked (wall time, never faked)
  * @param {Object|null} params.permission - { startTime, endTime } or null
  * @param {boolean} params.approvedHalfDayLeave
+ * @param {boolean} params.onApprovedLeave - approved FULL-DAY leave covers this date ("leave wins": day stays leave even with a clock-in)
  * @param {string} params.nonWorkingDayType - 'none'|'holiday'|'weekly_off'
  * @param {string} params.leaveOverrideStatus - 'none'|'pending'|'approved'|'rejected'
  * @param {number} params.minutesSinceShiftStart
@@ -41,6 +42,7 @@ export function resolveDayStatus({
   clockIn,
   permission,
   approvedHalfDayLeave,
+  onApprovedLeave = false,
   nonWorkingDayType,
   leaveOverrideStatus,
   minutesSinceShiftStart,
@@ -70,6 +72,12 @@ export function resolveDayStatus({
   }
   if (approvedHalfDayLeave) {
     return { status: 'half_day', lateFlag: false, halfDayThresholdExceeded: false, permissionApplied: false, isMidDayPermission: false };
+  }
+  // Leave wins: an approved full-day leave covering this date keeps the day
+  // as leave even when the employee clocked in. Clock times are still stored
+  // on the row by the caller; they carry no attendance or payroll weight.
+  if (onApprovedLeave) {
+    return { status: 'leave', lateFlag: false, halfDayThresholdExceeded: false, permissionApplied: false, isMidDayPermission: false };
   }
   if (permission?.endTime && clockIn) {
     const nowMins = toMins(clockIn);
