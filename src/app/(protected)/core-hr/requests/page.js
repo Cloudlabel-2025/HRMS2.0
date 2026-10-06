@@ -44,7 +44,7 @@ function cleanCycleRange(payload) {
   return null;
 }
 
-function PayloadView({ requestType, payload, formatTime, formatDate }) {
+function PayloadView({ requestType, payload, formatTime, formatDate, filedOn }) {
   if (!payload) return <p className="text-muted small">No payload data.</p>;
 
   if (requestType === 'profile_update') {
@@ -132,7 +132,14 @@ function PayloadView({ requestType, payload, formatTime, formatDate }) {
       <div>
         <div className="row g-2">
           {[
-            ['Permission Date', payload.date ? (formatDate ? formatDate(payload.date) : payload.date) : null],
+            ['Permission Date', (
+              <>
+                {payload.date ? (formatDate ? formatDate(payload.date) : payload.date) : null}
+                {String(payload.date || '') < String(filedOn || '').slice(0, 10) && (
+                  <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${payload.date} is before the filed date`}>Backdated</span>
+                )}
+              </>
+            )],
             ['Start Time', formatTime(payload.startTime) || null],
             ['End Time', formatTime(payload.endTime) || null],
             ['Duration (granted)', payload.duration != null ? `${payload.duration} mins` : null],
@@ -166,7 +173,7 @@ function PayloadView({ requestType, payload, formatTime, formatDate }) {
 
 export default function CoreHrRequestsPage() {
   const { user } = useAuth();
-  const { formatDate, formatTime } = useSettings();
+  const { formatDate, formatTime, formatDateTime } = useSettings();
   const [requests, setRequests] = useState([]);
   const [filterStatus, setFilterStatus] = useState('pending');
   const [selected, setSelected] = useState(null);
@@ -303,6 +310,9 @@ export default function CoreHrRequestsPage() {
                             {req.payload?.startTime || req.payload?.endTime ? ` · ${formatTime(req.payload.startTime) || req.payload.startTime || '—'}–${formatTime(req.payload.endTime) || req.payload.endTime || '—'}` : ''}
                             {req.payload?.duration != null ? ` · Granted ${req.payload.duration}m` : ''}
                             {` · Used ${req.payload?.usedDuration ?? '—'}${req.payload?.usedDuration != null ? 'm' : ''}`}
+                            {String(req.payload?.date || '') < String(req.createdAt || '').slice(0, 10) && (
+                              <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${req.payload.date} is before the filed date`}>Backdated</span>
+                            )}
                           </div>
                         )}
                         {req.requestType === 'resignation' && req.payload?.lastWorkingDate && (
@@ -315,7 +325,7 @@ export default function CoreHrRequestsPage() {
                         <span className="badge" style={{ background: STATUS_STYLE[req.status]?.bg, color: STATUS_STYLE[req.status]?.color, fontSize: 11 }}>
                           {req.status}
                         </span>
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>{formatDate(req.createdAt)}</div>
+                        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }} title="Filed on">Filed {formatDateTime(req.createdAt) || formatDate(req.createdAt) || '—'}</div>
                       </div>
                     </div>
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 6, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -392,12 +402,12 @@ export default function CoreHrRequestsPage() {
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>REQUESTED CHANGES</div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} formatDate={formatDate} />
+                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} formatDate={formatDate} filedOn={selected.createdAt} />
                 </div>
               </div>
 
               <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 16 }}>
-                Submitted on {formatDate(selected.createdAt)}
+                Submitted on {formatDateTime(selected.createdAt) || formatDate(selected.createdAt) || '—'}
                 {selected.reviewedAt && (
                   <>
                     {' · '}
