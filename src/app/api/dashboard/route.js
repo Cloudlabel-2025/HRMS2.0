@@ -6,7 +6,7 @@ import Leave from '@/lib/models/Leave';
 import User from '@/lib/models/User';
 import { Task } from '@/lib/models/Task';
 import { Payroll } from '@/lib/models/Payroll';
-import { Announcement, Employee, Shift, SelfServiceRequest } from '@/lib/models/index';
+import { Announcement, Employee, Shift, SelfServiceRequest, AttendanceRegularization } from '@/lib/models/index';
 import { getAccessibleDepartments, getDepartmentUserIds } from '@/lib/rbac';
 import { computeWorkRowDuration } from '@/lib/attendance-constants';
 import { getAttendanceDate } from '@/lib/attendance-date';
@@ -333,6 +333,29 @@ export async function GET(req) {
     ? await Payroll.findOne({ userId: user._id }).sort({ createdAt: -1 })
     : null;
 
+  // Pending timing (regularization) requests for the dashboard section
+  // (super_admin + admin_full). All pending, latest first, capped.
+  let pendingRegularizations = [];
+  if (isAdminRole) {
+    try {
+      const regs = await AttendanceRegularization.find({ status: 'pending' })
+        .populate('userId', 'name department')
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean();
+      pendingRegularizations = regs.map((r) => ({
+        _id: r._id,
+        name: r.userId?.name || 'Unknown',
+        department: r.userId?.department || '',
+        date: r.date,
+        reason: r.reason || '',
+        hasPermission: !!(r.requestedPermission?.startTime && r.requestedPermission?.endTime),
+        hasTiming: !!(r.requestedIn || r.requestedOut),
+        createdAt: r.createdAt,
+      }));
+    } catch (e) { console.error('pendingRegularizations failed:', e?.message || e); }
+  }
+
   // Recruiter-specific: open jobs count
   const openJobs = role === 'recruiter'
     ? await (await import('@/lib/models/index')).JobPosting.countDocuments({ status: 'active' })
@@ -350,6 +373,7 @@ export async function GET(req) {
     monitoring,
     overview: isSuperAdmin ? overview : null,
     pendingTasks,
+    pendingRegularizations,
     announcements: announcements.map(a => ({
       id: a._id, title: a.title, body: a.body, tag: a.tag, tagColor: a.tagColor, date: a.createdAt, attachment: a.attachment,
     })),

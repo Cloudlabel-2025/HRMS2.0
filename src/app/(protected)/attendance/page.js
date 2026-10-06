@@ -89,6 +89,7 @@ export default function AttendancePage() {
   const [regPermLoading, setRegPermLoading]   = useState(false);
   const [todayPage, setTodayPage]       = useState(1);
   const [regPage, setRegPage]           = useState(1);
+  const [highlightRegId, setHighlightRegId] = useState(null);
   const canReview = useMemo(() => MANAGER_ROLES.includes(user?.role), [user?.role]);
   const [regScope, setRegScope]         = useState(canReview ? 'approvals' : 'my');
   const [progressEmpPage, setProgressEmpPage] = useState(1);
@@ -104,6 +105,32 @@ export default function AttendancePage() {
     setRegPage(1);
     setProgressEmpPage(1);
   }, [tab]);
+
+  // Deep link (?tab=regularize&scope=approvals&highlight=...) from
+  // notifications / dashboard lands straight on the Timing requests tab.
+  // Plain window.location parsing (no useSearchParams) so no Suspense
+  // boundary is needed.
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get('tab') === 'regularize') {
+        setTab('regularize');
+        if (q.get('highlight')) setHighlightRegId(q.get('highlight'));
+      }
+    } catch { /* non-browser */ }
+  }, []);
+
+  // Scroll the highlighted timing request into view once its page is loaded.
+  useEffect(() => {
+    if (!highlightRegId || tab !== 'regularize' || !regRequests.length) return;
+    const idx = regRequests.findIndex(r => String(r._id) === String(highlightRegId));
+    if (idx === -1) return;
+    setRegPage(Math.floor(idx / pageSize) + 1);
+    const t = setTimeout(() => {
+      document.getElementById('reg-' + highlightRegId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [highlightRegId, regRequests, tab]);
 
   // Break / Lunch local state (client-side only — stored in todayRecord.breaks)
   const [breakRuleIdx, setBreakRuleIdx] = useState(0);
@@ -485,7 +512,19 @@ export default function AttendancePage() {
     }).catch(() => setShiftsLoaded(true));
     Promise.all([
       isAdmin ? loadEmployees() : Promise.resolve(),
-      loadRegRequests(isSuperAdmin ? 'approvals' : regScope),
+      (() => {
+        // Deep-link scope: reviewers landing from a notification/dashboard
+        // link start in the approvals queue instead of their own requests.
+        let deepScope = null;
+        try {
+          const q = new URLSearchParams(window.location.search);
+          if (q.get('tab') === 'regularize' && q.get('scope') === 'approvals' && MANAGER_ROLES.includes(user?.role)) {
+            deepScope = 'approvals';
+            setRegScope(deepScope);
+          }
+        } catch { /* non-browser */ }
+        return loadRegRequests(deepScope || (isSuperAdmin ? 'approvals' : regScope));
+      })(),
       api.get('/api/attendance/available-tasks').then(tasks => {
         setAvailableTasks(Array.isArray(tasks) ? tasks : []);
       }).catch(() => {}),
@@ -1704,7 +1743,7 @@ export default function AttendancePage() {
       <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch', marginBottom: 20 }}>
         <div style={{ display: 'flex', gap: 4, background: '#f8fafc', borderRadius: 10, padding: 4, width: 'max-content', minWidth: '100%' }}>
           {tabs.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
+            <button key={t} onClick={() => { setTab(t); if (t !== 'regularize') setHighlightRegId(null); }} style={{
               padding: '8px 16px', borderRadius: 8, border: 'none', fontWeight: 600,
               fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
               background: tab === t ? '#fff' : 'transparent',
@@ -2263,7 +2302,7 @@ export default function AttendancePage() {
                     </thead>
                     <tbody>
                       {regRequests.slice((regPage - 1) * pageSize, regPage * pageSize).map(r => (
-                        <tr key={r._id}>
+                        <tr key={r._id} id={`reg-${r._id}`} style={highlightRegId && String(r._id) === String(highlightRegId) ? { outline: '2px solid #f59e0b', outlineOffset: -2, background: '#fffbeb' } : undefined}>
                           {canReview && (
                             <td>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2324,7 +2363,7 @@ export default function AttendancePage() {
               </div>
               <div className="d-md-none" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {regRequests.slice((regPage - 1) * pageSize, regPage * pageSize).map(r => (
-                  <div key={r._id} className="card p-3">
+                  <div key={r._id} id={`reg-${r._id}`} className="card p-3" style={highlightRegId && String(r._id) === String(highlightRegId) ? { outline: '2px solid #f59e0b', background: '#fffbeb' } : undefined}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                       <div>
                         {canReview && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
