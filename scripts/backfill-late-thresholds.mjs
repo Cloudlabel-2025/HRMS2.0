@@ -91,7 +91,7 @@ async function main() {
     const halfDayThreshold = HALF_DAY_THRESHOLD_DEFAULT;
 
     const isLate = late > lateThreshold;
-    const past = isLate && late >= halfDayThreshold;
+    const past = isLate && late > halfDayThreshold;
     const nextStatus = isLate ? 'late' : 'present';
 
     const flagDiffers = !!a.halfDayThresholdExceeded !== past

@@ -183,14 +183,38 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
   // Ending after the scheduled end is allowed — it is recorded as a late
   // end (time exceeded) instead of rejected. The old 400 here made
   // over-run permissions impossible to close, so they just disappeared.
+  // Exception: an APPLIED arrival-cover permission already fulfilled its
+  // purpose at clock-in (arrival inside the window, time consumed). Closing
+  // it later in the day (e.g. at clock-out) is never an overrun, so it must
+  // not flip the day to Late.
   if (perm.endedAt) return { error: 'Permission already ended', already: true };
 
   // Wrap-aware overrun: only the requested [start, end] window counts as
   // permission time. Anything past perm.endTime is ordinary worked time
   // recorded as overrun (late hours), never permission time.
+  // Exception: an APPLIED arrival-cover permission already fulfilled its
+  // purpose at clock-in (arrival inside the window, time consumed). Closing
+  // it later in the day (e.g. at clock-out) is never an overrun, so it must
+  // not flip the day to Late.
   const overrunMins = permissionOverrunMins(perm.startTime, perm.endTime, endTimeStr);
-  const late = overrunMins > 0;
+  const late = overrunMins > 0 && perm.applied !== true;
   const permRowEnd = late ? perm.endTime : endTimeStr;
+
+  // An APPLIED arrival-cover row records TAKEN time, not open-to-close time:
+  // it completes at the actual clock-in (duration = consumed mins) instead of
+  // spanning window-start to whenever it was closed (e.g. 10:00-19:17).
+  // Without an actual clock-in on record, fall back to the window end.
+  // Otherwise the row keeps HEAD's clamped span (window end when late).
+  const appliedCover = perm.applied === true;
+  const actualMins = toMins(perm.actualClockIn);
+  const takenEndTime = appliedCover
+    ? (actualMins !== null && startMins !== null && actualMins >= startMins ? perm.actualClockIn : perm.endTime)
+    : null;
+  const rowEndTime = takenEndTime || permRowEnd;
+  const takenMins = takenEndTime ? computeWorkRowDuration({ startTime: perm.startTime, endTime: takenEndTime }) : null;
+  const takenLabel = appliedCover && takenMins !== null
+    ? `Permission (${perm.startTime}-${perm.endTime}) · taken ${takenMins}m`
+    : null;
 
   if (!Array.isArray(record.workProgress)) record.workProgress = [];
   const wp = record.workProgress;
@@ -215,30 +239,29 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
       wp[activeIdx].status = 'completed';
       wp[activeIdx].duration = computeWorkRowDuration(wp[activeIdx]);
     }
-    const clampedRow = { startTime: perm.startTime, endTime: permRowEnd };
+    const clampedRow = { startTime: perm.startTime, endTime: rowEndTime };
     wp.push({
       type: 'permission',
-      taskDetails: late
-        ? `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`
-        : `Permission (${perm.startTime}-${perm.endTime})`,
+      taskDetails: takenLabel
+        || (late
+          ? `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`
+          : `Permission (${perm.startTime}-${perm.endTime})`),
       startTime: perm.startTime,
-      endTime: permRowEnd,
-      status: 'completed',
-      remarks: '',
-      feedback: '',
-      duration: computeWorkRowDuration(clampedRow),
+      endTime: rowEndTime,
       permissionRequestId: perm.requestId,
       scheduledEndTime: perm.endTime,
       endedLate: late,
       overrunMins: late ? overrunMins : null,
     });
   } else {
-    wp[permIdx].endTime = permRowEnd;
+    wp[permIdx].endTime = rowEndTime;
     wp[permIdx].status = 'completed';
     wp[permIdx].duration = computeWorkRowDuration(wp[permIdx]);
     wp[permIdx].endedLate = late;
     wp[permIdx].overrunMins = late ? overrunMins : null;
-    if (late) {
+    if (takenLabel) {
+      wp[permIdx].taskDetails = takenLabel;
+    } else if (late) {
       wp[permIdx].taskDetails = `Permission (${perm.startTime}-${perm.endTime}) · ended ${endTimeStr} (+${overrunMins}m over)`;
     }
   }

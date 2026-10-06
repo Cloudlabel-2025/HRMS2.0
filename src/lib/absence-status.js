@@ -9,7 +9,7 @@ import { hasImportedPresence } from './attendance-stats';
  *  1. non-working day (holiday/weekly_off) -> skipped by caller, never absent
  *  2. approved leave covering date -> 'on_leave' (never absent)
  *  3. clocked-in record -> present/late/half_day via existing attendance status (never absent)
- *  4. no clock-in + today + elapsed < halfDayThreshold -> 'not_arrived'
+ *  4. no clock-in + today + elapsed <= halfDayThreshold -> 'not_arrived'
  *     (permission badge persists even if permission window already passed)
  *  5. no clock-in + (past date OR today past threshold) -> 'absent'
  *     (permission badge kept as context, still counts as absent)
@@ -194,9 +194,11 @@ export function deriveAbsenceKind({
     : false;
   const permissionStatus = permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null;
 
-  if (date === today && elapsed < halfDayThreshold) {
-    // Not arrived yet — permission badge persists even if the permission
-    // window (e.g. 09:00-11:00) already passed without arrival.
+  if (date === today && elapsed <= halfDayThreshold) {
+    // Not arrived yet — boundary is inclusive: exactly at the threshold
+    // still counts as not-arrived, only strictly past it is absent.
+    // Permission badge persists even if the permission window (e.g.
+    // 09:00-11:00) already passed without arrival.
     return {
       kind: 'not_arrived',
       absent: false,
@@ -210,7 +212,7 @@ export function deriveAbsenceKind({
     };
   }
 
-  // Past date, or today at/after threshold -> absent.
+  // Past date, or today past threshold -> absent.
   // Keep permission badge as context but still count as absent.
   return {
     kind: 'absent',

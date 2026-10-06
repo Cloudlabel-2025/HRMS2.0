@@ -163,8 +163,11 @@ export function calculateHoursWorked(elapsedMins, breakDeduction, cfg, ctx = {})
 }
 
 export function determineStatus(minutesSinceShiftStart, cfg) {
+  // Boundary is inclusive: exactly at lateThreshold is on time (present),
+  // only strictly past it is late. Same for halfDayThreshold: only strictly
+  // past it escalates to a full-day LOP.
   if (minutesSinceShiftStart > cfg.lateThreshold) {
-    const halfDayThresholdExceeded = Number.isFinite(cfg?.halfDayThreshold) && minutesSinceShiftStart >= cfg.halfDayThreshold;
+    const halfDayThresholdExceeded = Number.isFinite(cfg?.halfDayThreshold) && minutesSinceShiftStart > cfg.halfDayThreshold;
     return { status: 'late', lateFlag: true, halfDayThresholdExceeded };
   }
   return { status: 'present', lateFlag: false, halfDayThresholdExceeded: false };

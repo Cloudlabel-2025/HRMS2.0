@@ -57,9 +57,10 @@ if (CUTOVER && !/^\d{4}-\d{2}-\d{2}$/.test(CUTOVER)) {
 }
 
 // Mirror of determineStatus in src/lib/attendance-constants.js
+// Boundary is inclusive: exactly at a threshold is on time / lower tier.
 function determineStatus(minsSinceStart, lateThreshold, halfDayThreshold) {
   if (minsSinceStart > lateThreshold) {
-    return { status: 'late', lateFlag: true, halfDayThresholdExceeded: Number.isFinite(halfDayThreshold) && minsSinceStart >= halfDayThreshold };
+    return { status: 'late', lateFlag: true, halfDayThresholdExceeded: Number.isFinite(halfDayThreshold) && minsSinceStart > halfDayThreshold };
   }
   return { status: 'present', lateFlag: false, halfDayThresholdExceeded: false };
 }

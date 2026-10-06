@@ -1422,6 +1422,13 @@ export default function AttendancePage() {
                   <span><strong>Permission Time Exceeded:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · still running{openRow?.overrunMins ? ` (+${openRow.overrunMins} min over)` : ''} — end it now</span>
                 </div>
               );
+            } else if (perm.applied && perm.usedDuration != null) {
+              banners.push(
+                <div key="applied" style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
+                  <i className="bi bi-patch-check" />
+                  <span><strong>Permission Applied:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · Taken {perm.usedDuration} min{perm.actualClockIn ? ` (arrived ${perm.actualClockIn})` : ''}{perm.refundedDuration ? ` · Refunded ${perm.refundedDuration} min` : ''}</span>
+                </div>
+              );
             } else {
               banners.push(
                 <div key="ok" style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>

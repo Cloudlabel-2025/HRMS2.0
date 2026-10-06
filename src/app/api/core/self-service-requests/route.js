@@ -119,6 +119,28 @@ async function applyApprovedRequest(request, reviewer) {
   }
 
   if (request.requestType === 'permission') {
+    // A full-day leave approved after this request was filed wins: refuse
+    // approval (creation-time already blocks the reverse order). Half-day
+    // leaves are intentionally ignored here — they are creation-guarded only.
+    try {
+      const { Leave: LeaveModel } = await import('@/lib/models/index');
+      const permDate = request.payload?.date;
+      if (permDate && identity?.authUserId) {
+        const leaveCover = await LeaveModel.findOne({
+          userId: identity.authUserId,
+          status: 'approved',
+          halfDay: { $ne: true },
+          from: { $lte: permDate },
+          to: { $gte: permDate },
+        }).lean();
+        if (leaveCover) {
+          throw new Error(`Cannot approve: approved full-day ${leaveCover.type || leaveCover.typeCode || 'leave'} (${leaveCover.from} to ${leaveCover.to}) already covers ${permDate}. A day can hold either a leave or a permission, not both.`);
+        }
+      }
+    } catch (e) {
+      if (String(e?.message || '').includes('Cannot approve')) throw e;
+      console.error('Permission leave-cover check failed:', e?.message || e);
+    }
     // Re-check monthly allowance at approval time (creation already checked).
     try {
       const { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleRange } = await import('@/lib/payroll-cycle');
@@ -183,6 +205,18 @@ async function applyApprovedRequest(request, reviewer) {
           // Nothing to mirror onto yet — skip row creation.
         } else {
           const keepEnded = existingPermRec?.permission?.endedAt ? { endedAt: existingPermRec.permission.endedAt, endedEarly: !!existingPermRec.permission.endedEarly } : {};
+          // Arrival already covered at clock-in (applied) must survive a late
+          // approval: re-approving must not wipe the clock-in reconciliation
+          // nor close-as-late a permission that already did its job.
+          const keepApplied = existingPermRec?.permission?.applied === true
+            ? {
+                applied: true,
+                usedDuration: existingPermRec.permission.usedDuration ?? null,
+                refundedDuration: existingPermRec.permission.refundedDuration ?? null,
+                actualClockIn: existingPermRec.permission.actualClockIn ?? null,
+                effectiveClockIn: existingPermRec.permission.effectiveClockIn ?? null,
+              }
+            : {};
           // Leave wins: an overdue permission approval must never flip an
           // approved full-day leave day to late.
           const { isFullDayLeaveCovered } = await import('@/lib/leave-cover');
@@ -194,7 +228,7 @@ async function applyApprovedRequest(request, reviewer) {
           const endMins = Number.isNaN(eh) || Number.isNaN(em) ? null : eh * 60 + em;
           const nowMins = nowTz.getHours() * 60 + nowTz.getMinutes();
           const windowElapsed = permDate < todayStr || (permDate === todayStr && endMins !== null && nowMins > endMins);
-          const overdueClose = (windowElapsed && !keepEnded.endedAt)
+          const overdueClose = (windowElapsed && !keepEnded.endedAt && existingPermRec?.permission?.applied !== true)
             ? (() => {
                 const dayDiff = permDate < todayStr
                   ? Math.max(1, Math.round((new Date(todayStr + 'T00:00:00') - new Date(permDate + 'T00:00:00')) / 86400000))
@@ -227,6 +261,7 @@ async function applyApprovedRequest(request, reviewer) {
                   status: 'approved',
                   approvedBy: reviewer._id,
                   approvedAt: new Date(),
+                  ...keepApplied,
                   ...overdueClose,
                   ...keepEnded,
                 },
