@@ -27,7 +27,7 @@ const EMPTY_FORM = {
 export default function SelfServicePage() {
   const { user } = useAuth();
   const router = useRouter();
-  const { formatDate, formatTime } = useSettings();
+  const { formatDate, formatTime, formatDateTime } = useSettings();
   const [identity, setIdentity] = useState(null);
   const [profile, setProfile] = useState(null);
   const [requests, setRequests] = useState([]);
@@ -322,11 +322,14 @@ export default function SelfServicePage() {
                     <div className="fw-semibold small">{currentRequestTypeLabel[req.requestType] || req.requestType}</div>
                     <span className="badge bg-light text-dark">{req.status}</span>
                   </div>
-                  <div className="small text-secondary">{formatDate(req.createdAt)}</div>
+                  <div className="small text-secondary">Filed: {formatDateTime(req.createdAt) || formatDate(req.createdAt) || '—'}</div>
                   {req.requestType === 'permission' && req.payload && (
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4, background: '#f8fafc', padding: '4px 8px', borderRadius: 4 }}>
                       <strong>Date:</strong> {formatDate(req.payload.date)} <br/>
                       <strong>Time:</strong> {formatTime(req.payload.startTime)} - {formatTime(req.payload.endTime)} {req.payload.duration ? `(${req.payload.duration} mins)` : ''}
+                      {String(req.payload.date || '') < String(req.createdAt || '').slice(0, 10) && (
+                        <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${req.payload.date} is before the filed date`}>Backdated</span>
+                      )}
                     </div>
                   )}
                   <div className="small mt-1">{req.reason}</div>
