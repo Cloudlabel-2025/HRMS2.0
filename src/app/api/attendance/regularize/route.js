@@ -683,8 +683,9 @@ export async function PUT(req) {
               shiftStartMins,
               cfg: regCfg,
             });
-            attendance.lateFlag = !!resolved.lateFlag || !!attendance.permission?.endedLate;
-            attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate >= (regCfg?.halfDayThreshold || 180);
+            attendance.lateFlag = !!resolved.lateFlag
+              || (!!attendance.permission?.endedLate && attendance.permission?.applied !== true);
+            attendance.halfDayThresholdExceeded = !!attendance.lateFlag && minutesLate > (regCfg?.halfDayThreshold || 180);
             if (!attendance.approvedHalfDayLeave && attendance.lateFlag) attendance.status = 'late';
             else if (!attendance.lateFlag && attendance.status === 'late') attendance.status = 'present';
           }
@@ -692,7 +693,7 @@ export async function PUT(req) {
         // A permission overrun is Late even when the regularized clock-in was
         // covered by the approved window. It remains separate from shortHours.
         // Never on an approved full-day leave day — leave wins.
-        if (!regLeaveCovered && attendance.permission?.endedLate && !attendance.approvedHalfDayLeave) {
+        if (!regLeaveCovered && attendance.permission?.endedLate && attendance.permission?.applied !== true && !attendance.approvedHalfDayLeave) {
           attendance.lateFlag = true;
           attendance.status = 'late';
         }

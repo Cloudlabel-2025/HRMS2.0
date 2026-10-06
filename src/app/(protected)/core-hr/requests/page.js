@@ -44,7 +44,7 @@ function cleanCycleRange(payload) {
   return null;
 }
 
-function PayloadView({ requestType, payload, formatTime }) {
+function PayloadView({ requestType, payload, formatTime, formatDate }) {
   if (!payload) return <p className="text-muted small">No payload data.</p>;
 
   if (requestType === 'profile_update') {
@@ -119,14 +119,28 @@ function PayloadView({ requestType, payload, formatTime }) {
   }
 
   if (requestType === 'permission') {
+    const used = payload.usedDuration;
+    const refunded = payload.refundedMins;
+    const permStatus = payload.isMidDay
+      ? 'Mid-day (late judged by shift)'
+      : payload.applied
+        ? 'Applied'
+        : payload.actualClockIn
+          ? 'Outside window'
+          : 'Not consumed yet';
     return (
       <div>
         <div className="row g-2">
           {[
-            ['Permission Date', payload.date],
+            ['Permission Date', payload.date ? (formatDate ? formatDate(payload.date) : payload.date) : null],
             ['Start Time', formatTime(payload.startTime) || null],
             ['End Time', formatTime(payload.endTime) || null],
-            ['Duration', `${payload.duration} mins`],
+            ['Duration (granted)', payload.duration != null ? `${payload.duration} mins` : null],
+            ['Actual clock-in', payload.actualClockIn ? (formatTime(payload.actualClockIn) || payload.actualClockIn) : null],
+            ['Actual end', payload.actualEndTime ? (formatTime(payload.actualEndTime) || payload.actualEndTime) : null],
+            ['Actual duration (used)', used != null ? `${used} mins` : null],
+            ['Refunded', refunded != null && refunded > 0 ? `${refunded} mins` : null],
+            ['Status', permStatus],
             ['Requests this cycle', `${payload.permissionCountInCycle || 1}`],
           ].map(([label, val]) => (
             <div key={label} className="col-md-2">
@@ -283,6 +297,19 @@ export default function CoreHrRequestsPage() {
                         <div style={{ fontWeight: 600, fontSize: 13 }}>{req.identityId?.legalName || 'Unknown'}</div>
                         <div style={{ fontSize: 12, color: '#64748b' }}>{req.identityId?.primaryEmail}</div>
                         <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{TYPE_LABELS[req.requestType] || req.requestType}</div>
+                        {req.requestType === 'permission' && (
+                          <div style={{ fontSize: 12, color: '#334155', marginTop: 2 }}>
+                            {req.payload?.date ? formatDate(req.payload.date) : '—'}
+                            {req.payload?.startTime || req.payload?.endTime ? ` · ${formatTime(req.payload.startTime) || req.payload.startTime || '—'}–${formatTime(req.payload.endTime) || req.payload.endTime || '—'}` : ''}
+                            {req.payload?.duration != null ? ` · Granted ${req.payload.duration}m` : ''}
+                            {` · Used ${req.payload?.usedDuration ?? '—'}${req.payload?.usedDuration != null ? 'm' : ''}`}
+                          </div>
+                        )}
+                        {req.requestType === 'resignation' && req.payload?.lastWorkingDate && (
+                          <div style={{ fontSize: 12, color: '#334155', marginTop: 2 }}>
+                            Last working: {formatDate(String(req.payload.lastWorkingDate).slice(0, 10))}
+                          </div>
+                        )}
                       </div>
                       <div style={{ textAlign: 'right', flexShrink: 0 }}>
                         <span className="badge" style={{ background: STATUS_STYLE[req.status]?.bg, color: STATUS_STYLE[req.status]?.color, fontSize: 11 }}>
@@ -365,7 +392,7 @@ export default function CoreHrRequestsPage() {
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>REQUESTED CHANGES</div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} />
+                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} formatDate={formatDate} />
                 </div>
               </div>
 

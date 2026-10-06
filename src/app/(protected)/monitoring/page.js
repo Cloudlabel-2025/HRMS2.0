@@ -192,7 +192,7 @@ export default function MonitoringPage() {
             let elapsedSinceStart = now.getHours() * 60 + now.getMinutes() - (shiftHour * 60 + shiftMinute);
             if (elapsedSinceStart < -720) elapsedSinceStart += 1440;
             if (elapsedSinceStart > 720) elapsedSinceStart -= 1440;
-            if (elapsedSinceStart >= (matchedShift?.halfDayThreshold ?? 180)) status = 'absent';
+            if (elapsedSinceStart > (matchedShift?.halfDayThreshold ?? 180)) status = 'absent';
           }
         }
 

@@ -383,8 +383,10 @@ export async function GET(req) {
       // An approved, on-time permission forces Present (even mid-day).
       // An OVER-RUN permission (ended late) keeps the resolver's verdict
       // so the day is marked Late instead of being masked as Present.
+      // Exception: an APPLIED arrival-cover permission already fulfilled its
+      // purpose at clock-in — a late close later in the day is not an overrun.
       if (rec.permission?.requestId || rec.permission?.startTime) {
-        if (rec.permission?.endedLate) {
+        if (rec.permission?.endedLate && rec.permission?.applied !== true) {
           rec.status = rec.status === 'present' ? 'late' : rec.status;
           rec.lateFlag = true;
           rec.shortHours = false;

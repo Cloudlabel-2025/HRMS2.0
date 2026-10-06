@@ -376,6 +376,25 @@ export async function PUT(req, { params }) {
 
       await leave.save();
 
+      // Full-day leave wins over permissions: cancel any approved/pending
+      // permission on these dates (minutes refunded, everyone notified).
+      // Best-effort — a revert failure must never fail the leave approval.
+      if (newStatus === 'approved' && !leave.halfDay && !applicantIsEmployer) {
+        try {
+          const { expandDates, revertPermissionsForLeave } = await import('@/lib/leave-permission-revert');
+          const applicantUser = await User.findById(applicantId).select('profileId identityId').lean().catch(() => null);
+          await revertPermissionsForLeave({
+            applicantUserId: applicantId,
+            profileIds: applicantUser?.profileId ? [applicantUser.profileId] : [],
+            identityIds: applicantUser?.identityId ? [applicantUser.identityId] : [],
+            dates: expandDates(leave.from, leave.to),
+            leaveLabel: `${leave.type} (${leave.from} to ${leave.to})`,
+            actor: user,
+            ip: req.headers.get('x-forwarded-for') || '',
+          });
+        } catch (e) { console.error('Permission revert on leave approval failed:', e?.message || e); }
+      }
+
       // Create attendance records for each working day of the leave
       if (newStatus === 'approved' && !applicantIsEmployer) {
         try {
@@ -501,6 +520,22 @@ export async function PUT(req, { params }) {
       }
       await leave.save();
       if (action === 'approved') await materializeLeaveAttendance(leave);
+      // Full-day leave wins over permissions (same revert as the dynamic path).
+      if (action === 'approved' && !leave.halfDay && !applicantIsEmployer) {
+        try {
+          const { expandDates, revertPermissionsForLeave } = await import('@/lib/leave-permission-revert');
+          const applicantUser = await User.findById(applicantId).select('profileId identityId').lean().catch(() => null);
+          await revertPermissionsForLeave({
+            applicantUserId: applicantId,
+            profileIds: applicantUser?.profileId ? [applicantUser.profileId] : [],
+            identityIds: applicantUser?.identityId ? [applicantUser.identityId] : [],
+            dates: expandDates(leave.from, leave.to),
+            leaveLabel: `${leave.type} (${leave.from} to ${leave.to})`,
+            actor: user,
+            ip: req.headers.get('x-forwarded-for') || '',
+          });
+        } catch (e) { console.error('Permission revert on leave approval failed (SME path):', e?.message || e); }
+      }
       // Same payroll reopen/re-run as the dynamic-workflow path: a leave
       // approved after its cycle closed must recompute that cycle instead of
       // silently becoming LOP in an already-locked run.
@@ -700,6 +735,23 @@ export async function PUT(req, { params }) {
     }
 
     await leave.save();
+
+    // Full-day leave wins over permissions (same revert as the dynamic path).
+    if (newStatus === 'approved' && !leave.halfDay && !applicantIsEmployer) {
+      try {
+        const { expandDates, revertPermissionsForLeave } = await import('@/lib/leave-permission-revert');
+        const applicantUser = await User.findById(applicantId).select('profileId identityId').lean().catch(() => null);
+        await revertPermissionsForLeave({
+          applicantUserId: applicantId,
+          profileIds: applicantUser?.profileId ? [applicantUser.profileId] : [],
+          identityIds: applicantUser?.identityId ? [applicantUser.identityId] : [],
+          dates: expandDates(leave.from, leave.to),
+          leaveLabel: `${leave.type} (${leave.from} to ${leave.to})`,
+          actor: user,
+          ip: req.headers.get('x-forwarded-for') || '',
+        });
+      } catch (e) { console.error('Permission revert on leave approval failed (legacy path):', e?.message || e); }
+    }
 
     // Create attendance records for each working day of the leave
     if (newStatus === 'approved' && !applicantIsEmployer) {

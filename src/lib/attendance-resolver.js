@@ -24,7 +24,7 @@ function toMins(timeStr) {
  *     affect late — they only consume the monthly allowance.
  *  4. lateThreshold from shift -> 'late' | 'present'.
  *     'late' is money-bearing: past the threshold the day is worth half, and
- *     at/over halfDayThreshold nothing. See classifyDayPay below.
+ *     over halfDayThreshold nothing. See classifyDayPay below.
  *
  * @param {Object} params
  * @param {string|null} params.clockIn - HH:MM actually clocked (wall time, never faked)
@@ -130,7 +130,7 @@ export function classifyPresence(rec, lopConfig = {}) { // eslint-disable-line n
  *   approved half-day leave (worked other half)   0.5       0
  *   late, within lateGraceMinutes                 1.0       0
  *   late, past lateGraceMinutes (default)         0.5      0.5
- *   late, at/over halfDayThreshold                0.0      1.0
+ *   late, over halfDayThreshold                  0.0      1.0
  *   absent (no clock-in)                          0.0      1.0
  *   paid leave day (no clock-in)                  0.0       0
  *

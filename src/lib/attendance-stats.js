@@ -16,7 +16,7 @@
  *    reconciliation identity — do not swap the two.
  *  - Late         = every 'late' row, including arrivals past the half-day
  *    threshold. A late arrival DOES cost pay: past lateThreshold it withholds
- *    half a day, and at/over halfDayThreshold a full day (see classifyDayPay
+ *    half a day, and over halfDayThreshold a full day (see classifyDayPay
  *    in attendance-resolver.js). isLatePastThreshold() separates the two
  *    tiers for display and reporting.
  *  - Short hours, break excess and permission NEVER cost pay — they are
@@ -104,7 +104,12 @@ export function isShortHours(rec) {
 export function displayStatusOf(rec) {
   if (rec?.displayStatus) return rec.displayStatus;
   if (isWorkedDay(rec) && hasApprovedPermission(rec)) {
-    if (rec?.permission?.endedLate || rec?._permissionStatus === 'approved_late') return 'late';
+    // An OVER-RUN (late-ended) permission never masks lateness — except when
+    // the permission was APPLIED as arrival cover (arrival inside the window):
+    // closing that later in the day is not an overrun, so the day stays Present.
+    const overrunLate = rec?.permission?.applied !== true
+      && (!!rec?.permission?.endedLate || rec?._permissionStatus === 'approved_late');
+    if (overrunLate) return 'late';
     return 'present';
   }
   if (rec?.status === 'half_day' || rec?.approvedHalfDayLeave) {

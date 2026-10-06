@@ -1371,6 +1371,14 @@ export default function AttendancePage() {
               </div>
             );
           }
+          if (perm.applied && perm.usedDuration != null) {
+            return (
+              <div style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
+                <i className="bi bi-patch-check" />
+                <span><strong>Permission Applied:</strong> {perm.startTime || '--:--'} – {perm.endTime || '--:--'} · Taken {perm.usedDuration} min{perm.actualClockIn ? ` (arrived ${perm.actualClockIn})` : ''}{perm.refundedDuration ? ` · Refunded ${perm.refundedDuration} min` : ''}</span>
+              </div>
+            );
+          }
           return (
             <div style={{ padding: '10px 14px', background: '#eff6ff', borderBottom: '1px solid #bfdbfe', display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#1d4ed8' }}>
               <i className="bi bi-patch-check" />
