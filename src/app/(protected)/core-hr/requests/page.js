@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import Pagination from '@/components/Pagination';
 import DateInput from '@/components/DateInput';
-import { MAX_PERMISSION_DURATION_MINS } from '@/lib/permission-window';
+import { MAX_PERMISSION_DURATION_MINS, isPastFiling } from '@/lib/permission-window';
 
 const TYPE_LABELS = {
   profile_update:            'Profile Update',
@@ -44,7 +44,7 @@ function cleanCycleRange(payload) {
   return null;
 }
 
-function PayloadView({ requestType, payload, formatTime, formatDate, filedOn }) {
+function PayloadView({ requestType, payload, formatTime, formatDate, formatDateTime, filedOn }) {
   if (!payload) return <p className="text-muted small">No payload data.</p>;
 
   if (requestType === 'profile_update') {
@@ -135,8 +135,8 @@ function PayloadView({ requestType, payload, formatTime, formatDate, filedOn }) 
             ['Permission Date', (
               <>
                 {payload.date ? (formatDate ? formatDate(payload.date) : payload.date) : null}
-                {String(payload.date || '') < String(filedOn || '').slice(0, 10) && (
-                  <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${payload.date} is before the filed date`}>Backdated</span>
+                {isPastFiling(payload.date, payload.startTime, filedOn) && (
+                  <span className="badge ms-1" style={{ background: '#fde68a', color: '#92400e', fontSize: 10 }} title={`Window had elapsed when filed${filedOn ? ` on ${filedOn}` : ''}`}>Past request · Applied {formatDateTime ? (formatDateTime(filedOn) || '—') : '—'}</span>
                 )}
               </>
             )],
@@ -310,8 +310,8 @@ export default function CoreHrRequestsPage() {
                             {req.payload?.startTime || req.payload?.endTime ? ` · ${formatTime(req.payload.startTime) || req.payload.startTime || '—'}–${formatTime(req.payload.endTime) || req.payload.endTime || '—'}` : ''}
                             {req.payload?.duration != null ? ` · Granted ${req.payload.duration}m` : ''}
                             {` · Used ${req.payload?.usedDuration ?? '—'}${req.payload?.usedDuration != null ? 'm' : ''}`}
-                            {String(req.payload?.date || '') < String(req.createdAt || '').slice(0, 10) && (
-                              <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${req.payload.date} is before the filed date`}>Backdated</span>
+                            {isPastFiling(req.payload?.date, req.payload?.startTime, req.createdAt) && (
+                              <span className="badge ms-1" style={{ background: '#fde68a', color: '#92400e', fontSize: 10 }} title={`Window had elapsed when filed on ${req.createdAt || ''}`}>Past request · Applied {formatDateTime(req.createdAt) || '—'}</span>
                             )}
                           </div>
                         )}
@@ -402,7 +402,7 @@ export default function CoreHrRequestsPage() {
               <div className="mb-3">
                 <div style={{ fontSize: 12, fontWeight: 600, color: '#64748b', marginBottom: 8 }}>REQUESTED CHANGES</div>
                 <div style={{ background: '#f8fafc', borderRadius: 8, padding: 12 }}>
-                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} formatDate={formatDate} filedOn={selected.createdAt} />
+                  <PayloadView requestType={selected.requestType} payload={selected.payload} formatTime={formatTime} formatDate={formatDate} formatDateTime={formatDateTime} filedOn={selected.createdAt} />
                 </div>
               </div>
 

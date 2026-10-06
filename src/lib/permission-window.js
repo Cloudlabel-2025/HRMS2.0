@@ -88,28 +88,69 @@ export function addDaysStr(dateStr, days) {
 }
 
 /**
- * Validate a permission request window against past-date, past-time and
+ * Shift-day length in minutes, wrap-aware (overnight 22:00-06:00 => 480).
+ * Returns null when either bound is missing/malformed.
+ */
+export function shiftDayLength(shiftStart, shiftEnd) {
+  const ss = toMinsLocal(shiftStart);
+  const se = toMinsLocal(shiftEnd);
+  if (ss === null || se === null) return null;
+  const len = (((se - ss) % 1440) + 1440) % 1440;
+  return len === 0 ? 1440 : len;
+}
+
+/**
+ * Is a HH:MM time inside the shift window (inclusive of both ends),
+ * measured on the shift-day timeline so overnight shifts work.
+ */
+export function isTimeWithinShift(time, shiftStart, shiftEnd) {
+  const t = toMinsLocal(time);
+  const ss = toMinsLocal(shiftStart);
+  const len = shiftDayLength(shiftStart, shiftEnd);
+  if (t === null || ss === null || len === null) return false;
+  const rel = (((t - ss) % 1440) + 1440) % 1440;
+  return rel >= 0 && rel <= len;
+}
+
+/**
+ * Is a [start, end] window fully inside the shift window (inclusive)?
+ * Absolute-midnight-crossing windows only pass on overnight shifts where
+ * the whole span fits the shift day.
+ */
+export function isWindowWithinShift(startTime, endTime, shiftStart, shiftEnd) {
+  const s = toMinsLocal(startTime);
+  const e = toMinsLocal(endTime);
+  const ss = toMinsLocal(shiftStart);
+  const len = shiftDayLength(shiftStart, shiftEnd);
+  if (s === null || e === null || ss === null || len === null) return false;
+  const rel = (t) => (((t - ss) % 1440) + 1440) % 1440;
+  return rel(s) <= rel(e) && rel(e) <= len;
+}
+
+/**
+ * Validate a permission request window against format, duration and
  * advance-booking rules. Server-authoritative — UI mirrors these messages
  * for instant feedback only.
+ *
+ * Past dates and past times are ALLOWED (backdated requests carry a
+ * "Past request" badge at display time instead). minDate/now/shift
+ * anchoring args are accepted but no longer reject anything.
  *
  * @param {Object} args
  * @param {string} args.date       YYYY-MM-DD
  * @param {string} args.startTime  HH:MM
  * @param {string} args.endTime    HH:MM
- * @param {Date}   args.now        tz-aware "now" (server: getTzTime())
- * @param {string} args.minDate    earliest bookable date (min of calendar/shift-aware today)
+ * @param {Date}   args.now        (unused, kept for call compatibility)
+ * @param {string} args.minDate    (unused, kept for call compatibility)
  * @param {string} args.maxDate    latest bookable date (minDate + 30d)
- * @param {string} [args.shiftStart] shift start HH:MM (overnight anchoring)
- * @param {string} [args.shiftEnd]   shift end HH:MM (overnight anchoring)
+ * @param {string} [args.shiftStart] (unused, kept for call compatibility)
+ * @param {string} [args.shiftEnd]   (unused, kept for call compatibility)
  * @returns {{valid: boolean, error?: string}}
  */
-export function validatePermissionWindow({ date, startTime, endTime, now, minDate, maxDate, shiftStart, shiftEnd }) {
+export function validatePermissionWindow({ date, startTime, endTime, now, minDate, maxDate, shiftStart, shiftEnd }) { // eslint-disable-line no-unused-vars
   if (!date || !DATE_RE.test(String(date))) return { valid: false, error: 'Invalid permission date format' };
   if (!startTime || !TIME_RE.test(String(startTime)) || !endTime || !TIME_RE.test(String(endTime))) {
     return { valid: false, error: 'Invalid start or end time format' };
-  }
-  if (minDate && String(date) < String(minDate)) {
-    return { valid: false, error: 'Permission date cannot be in the past' };
   }
   if (maxDate && String(date) > String(maxDate)) {
     return { valid: false, error: `Permission cannot be requested more than ${MAX_PERMISSION_ADVANCE_DAYS} days in advance` };
@@ -124,12 +165,27 @@ export function validatePermissionWindow({ date, startTime, endTime, now, minDat
     return { valid: false, error: `Permission request cannot exceed ${MAX_PERMISSION_DURATION_MINS / 60} hours` };
   }
 
-  // Strict past-time rule: the window start instant must be now or later.
-  // Shift-aware anchoring keeps overnight post-midnight bookings valid.
-  const startInstant = permissionStartInstant(date, startTime, shiftStart, shiftEnd);
-  const nowStr = nowInstant(now);
-  if (startInstant !== null && startInstant < nowStr) {
-    return { valid: false, error: 'Permission start time is in the past' };
-  }
   return { valid: true };
+}
+
+/**
+ * Was this permission filed for a window that had already elapsed?
+ * True for past dates, or for same-day windows whose start is at/before
+ * the filing time. Plain `${date}T${start}` vs filing-instant compare, so
+ * overnight windows (23:00 on D filed on D+1) read as past correctly.
+ *
+ * @param {string} payloadDate YYYY-MM-DD permission date
+ * @param {string} startTime   HH:MM window start
+ * @param {string|Date} filedAt request createdAt (ISO)
+ */
+export function isPastFiling(payloadDate, startTime, filedAt) {
+  const d = String(payloadDate || '');
+  const s = String(startTime || '');
+  if (!DATE_RE.test(d) || !TIME_RE.test(s)) return false;
+  const filed = filedAt instanceof Date ? filedAt : new Date(filedAt);
+  if (Number.isNaN(filed.getTime())) return false;
+  const startInstant = `${d}T${s}`;
+  const filedStr = `${filed.getFullYear()}-${String(filed.getMonth() + 1).padStart(2, '0')}-${String(filed.getDate()).padStart(2, '0')}T${String(filed.getHours()).padStart(2, '0')}:${String(filed.getMinutes()).padStart(2, '0')}`;
+  // Strictly elapsed only: a window opening in the filing minute is current.
+  return startInstant < filedStr;
 }

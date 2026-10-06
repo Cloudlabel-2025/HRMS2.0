@@ -119,6 +119,28 @@ async function applyApprovedRequest(request, reviewer) {
   }
 
   if (request.requestType === 'permission') {
+    // Past-date approval requires recorded attendance: there is no worked
+    // time to cover otherwise. Fatal (409) — the request stays pending.
+    try {
+      const { default: AttendanceCheck } = await import('@/lib/models/Attendance');
+      const { getTzTime: getTzCheck } = await import('@/lib/timezone');
+      const pDate = request.payload?.date;
+      if (pDate && identity?.authUserId) {
+        const nowT = await getTzCheck().catch(() => new Date());
+        const tStr = nowT.getFullYear() + '-' + String(nowT.getMonth() + 1).padStart(2, '0') + '-' + String(nowT.getDate()).padStart(2, '0');
+        if (String(pDate) < tStr) {
+          const attRow = await AttendanceCheck.findOne({ userId: identity.authUserId, date: pDate }).select('clockIn').lean().catch(() => null);
+          if (!attRow?.clockIn) {
+            const err = new Error(`Cannot approve a past-date permission with no attendance recorded for ${pDate}`);
+            err.statusCode = 409;
+            throw err;
+          }
+        }
+      }
+    } catch (e) {
+      if (e?.statusCode === 409) throw e;
+      console.error('Past-date attendance check failed (non-fatal):', e?.message || e);
+    }
     // A full-day leave approved after this request was filed wins: refuse
     // approval (creation-time already blocks the reverse order). Half-day
     // leaves are intentionally ignored here — they are creation-guarded only.
@@ -193,6 +215,7 @@ async function applyApprovedRequest(request, reviewer) {
     try {
       const { default: Attendance } = await import('@/lib/models/Attendance');
       const { getTzTime } = await import('@/lib/timezone');
+      const { buildPastApprovalClose } = await import('@/lib/permission-work');
       const permDate = request.payload?.date;
       if (permDate && identity.authUserId) {
         const nowTz = await getTzTime();
@@ -200,7 +223,7 @@ async function applyApprovedRequest(request, reviewer) {
         const startTime = request.payload?.startTime || null;
         const endTime = request.payload?.endTime || null;
         const granted = Number(request.payload?.duration || 0) || null;
-        const existingPermRec = await Attendance.findOne({ userId: identity.authUserId, date: permDate }).select('permission').lean().catch(() => null);
+        const existingPermRec = await Attendance.findOne({ userId: identity.authUserId, date: permDate }).select('permission clockIn workProgress').lean().catch(() => null);
         if (!existingPermRec && permDate > todayStr) {
           // Nothing to mirror onto yet — skip row creation.
         } else {
@@ -218,30 +241,101 @@ async function applyApprovedRequest(request, reviewer) {
               }
             : {};
           // Leave wins: an overdue permission approval must never flip an
-          // approved full-day leave day to late.
-          const { isFullDayLeaveCovered } = await import('@/lib/leave-cover');
-          const permLeaveCovered = await isFullDayLeaveCovered(identity.authUserId, permDate).catch(() => false);
-          // Late approval: the window has already fully elapsed. Approve,
-          // but record it closed-as-late at once so it never becomes a
-          // permanently open, sheet-blocking permission.
-          const [eh, em] = String(endTime || '').split(':').map(Number);
-          const endMins = Number.isNaN(eh) || Number.isNaN(em) ? null : eh * 60 + em;
-          const nowMins = nowTz.getHours() * 60 + nowTz.getMinutes();
-          const windowElapsed = permDate < todayStr || (permDate === todayStr && endMins !== null && nowMins > endMins);
-          const overdueClose = (windowElapsed && !keepEnded.endedAt && existingPermRec?.permission?.applied !== true)
-            ? (() => {
-                const dayDiff = permDate < todayStr
-                  ? Math.max(1, Math.round((new Date(todayStr + 'T00:00:00') - new Date(permDate + 'T00:00:00')) / 86400000))
-                  : 0;
-                return {
-                  endedAt: String(nowTz.getHours()).padStart(2, '0') + ':' + String(nowTz.getMinutes()).padStart(2, '0'),
-                  endedEarly: true,
-                  endedLate: true,
-                  endedLateMins: endMins !== null ? Math.max(0, dayDiff * 24 * 60 + nowMins - endMins) : 0,
-                  endedBy: 'approval_overdue',
+          // approved full-day leave day to late. (Status is never touched
+          // here at all — leave-wins resolution owns it downstream.)
+          // Past worked days additionally settle usage (used/refunded/
+          // applied from the real clock-in), close on time at the scheduled
+          // end (a past window is never late by itself), and gain a completed
+          // work-progress row so the sheet documents taken time. Past dates
+          // with no clock-in cannot reach here — approval is refused above.
+          let usageFields = {
+            usedDuration: null,
+            refundedDuration: null,
+            actualClockIn: null,
+            effectiveClockIn: null,
+            applied: false,
+            isMidDay: false,
+          };
+          let pastClose = {};
+          let pastNote = '';
+          let settledWp = null;
+          if (String(permDate) < todayStr && existingPermRec?.clockIn) {
+            try {
+              const { computePermissionUsage } = await import('@/lib/permission-allowance');
+              const { getGlobalConfig } = await import('@/lib/payroll-cycle');
+              const { resolveShiftForDate } = await import('@/lib/shift-utils');
+              const cfg = await getGlobalConfig().catch(() => ({}));
+              const authUser = await User.findById(identity.authUserId).select('shift shiftId').lean().catch(() => null);
+              const shiftDoc = authUser
+                ? await resolveShiftForDate({ _id: identity.authUserId, shift: authUser.shift, shiftId: authUser.shiftId }, permDate).catch(() => null)
+                : null;
+              const toM = (t) => {
+                if (!t || typeof t !== 'string') return null;
+                const [h, m] = t.split(':').map(Number);
+                if (Number.isNaN(h) || Number.isNaN(m)) return null;
+                return h * 60 + m;
+              };
+              const shiftStartMins = toM(shiftDoc?.startTime);
+              const lateThreshold = Number(shiftDoc?.lateThreshold ?? cfg?.lateThreshold ?? 15);
+              let usage = null;
+              let effectiveClockIn = null;
+              if (shiftStartMins !== null) {
+                usage = computePermissionUsage({
+                  actualClockIn: existingPermRec.clockIn,
+                  permStart: startTime,
+                  permEnd: endTime,
+                  grantedDuration: granted || 0,
+                  shiftStartMins,
+                  lateThreshold,
+                });
+                if (usage.applied) {
+                  effectiveClockIn = `${String(Math.floor(shiftStartMins / 60)).padStart(2, '0')}:${String(shiftStartMins % 60).padStart(2, '0')}`;
+                }
+              }
+              const settled = buildPastApprovalClose({
+                permStart: startTime,
+                permEnd: endTime,
+                actualClockIn: existingPermRec.clockIn,
+                usage,
+                permDate,
+                todayStr,
+                requestId: request._id,
+              });
+              if (settled.isPast && settled.hasWork) {
+                usageFields = {
+                  usedDuration: usage ? usage.used : null,
+                  refundedDuration: usage ? usage.refunded : null,
+                  actualClockIn: existingPermRec.clockIn,
+                  effectiveClockIn,
+                  applied: usage ? usage.applied : false,
+                  isMidDay: usage ? usage.isMidDay : false,
                 };
-              })()
-            : {};
+                pastNote = ' — backdated approval, closed on time at scheduled end';
+                if (settled.row && !keepEnded.endedAt) {
+                  pastClose = settled.close;
+                  const wp = Array.isArray(existingPermRec.workProgress) ? [...existingPermRec.workProgress] : [];
+                  const reqStr = String(request._id);
+                  let idx = wp.findIndex((w) => w?.type === 'permission' && String(w.permissionRequestId || '') === reqStr);
+                  if (idx === -1) idx = wp.findIndex((w) => w?.type === 'permission' && !w.endTime && !w.permissionRequestId);
+                  if (idx === -1) {
+                    wp.push({ ...settled.row, permissionRequestId: request._id });
+                  } else if (!wp[idx].endTime) {
+                    wp[idx] = { ...wp[idx], ...settled.row, permissionRequestId: wp[idx].permissionRequestId || request._id };
+                  } else {
+                    wp[idx] = {
+                      ...wp[idx],
+                      endTime: settled.row.endTime,
+                      duration: settled.row.duration,
+                      taskDetails: settled.row.taskDetails,
+                      endedLate: false,
+                      overrunMins: null,
+                    };
+                  }
+                  settledWp = wp;
+                }
+              }
+            } catch (se) { console.error('Past-date settlement failed (non-fatal):', se?.message || se); }
+          }
           await Attendance.findOneAndUpdate(
             { userId: identity.authUserId, date: permDate },
             {
@@ -252,21 +346,16 @@ async function applyApprovedRequest(request, reviewer) {
                   endTime,
                   duration: granted,
                   grantedDuration: granted,
-                  usedDuration: null,
-                  refundedDuration: null,
-                  actualClockIn: null,
-                  effectiveClockIn: null,
-                  applied: false,
-                  isMidDay: false,
+                  ...usageFields,
                   status: 'approved',
                   approvedBy: reviewer._id,
                   approvedAt: new Date(),
                   ...keepApplied,
-                  ...overdueClose,
+                  ...pastClose,
                   ...keepEnded,
                 },
-                note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}${overdueClose.endedLate ? ' — window had already passed, closed as late' : ''}`,
-                ...(overdueClose.endedLate && !permLeaveCovered ? { status: 'late', lateFlag: true, shortHours: false } : {}),
+                ...(settledWp ? { workProgress: settledWp } : {}),
+                note: `Permission Approved: ${startTime || ''}-${endTime || ''}${request.reason ? ` (${request.reason})` : ''}${pastNote}`,
               },
               $setOnInsert: { status: 'absent' },
             },

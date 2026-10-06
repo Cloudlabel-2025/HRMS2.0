@@ -261,7 +261,14 @@ export default function RegularizationHistoryPage() {
                           </div>
                         </td>
                       )}
-                      <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
+                      <td style={{ fontSize: 13 }}>{formatDate(r.date)}
+                        <div style={{ marginTop: 3 }}>
+                          <span className="badge" style={{ background: '#f1f5f9', color: '#475569', fontSize: 10 }} title="When this request was filed">Applied {formatDateTime(r.createdAt) || '—'}</span>
+                          {String(r.date || '') < String(r.createdAt || '').slice(0, 10) && (
+                            <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title="Target date is before the filed date">Backdated</span>
+                          )}
+                        </div>
+                      </td>
                       <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn) || '—'}</td>
                       <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                       <td style={{ fontSize: 13 }}>
@@ -297,6 +304,12 @@ export default function RegularizationHistoryPage() {
                   <div>
                     {canReview && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
                     <div style={{ fontSize: 13, color: '#64748b' }}>{formatDate(r.date)}</div>
+                    <div style={{ marginTop: 3 }}>
+                      <span className="badge" style={{ background: '#f1f5f9', color: '#475569', fontSize: 10 }} title="When this request was filed">Applied {formatDateTime(r.createdAt) || '—'}</span>
+                      {String(r.date || '') < String(r.createdAt || '').slice(0, 10) && (
+                        <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title="Target date is before the filed date">Backdated</span>
+                      )}
+                    </div>
                   </div>
                   <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                     <i className={`bi ${r.status === 'pending' ? 'bi-clock' : r.status === 'approved' ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}`} />

@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import DateInput from '@/components/DateInput';
-import { validatePermissionWindow, MAX_PERMISSION_DURATION_MINS, TIME_RE } from '@/lib/permission-window';
+import { validatePermissionWindow, MAX_PERMISSION_DURATION_MINS, TIME_RE, isPastFiling } from '@/lib/permission-window';
 
 const EMPTY_FORM = {
   requestType: 'profile_update',
@@ -123,10 +123,8 @@ export default function SelfServicePage() {
           shiftEnd: permBounds.shiftEnd || undefined,
         });
         if (!check.valid) {
-          if (check.error.includes('date format') || check.error.includes('date cannot be in the past') || check.error.includes('advance')) {
+          if (check.error.includes('date format') || check.error.includes('advance')) {
             errs.permissionDate = check.error;
-          } else if (check.error.includes('start time is in the past')) {
-            errs.permissionStartTime = check.error;
           } else {
             errs.permissionEndTime = check.error;
           }
@@ -327,8 +325,8 @@ export default function SelfServicePage() {
                     <div style={{ fontSize: 12, color: '#475569', marginTop: 4, background: '#f8fafc', padding: '4px 8px', borderRadius: 4 }}>
                       <strong>Date:</strong> {formatDate(req.payload.date)} <br/>
                       <strong>Time:</strong> {formatTime(req.payload.startTime)} - {formatTime(req.payload.endTime)} {req.payload.duration ? `(${req.payload.duration} mins)` : ''}
-                      {String(req.payload.date || '') < String(req.createdAt || '').slice(0, 10) && (
-                        <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title={`Permission date ${req.payload.date} is before the filed date`}>Backdated</span>
+                      {isPastFiling(req.payload.date, req.payload.startTime, req.createdAt) && (
+                        <span className="badge ms-1" style={{ background: '#fde68a', color: '#92400e', fontSize: 10 }} title={`Window had elapsed when filed on ${req.createdAt || ''}`}>Past request · Applied {formatDateTime(req.createdAt) || '—'}</span>
                       )}
                     </div>
                   )}
@@ -381,7 +379,7 @@ export default function SelfServicePage() {
                   </div>
                   <div className="col-md-4">
                     <label className="form-label">Permission Date <span style={{color:'#ef4444'}}>*</span></label>
-                    <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} min={permBounds.minDate || undefined} max={permBounds.maxDate || undefined} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />
+                    <DateInput className={`form-control${formErrors.permissionDate ? ' is-invalid' : ''}`} value={form.permissionDate || ''} max={permBounds.maxDate || undefined} onChange={e => { setForm(prev => ({ ...prev, permissionDate: e.target.value })); clearError('permissionDate'); }} />
                     {formErrors.permissionDate && <div className="invalid-feedback d-block" style={{fontSize:12}}>{formErrors.permissionDate}</div>}
                   </div>
                   <div className="col-md-4">
