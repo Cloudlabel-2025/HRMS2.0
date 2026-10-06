@@ -11,7 +11,7 @@ const {
   permissionCoversShiftStart,
 } = await import('../src/lib/permission-allowance.js');
 const { closeExtraActiveRows, calculateHoursWorked, diffMins, getShiftConfig } = await import('../src/lib/attendance-constants.js');
-const { permissionOverrunMins } = await import('../src/lib/permission-window.js');
+const { permissionOverrunMins, isTimeWithinShift, isWindowWithinShift, shiftDayLength, validatePermissionWindow, isPastFiling } = await import('../src/lib/permission-window.js');
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => {
@@ -226,6 +226,53 @@ check('payableHours capped at expected (never over-credits)',
 
 check('clockIn/clockOut missing => no hours (guarded recompute)',
   calculateHoursWorked(0, 0, cfgH).hoursWorked === 0);
+
+// ── 7. Shift-window containment (past-date regularization) ─────────────
+section('Shift-window containment');
+check('day shift length 10:00-18:00 = 480', shiftDayLength('10:00', '18:00') === 480);
+check('overnight shift length 22:00-06:00 = 480', shiftDayLength('22:00', '06:00') === 480);
+check('10:00 and 18:00 inside 10:00-18:00 (inclusive ends)',
+  isTimeWithinShift('10:00', '10:00', '18:00') && isTimeWithinShift('18:00', '10:00', '18:00'));
+check('09:59 and 18:01 outside 10:00-18:00',
+  !isTimeWithinShift('09:59', '10:00', '18:00') && !isTimeWithinShift('18:01', '10:00', '18:00'));
+check('02:00 inside overnight 22:00-06:00', isTimeWithinShift('02:00', '22:00', '06:00'));
+check('21:59 outside overnight 22:00-06:00', !isTimeWithinShift('21:59', '22:00', '06:00'));
+check('window 10:00-10:30 inside 10:00-18:00', isWindowWithinShift('10:00', '10:30', '10:00', '18:00'));
+check('window 17:30-18:30 outside 10:00-18:00', !isWindowWithinShift('17:30', '18:30', '10:00', '18:00'));
+check('window 09:00-10:00 outside 10:00-18:00', !isWindowWithinShift('09:00', '10:00', '10:00', '18:00'));
+check('overnight window 23:30-00:30 inside 22:00-06:00', isWindowWithinShift('23:30', '00:30', '22:00', '06:00'));
+check('malformed input never passes', !isTimeWithinShift(null, '10:00', '18:00') && !isWindowWithinShift('10:00', null, '10:00', '18:00'));
+
+// ── 8. Past date/time permissions allowed + past-filing detection ─────
+section('Past permission filing');
+const pastDateCheck = validatePermissionWindow({
+  date: '2020-01-15', startTime: '10:00', endTime: '10:30',
+  now: new Date(), minDate: '2026-10-06', maxDate: '2026-11-05',
+});
+check('past date accepted', pastDateCheck.valid === true, pastDateCheck.error || '');
+const pastTimeCheck = validatePermissionWindow({
+  date: '2026-10-06', startTime: '00:00', endTime: '00:30',
+  now: new Date('2026-10-06T23:00:00'), minDate: '2026-10-06', maxDate: '2026-11-05',
+});
+check('past time today accepted', pastTimeCheck.valid === true, pastTimeCheck.error || '');
+const overAdvance = validatePermissionWindow({
+  date: '2027-06-01', startTime: '10:00', endTime: '10:30',
+  now: new Date(), maxDate: '2026-11-05',
+});
+check('advance cap still enforced', overAdvance.valid === false, JSON.stringify(overAdvance));
+const overDur = validatePermissionWindow({ date: '2026-10-06', startTime: '10:00', endTime: '13:00', now: new Date() });
+check('duration cap still enforced', overDur.valid === false, JSON.stringify(overDur));
+check('past date is past filing',
+  isPastFiling('2026-09-28', '10:00', new Date(2026, 8, 30, 10, 0, 0)) === true);
+check('past time today is past filing',
+  isPastFiling('2026-09-30', '09:00', new Date(2026, 8, 30, 10, 0, 0)) === true);
+check('future window today is not past filing',
+  isPastFiling('2026-09-30', '15:00', new Date(2026, 8, 30, 10, 0, 0)) === false);
+check('future date is not past filing',
+  isPastFiling('2026-10-05', '10:00', new Date(2026, 8, 30, 10, 0, 0)) === false);
+check('overnight window filed next morning is past filing',
+  isPastFiling('2026-09-30', '23:00', new Date(2026, 9, 1, 2, 0, 0)) === true);
+check('malformed filing input never flags', isPastFiling(null, '10:00', new Date(2026, 8, 30, 10, 0, 0)) === false);
 
 // ── Summary ────────────────────────────────────────────────────────────────
 console.log(`\n${'='.repeat(52)}`);

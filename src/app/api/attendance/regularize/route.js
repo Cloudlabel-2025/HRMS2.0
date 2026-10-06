@@ -12,7 +12,7 @@ import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
 import { isEmployer } from '@/lib/permissions';
 import { computePermissionUsage, permissionDurationMins, getPermissionAllowanceMins, getPermissionUsageForCycle, getCycleRangeForDate } from '@/lib/permission-allowance';
-import { permissionOverrunMins } from '@/lib/permission-window';
+import { isTimeWithinShift, isWindowWithinShift, nowInstant, permissionOverrunMins, permissionStartInstant } from '@/lib/permission-window';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { isFullDayLeaveCovered } from '@/lib/leave-cover';
 
@@ -323,6 +323,39 @@ export async function PUT(req) {
         requestType: 'permission',
         'payload.date': reg.date,
       }).sort({ createdAt: -1 }).lean();
+
+      // Past-date timing must sit inside the shift window effective on that
+      // date (the valid shift start/end). Past-date/time permission windows
+      // must likewise start and end at the correct (shift-valid) time.
+      // Current/future windows keep existing behavior. Fail-open when the
+      // effective shift cannot be resolved; fail-closed on real violations.
+      try {
+        const { getTzTime: getTzNow } = await import('@/lib/timezone');
+        const nowTz = await getTzNow().catch(() => new Date());
+        const pad2 = (n) => String(n).padStart(2, '0');
+        const todayStr = `${nowTz.getFullYear()}-${pad2(nowTz.getMonth() + 1)}-${pad2(nowTz.getDate())}`;
+        const effShift = await resolveShiftForDate(
+          { _id: reg.userId, shift: empUser?.shift, shiftId: empUser?.shiftId },
+          reg.date,
+        ).catch(() => null);
+        const ss = effShift?.startTime;
+        const se = effShift?.endTime;
+        if (ss && se) {
+          if (reg.date < todayStr) {
+            const badTiming = [['Clock in', reg.requestedIn], ['Clock out', reg.requestedOut]]
+              .find(([, t]) => t && !isTimeWithinShift(t, ss, se));
+            if (badTiming) {
+              return fail(`${badTiming[0]} must be within shift hours ${ss}–${se} for past date ${reg.date}`, 400);
+            }
+          }
+          const startInst = permissionStartInstant(reg.date, regPerm.startTime, ss, se);
+          const isPastPerm = reg.date < todayStr
+            || (reg.date === todayStr && startInst !== null && startInst < nowInstant(nowTz));
+          if (isPastPerm && !isWindowWithinShift(regPerm.startTime, regPerm.endTime, ss, se)) {
+            return fail(`Permission window must be within shift hours ${ss}–${se} for past date/time ${reg.date}`, 400);
+          }
+        }
+      } catch (e) { console.error('Shift-window check failed (non-fatal):', e?.message || e); }
 
       // Monthly allowance enforcement — mirrors self-service approval.
       // An already-counted (approved/pending) request adds 0; a new or

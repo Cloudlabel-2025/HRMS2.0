@@ -686,7 +686,7 @@ export default function DashboardPage() {
 
               <div className="mb-3">
                 <label className="form-label fw-semibold" style={{ fontSize: 13, color: '#475569' }}>Date <span style={{color:'#ef4444'}}>*</span></label>
-                <DateInput className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} min={permBounds.minDate || undefined} max={permBounds.maxDate || undefined} />
+                <DateInput className="form-control" value={permissionForm.date} onChange={e => setPermissionForm(prev => ({ ...prev, date: e.target.value }))} max={permBounds.maxDate || undefined} />
               </div>
 
               <div className="row g-3 mb-3">

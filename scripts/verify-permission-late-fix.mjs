@@ -5,7 +5,8 @@ import { register } from 'node:module';
 register('./.alias-loader.mjs', import.meta.url);
 
 const { displayStatusOf } = await import('../src/lib/attendance-stats.js');
-const { closePermissionEarly } = await import('../src/lib/permission-work.js');
+const { closePermissionEarly, buildPastApprovalClose } = await import('../src/lib/permission-work.js');
+const { computeWorkRowDuration } = await import('../src/lib/attendance-constants.js');
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = '') => {
@@ -84,10 +85,48 @@ check(
 );
 const overRow = plainRec.workProgress.find((w) => w.type === 'permission');
 check(
-  'overrun row clamps to window end 10:00->11:00 (60m) with +406m label',
+  'overrun row spans to close 10:00->17:46 (466m) with +406m label',
   overRow && overRow.endTime === '17:46' && overRow.duration === 466
+    && overRow.overrunMins === 406
     && /\+406m over/.test(overRow.taskDetails || ''),
   JSON.stringify(overRow),
+);
+
+// buildPastApprovalClose: past worked day settles on time with a taken row.
+const pastWorked = buildPastApprovalClose({
+  permStart: '10:00', permEnd: '10:30', actualClockIn: '10:15',
+  usage: { used: 15, refunded: 15, applied: true, isMidDay: false },
+  permDate: '2026-09-28', todayStr: '2026-09-30', requestId: 'req1',
+});
+check(
+  'past worked approval closes on time at window end',
+  pastWorked.isPast && pastWorked.hasWork && !pastWorked.refuseReason
+    && pastWorked.close.endedAt === '10:30' && pastWorked.close.endedLate === false
+    && pastWorked.row.endTime === '10:15' && pastWorked.row.duration === 15
+    && /taken 15m/.test(pastWorked.row.taskDetails || ''),
+  JSON.stringify(pastWorked),
+);
+
+// Past date with no clock-in is refused outright.
+const pastEmpty = buildPastApprovalClose({
+  permStart: '10:00', permEnd: '10:30', actualClockIn: null,
+  usage: null, permDate: '2026-09-28', todayStr: '2026-09-30', requestId: 'req2',
+});
+check(
+  'past dateless approval refused',
+  pastEmpty.isPast && !pastEmpty.hasWork && !!pastEmpty.refuseReason && !pastEmpty.row,
+  JSON.stringify(pastEmpty),
+);
+
+// Non-past dates pass through untouched.
+const current = buildPastApprovalClose({
+  permStart: '10:00', permEnd: '10:30', actualClockIn: null,
+  usage: null, permDate: '2026-09-30', todayStr: '2026-09-30', requestId: 'req3',
+});
+check(
+  'current date untouched',
+  current.isPast === false && !current.refuseReason && !current.row,
+  JSON.stringify(current),
 );
 
 console.log(`\n${pass} passed, ${fail} failed`);

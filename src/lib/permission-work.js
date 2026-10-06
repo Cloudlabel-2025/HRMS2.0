@@ -278,3 +278,69 @@ export function closePermissionEarly(record, endTimeStr, endedBy = 'manual') {
   perm.endedBy = endedBy;
   return { ok: true, endedLate: late, overrunMins };
 }
+
+/**
+ * Approval-time settlement for a PAST-date permission.
+ *
+ * A past window is never "late" by itself: it closes on time at its
+ * scheduled end, and lateness comes only from the actual arrival (judged
+ * separately by resolveDayStatus). Approving a past date with no recorded
+ * clock-in is refused outright — there is no worked time to cover.
+ *
+ * @param {Object} args
+ * @param {string} args.permStart - HH:MM window start
+ * @param {string} args.permEnd - HH:MM window end
+ * @param {string|null} args.actualClockIn - attendance clockIn or null
+ * @param {Object|null} args.usage - computePermissionUsage() result or null
+ * @param {string} args.permDate - YYYY-MM-DD permission date
+ * @param {string} args.todayStr - YYYY-MM-DD approver today
+ * @param {*} args.requestId - SelfServiceRequest _id for the row link
+ * @returns {{ isPast, hasWork, refuseReason|null, close|null, row|null }}
+ */
+export function buildPastApprovalClose({ permStart, permEnd, actualClockIn, usage, permDate, todayStr, requestId }) {
+  const isPast = !!permDate && !!todayStr && String(permDate) < String(todayStr);
+  if (!isPast) return { isPast: false, hasWork: !!actualClockIn, refuseReason: null, close: null, row: null };
+  if (!actualClockIn) {
+    return {
+      isPast: true,
+      hasWork: false,
+      refuseReason: `Cannot approve a past-date permission with no attendance recorded for ${permDate}`,
+      close: null,
+      row: null,
+    };
+  }
+  const applied = usage?.applied === true;
+  const s = toMins(permStart);
+  const a = toMins(actualClockIn);
+  const rowEnd = applied && a !== null && s !== null && a >= s ? actualClockIn : permEnd;
+  const dur = computeWorkRowDuration({ startTime: permStart, endTime: rowEnd });
+  const takenLabel = applied && dur !== null
+    ? `Permission (${permStart}-${permEnd}) · taken ${dur}m`
+    : null;
+  return {
+    isPast: true,
+    hasWork: true,
+    refuseReason: null,
+    close: {
+      endedAt: permEnd,
+      endedEarly: true,
+      endedLate: false,
+      endedLateMins: 0,
+      endedBy: 'approval_overdue',
+    },
+    row: {
+      type: 'permission',
+      taskDetails: takenLabel || `Permission (${permStart}-${permEnd})`,
+      startTime: permStart,
+      endTime: rowEnd,
+      status: 'completed',
+      remarks: '',
+      feedback: '',
+      duration: dur,
+      permissionRequestId: requestId || null,
+      scheduledEndTime: permEnd,
+      endedLate: false,
+      overrunMins: null,
+    },
+  };
+}

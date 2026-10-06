@@ -62,7 +62,7 @@ function shortHoursTitle(row) {
 
 export default function AttendancePage() {
   const { user } = useAuth();
-  const { formatDate, settings, formatTime } = useSettings();
+  const { formatDate, settings, formatTime, formatDateTime } = useSettings();
   const [tab, setTab]                   = useState('today');
   const [todayRecord, setTodayRecord]   = useState(null);
   const [staleOpenSession, setStaleOpenSession] = useState(null);
@@ -2311,7 +2311,14 @@ export default function AttendancePage() {
                               </div>
                             </td>
                           )}
-                          <td style={{ fontSize: 13 }}>{formatDate(r.date)}</td>
+                          <td style={{ fontSize: 13 }}>{formatDate(r.date)}
+                            <div style={{ marginTop: 3 }}>
+                              <span className="badge" style={{ background: '#f1f5f9', color: '#475569', fontSize: 10 }} title="When this request was filed">Applied {formatDateTime(r.createdAt) || '—'}</span>
+                              {String(r.date || '') < String(r.createdAt || '').slice(0, 10) && (
+                                <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title="Target date is before the filed date">Backdated</span>
+                              )}
+                            </div>
+                          </td>
                           <td style={{ fontSize: 13 }}>{formatTime(r.requestedIn)  || '—'}</td>
                           <td style={{ fontSize: 13 }}>{r.requestedOutNotYet ? 'Not yet' : (formatTime(r.requestedOut) || '—')}</td>
                           {regBreakTypes.map(type => (
@@ -2368,6 +2375,12 @@ export default function AttendancePage() {
                       <div>
                         {canReview && <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{r.userId?.name}</div>}
                         <div style={{ fontSize: 13, color: '#64748b' }}>{formatDate(r.date)}</div>
+                        <div style={{ marginTop: 3 }}>
+                          <span className="badge" style={{ background: '#f1f5f9', color: '#475569', fontSize: 10 }} title="When this request was filed">Applied {formatDateTime(r.createdAt) || '—'}</span>
+                          {String(r.date || '') < String(r.createdAt || '').slice(0, 10) && (
+                            <span className="badge ms-1" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10 }} title="Target date is before the filed date">Backdated</span>
+                          )}
+                        </div>
                       </div>
                       <span className="badge" style={{ background: STATUS_STYLE[r.status]?.bg, color: STATUS_STYLE[r.status]?.color, fontWeight: 600, fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                         <i className={`bi ${r.status === 'pending' ? 'bi-clock' : r.status === 'approved' ? 'bi-check-circle-fill' : 'bi-x-circle-fill'}`} />
@@ -2442,6 +2455,9 @@ export default function AttendancePage() {
                         <i className="bi bi-clock" style={{ color: '#3b82f6', fontSize: 14 }} />
                         <span style={{ fontSize: 13, fontWeight: 700 }}>Timing</span>
                       </div>
+                      {shiftConfig?.startTime && shiftConfig?.endTime && (
+                        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>Shift window: {formatTime(shiftConfig.startTime)} – {formatTime(shiftConfig.endTime)} · past-date timings must sit inside it</div>
+                      )}
                       <div className="row g-2">
                         <div className="col-6">
                           <label style={{ fontSize: 11, color: '#64748b', fontWeight: 600, marginBottom: 4, display: 'block' }}>Actual Clock In</label>
