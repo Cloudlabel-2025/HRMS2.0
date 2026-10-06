@@ -84,7 +84,7 @@ check(
 );
 const overRow = plainRec.workProgress.find((w) => w.type === 'permission');
 check(
-  'overrun row keeps 10:00->17:46 span (466m) with +406m label',
+  'overrun row clamps to window end 10:00->11:00 (60m) with +406m label',
   overRow && overRow.endTime === '17:46' && overRow.duration === 466
     && /\+406m over/.test(overRow.taskDetails || ''),
   JSON.stringify(overRow),

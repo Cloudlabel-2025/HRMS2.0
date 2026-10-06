@@ -2418,13 +2418,13 @@ export default function AttendancePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
                         <i className="bi bi-box-arrow-in-right" style={{ color: '#3b82f6', fontSize: 14 }} />
                         <span style={{ fontSize: 13, fontWeight: 700 }}>Permission</span>
-                        <label title={!regForm.date ? 'Select a date first' : regPermLoading ? 'Checking approved permission…' : hasApprovedPerm ? 'Approved permission found for this date' : 'No approved permission for this date — apply a permission request first'} style={{ marginLeft: 'auto', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: (!regForm.date || !hasApprovedPerm) ? 'not-allowed' : 'pointer', color: '#64748b' }}>
+                        <label title={!regForm.date ? 'Select a date first' : regPermLoading ? 'Checking approved permission…' : hasApprovedPerm ? 'Approved permission found for this date' : 'No approved permission — type the window manually (needs Super Admin / Admin approval)'} style={{ marginLeft: 'auto', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, cursor: (!regForm.date) ? 'not-allowed' : 'pointer', color: '#64748b' }}>
                           <input type="checkbox" checked={!!regForm.requestedPermission}
-                            disabled={!regForm.date || regPermLoading || !hasApprovedPerm}
+                            disabled={!regForm.date || regPermLoading}
                             onChange={e => {
-                              if (!hasApprovedPerm) return;
                               if (e.target.checked) {
-                                if (regForm.date) fetchRegPermission(regForm.date);
+                                if (hasApprovedPerm && regForm.date) fetchRegPermission(regForm.date);
+                                else setRegForm(p => ({ ...p, requestedPermission: { startTime: '', endTime: '', actualEndTime: '', source: 'manual' } }));
                               } else {
                                 setRegForm(p => ({ ...p, requestedPermission: null }));
                               }
@@ -2457,7 +2457,7 @@ export default function AttendancePage() {
                               <i className={`bi ${fetched ? 'bi-check-circle-fill' : 'bi-pencil-square'}`} />
                               {fetched
                                 ? 'Approved permission found for this date — start/end locked.'
-                                : 'No approved permission for this date — apply a permission request first.'}
+                                : 'Manual entry — type the window. Needs Super Admin / Admin approval.'}
                             </div>
                             <div className="row g-2">
                               <div className="col-4">

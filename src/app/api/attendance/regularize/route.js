@@ -5,7 +5,7 @@ import User from '@/lib/models/User';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { AttendanceRegularizeSchema, ApproveRegularizationSchema, validateRequest } from '@/lib/validation';
-import { canApproveRegularization, getRegularizationApproverIds } from '@/lib/rbac';
+import { canApproveManualPermission, canApproveRegularization, getRegularizationApproverIds } from '@/lib/rbac';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked, diffMins, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
@@ -148,33 +148,45 @@ export async function POST(req) {
     // A timing-request permission must match an approved permission request
     // for this user + date. The start/end window is authoritative and cannot
     // be typed in manually — only the actual end stays editable.
+    // Exception: an explicitly manual window (source 'manual') is accepted
+    // without a pre-approved request, but only super_admin / admin_full may
+    // approve it later (enforced at PUT).
     let verifiedPermission = null;
     if (requestedPermission?.startTime && requestedPermission?.endTime) {
-      const permOrConds = [];
-      if (user.identityId) permOrConds.push({ identityId: user.identityId });
-      if (user.profileId) permOrConds.push({ profileId: user.profileId });
-      if (permOrConds.length === 0) {
-        return fail('No approved permission found for this date. Apply a permission request first.', 400);
+      if (requestedPermission.source === 'manual') {
+        verifiedPermission = {
+          startTime: requestedPermission.startTime,
+          endTime: requestedPermission.endTime,
+          actualEndTime: requestedPermission.actualEndTime || null,
+          source: 'manual',
+        };
+      } else {
+        const permOrConds = [];
+        if (user.identityId) permOrConds.push({ identityId: user.identityId });
+        if (user.profileId) permOrConds.push({ profileId: user.profileId });
+        if (permOrConds.length === 0) {
+          return fail('No approved permission found for this date. Apply a permission request first.', 400);
+        }
+        const approved = await SelfServiceRequest.findOne({
+          $or: permOrConds,
+          requestType: 'permission',
+          status: 'approved',
+          'payload.date': date,
+        }).select('payload').lean();
+        if (!approved?.payload?.startTime || !approved?.payload?.endTime) {
+          return fail('No approved permission found for this date. Apply a permission request first.', 400);
+        }
+        if (requestedPermission.startTime !== approved.payload.startTime ||
+            requestedPermission.endTime !== approved.payload.endTime) {
+          return fail('Permission start and end must match the approved permission for this date.', 400);
+        }
+        verifiedPermission = {
+          startTime: approved.payload.startTime,
+          endTime: approved.payload.endTime,
+          actualEndTime: requestedPermission.actualEndTime || null,
+          source: 'fetched',
+        };
       }
-      const approved = await SelfServiceRequest.findOne({
-        $or: permOrConds,
-        requestType: 'permission',
-        status: 'approved',
-        'payload.date': date,
-      }).select('payload').lean();
-      if (!approved?.payload?.startTime || !approved?.payload?.endTime) {
-        return fail('No approved permission found for this date. Apply a permission request first.', 400);
-      }
-      if (requestedPermission.startTime !== approved.payload.startTime ||
-          requestedPermission.endTime !== approved.payload.endTime) {
-        return fail('Permission start and end must match the approved permission for this date.', 400);
-      }
-      verifiedPermission = {
-        startTime: approved.payload.startTime,
-        endTime: approved.payload.endTime,
-        actualEndTime: requestedPermission.actualEndTime || null,
-        source: 'fetched',
-      };
     }
 
     const request = await AttendanceRegularization.create({
@@ -279,6 +291,29 @@ export async function PUT(req) {
       if (!regPerm.actualEndTime) {
         return fail('Permission actual end time is required', 400);
       }
+      // Manual (non-pre-approved) windows may only be approved by
+      // super_admin / admin_full — team roles stay limited to fetched ones.
+      const isManualPerm = regPerm.source === 'manual';
+      if (isManualPerm && !canApproveManualPermission(user)) {
+        return fail('Manual permission entries need Super Admin or Admin approval', 403);
+      }
+      // Leave wins: a manual or fetched permission can never share a day
+      // with an approved full-day leave.
+      try {
+        const { Leave: LeaveModel } = await import('@/lib/models/index');
+        const leaveCover = await LeaveModel.findOne({
+          userId: reg.userId,
+          status: 'approved',
+          halfDay: { $ne: true },
+          from: { $lte: reg.date },
+          to: { $gte: reg.date },
+        }).lean();
+        if (leaveCover) {
+          return fail(`Cannot approve: approved full-day ${leaveCover.type || leaveCover.typeCode || 'leave'} (${leaveCover.from} to ${leaveCover.to}) already covers ${reg.date}. A day can hold either a leave or a permission, not both.`, 409);
+        }
+      } catch (e) {
+        return fail('Permission leave-cover check failed: ' + (e?.message || e), 400);
+      }
       if (!empUser.profileId || !empUser.identityId) {
         return fail('Employee identity/profile not found; cannot record permission', 400);
       }
@@ -325,7 +360,7 @@ export async function PUT(req) {
                 status: 'approved',
                 reviewerUserId: user._id,
                 reviewedAt: new Date(),
-                reviewNote: 'Approved via attendance regularization',
+                reviewNote: isManualPerm ? 'Approved via attendance regularization (manual window)' : 'Approved via attendance regularization',
               },
             },
             { new: true }
@@ -340,7 +375,7 @@ export async function PUT(req) {
             status: 'approved',
             reviewerUserId: user._id,
             reviewedAt: new Date(),
-            reviewNote: 'Created via attendance regularization approval',
+            reviewNote: isManualPerm ? 'Created via attendance regularization approval (manual window)' : 'Created via attendance regularization approval',
             requestSource: 'regularization',
           })).toObject();
         }
