@@ -201,6 +201,15 @@ export async function canApproveRegularization(user, requester) {
 }
 
 /**
+ * Manual (non-pre-approved) permission windows typed into a regularization
+ * may only be approved by super_admin / admin_full. Fetched windows matching
+ * an approved permission request follow the normal matrix above.
+ */
+export function canApproveManualPermission(user) {
+  return !!user && ['super_admin', 'admin_full'].includes(user.role);
+}
+
+/**
  * Returns active approver _ids for a regularization request from `requester`,
  * so notifications only reach reviewers who may actually act on it.
  */
