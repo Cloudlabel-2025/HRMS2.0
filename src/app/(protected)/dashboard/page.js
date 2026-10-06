@@ -474,6 +474,35 @@ export default function DashboardPage() {
     </div>
   );
 
+  const timingRequests = stats?.pendingRegularizations || [];
+  const timingRequestsCard = (
+    <div className="card p-3 p-md-4 h-100" style={{ border: 'none !important' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 10, background: 'linear-gradient(135deg, #f59e0b15, #0ea5e915)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <i className="bi bi-clock-history" style={{ color: '#d97706', fontSize: 15 }} />
+        </div>
+        <span style={{ fontSize: 15, fontWeight: 700, color: '#0f172a' }}>Timing Requests</span>
+        {timingRequests.length > 0 && <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10.5, fontWeight: 700 }}>{timingRequests.length} pending</span>}
+        <Link href="/attendance?tab=regularize&scope=approvals" style={{ marginLeft: 'auto', color: '#d97706', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>Review all <i className="bi bi-arrow-right" /></Link>
+      </div>
+      {timingRequests.length ? (
+        timingRequests.slice(0, 6).map((r, i) => (
+          <Link key={r._id} href={`/attendance?tab=regularize&scope=approvals&highlight=${r._id}`} style={{ textDecoration: 'none', color: 'inherit', display: 'block' }}>
+            <div style={{ padding: '9px 8px', margin: '0 -8px', borderRadius: 8, borderTop: i === 0 ? 'none' : '1px solid #f1f5f9' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ color: '#334155', fontSize: 13, fontWeight: 650, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.name}</div>
+                  <div style={{ color: '#94a3b8', fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.date}{r.hasPermission ? ' · Permission' : ''}{r.hasTiming ? ' · Timing' : ''}{r.reason ? ` · ${r.reason}` : ''}</div>
+                </div>
+                <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>Pending</span>
+              </div>
+            </div>
+          </Link>
+        ))
+      ) : <div className="empty-state"><i className="bi bi-check2-circle" /><p>No timing requests</p></div>}
+    </div>
+  );
+
   const renderOverviewTask = (t, i, showHigh) => {
     const st = t.carriedForward ? WORK_STATUS_COLORS.pending : (WORK_STATUS_COLORS[t.status] || WORK_STATUS_COLORS.pending);
     const stLabel = t.carriedForward ? 'Pending' : (WORK_STATUS_LABELS[t.status] || t.status);
@@ -586,6 +615,9 @@ export default function DashboardPage() {
                 <div className="col-lg-6">{announcementsCard}</div>
               </div>
               <div className="row g-3">
+                <div className="col-12">{timingRequestsCard}</div>
+              </div>
+              <div className="row g-3">
                 <div className="col-12">{monitoringCard}</div>
               </div>
             </>
@@ -594,6 +626,9 @@ export default function DashboardPage() {
               <div className="row g-3">
                 <div className="col-lg-6">{adminPendingTasksCard}</div>
                 <div className="col-lg-6">{announcementsCard}</div>
+              </div>
+              <div className="row g-3">
+                <div className="col-12">{timingRequestsCard}</div>
               </div>
               <div className="row g-3">
                 <div className="col-12">{monitoringCard}</div>

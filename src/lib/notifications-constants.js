@@ -4,7 +4,14 @@ export const NOTIF_COLORS = { leave: '#10b981', attendance: '#f59e0b', announcem
 
 export function getNotifRoute(n, role) {
   if (n.type === 'leave') return '/leave';
-  if (n.type === 'attendance') return '/attendance';
+  if (n.type === 'attendance') {
+    // Timing (regularization) requests land directly on Attendance ->
+    // Timing requests, approvals scope, with the request highlighted.
+    if (/regulariz/i.test(n.title || '') && n.refId) {
+      return `/attendance?tab=regularize&scope=approvals&highlight=${n.refId}`;
+    }
+    return '/attendance';
+  }
   if (n.type === 'self_service') {
     return ['super_admin', 'admin_full'].includes(role) ? '/core-hr/requests' : '/self-service';
   }
