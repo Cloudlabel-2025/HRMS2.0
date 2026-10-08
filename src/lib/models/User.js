@@ -17,6 +17,7 @@ const UserSchema = new mongoose.Schema({
   email:        { type: String, required: true, unique: true, lowercase: true, trim: true },
   password:     { type: String, required: true, minlength: 6, select: false },
   role:         { type: String, enum: ROLES, default: 'employee' },
+  localOnly:    { type: Boolean, default: false },
 
   // Core identity/profile links for the decoupled HR data layer
   identityId:   { type: mongoose.Schema.Types.ObjectId, ref: 'UsrIdentity', default: null, index: true },

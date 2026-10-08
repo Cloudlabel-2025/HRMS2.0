@@ -4,6 +4,7 @@ import User from './models/User';
 import EmpProfile from './models/EmploymentProfile';
 import TokenBlacklist from './models/TokenBlacklist';
 import AuditLog from './models/AuditLog';
+import { isAccountAllowedInEnvironment } from './account-environment';
 
 export async function requireAuth(req) {
   const token = getTokenFromRequest(req);
@@ -20,6 +21,7 @@ export async function requireAuth(req) {
 
   const user = await User.findById(decoded.id).select('-password');
   if (!user || user.status !== 'active') return { error: fail('User not found or inactive', 401) };
+  if (!isAccountAllowedInEnvironment(user)) return { error: fail('This account is only available in local development', 401) };
 
   // Impersonation: if X-Impersonate header is set and the authenticated user is super_admin,
   // serve the request as the impersonated user instead
@@ -29,6 +31,9 @@ export async function requireAuth(req) {
       return { error: fail('Impersonation sessions are read-only', 403) };
     }
     const impersonated = await User.findById(impersonateId).select('-password');
+    if (impersonated && !isAccountAllowedInEnvironment(impersonated)) {
+      return { error: fail('This account is only available in local development', 403) };
+    }
     if (impersonated && impersonated.status === 'active') {
       return { user: impersonated, __isImpersonated: true };
     }
@@ -55,6 +60,7 @@ export async function requirePortalAuth(req) {
 
   const user = await User.findById(decoded.id).select('-password');
   if (!user) return { error: fail('User not found', 401) };
+  if (!isAccountAllowedInEnvironment(user)) return { error: fail('This account is only available in local development', 401) };
   if (user.status === 'active') return { user, portalAccess: 'hrms' };
 
   if (!['inactive', 'alumni'].includes(user.status)) {

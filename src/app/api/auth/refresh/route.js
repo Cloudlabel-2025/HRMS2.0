@@ -9,6 +9,7 @@ import TokenBlacklist from '@/lib/models/TokenBlacklist';
 import { resolveShift } from '@/lib/shift-utils';
 import { resolveHalfDaySplitMins, evaluateHalfDayGate } from '@/lib/half-day-window';
 import { NextResponse } from 'next/server';
+import { isAccountAllowedInEnvironment } from '@/lib/account-environment';
 
 export async function POST(req) {
   try {
@@ -40,6 +41,13 @@ export async function POST(req) {
 
     const user = await User.findById(decoded.id).select('-password');
     if (!user) return fail('User not found or inactive', 401);
+    if (!isAccountAllowedInEnvironment(user)) {
+      // Clear only this browser's cookies. Shared DB sessions must remain usable locally.
+      const blocked = NextResponse.json({ success: false, error: 'This account is only available in local development' }, { status: 401 });
+      blocked.cookies.set('hrms_access', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+      blocked.cookies.set('hrms_refresh', '', { ...SESSION_COOKIE_OPTIONS, maxAge: 0 });
+      return blocked;
+    }
     if (user.status !== 'active') {
       const profile = user.profileId
         ? await EmpProfile.findById(user.profileId).select('employmentStatus')

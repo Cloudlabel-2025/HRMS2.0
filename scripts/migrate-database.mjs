@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 
 const { MongoClient, BSON } = mongoose.mongo;
 const args = new Set(process.argv.slice(2));
-const allowed = new Set(['--apply', '--writes-paused', '--verify', '--help']);
+const allowed = new Set(['--apply', '--writes-paused', '--verify', '--help', '--resume']);
 if ([...args].some(arg => !allowed.has(arg))) throw new Error('Unknown migration argument');
 if (args.has('--help')) {
   console.log('node scripts/migrate-database.mjs [--apply --writes-paused | --verify]\nCredentials and explicit DB name: .env.migration.local (ignored by Git). Default: read-only inspection.');
@@ -15,6 +15,7 @@ if (args.has('--help')) {
 if (args.has('--apply') && (!args.has('--writes-paused') || args.has('--verify'))) {
   throw new Error('Apply requires --writes-paused and cannot be combined with --verify');
 }
+if (args.has('--resume') && !args.has('--apply')) throw new Error('Resume requires --apply --writes-paused');
 if (fs.existsSync('.env.migration.local')) {
   for (const line of fs.readFileSync('.env.migration.local', 'utf8').split(/\r?\n/)) {
     const match = line.match(/^(MIGRATION_\w+)=(.*)$/);
@@ -58,7 +59,7 @@ const same = (a, b) => BSON.EJSON.stringify(a, { relaxed: false }) === BSON.EJSO
 async function verifyCollection(a, b, name, expected) {
   const current = await fingerprint(a.collection(name));
   const copied = await fingerprint(b.collection(name));
-  if (!same(current, copied) || (expected && !same(current, expected))) {
+  if (!same(current, copied) || (expected && !same(current, { count: expected.count, sha256: expected.sha256 }))) {
     throw new Error(`VerificationFailed: document contents/count changed for ${name}`);
   }
   const normalize = indexes => indexes.map(indexSpec).sort((x, y) => x.name.localeCompare(y.name));
@@ -93,7 +94,25 @@ async function run() {
   }
   console.log(`Source ${new URL(sourceUri).hostname}/${databaseName}; target ${new URL(targetUri).hostname}/${targetDatabaseName}`);
   for (const { name } of collections) console.log(`${name}: ${await a.collection(name).countDocuments()} documents`);
-  if (existing.length) throw new Error('Target database already has collections. Refusing to overwrite or merge data.');
+  if (existing.length && !args.has('--resume')) throw new Error('Target database already has collections. Refusing to overwrite or merge data.');
+  if (args.has('--resume')) {
+    const priorPath = process.env.MIGRATION_BACKUP_PATH;
+    if (!priorPath) throw new Error('Resume requires MIGRATION_BACKUP_PATH');
+    const prior = JSON.parse(fs.readFileSync(path.join(priorPath, 'manifest.json'), 'utf8'));
+    if (prior.verified || prior.databaseName !== databaseName || prior.targetDatabaseName !== targetDatabaseName || !same(prior.collections.map(c => c.name), collections.map(c => c.name))) {
+      throw new Error('VerificationFailed: resume backup does not match migration');
+    }
+    // Existing target collections must match both the recorded backup and source.
+    // Never replace, merge or delete destination documents during resume.
+    for (const collection of existing) {
+      const snapshot = prior.collections.find(c => c.name === collection.name);
+      if (!snapshot) throw new Error('VerificationFailed: unexpected destination collection');
+      const file = fs.readFileSync(path.join(priorPath, `${collection.name}.bson`));
+      if (createHash('sha256').update(file).digest('hex') !== snapshot.sha256) throw new Error('VerificationFailed: backup checksum mismatch');
+      await verifyCollection(a, b, collection.name, snapshot);
+    }
+    console.log('Resume validated. Taking a fresh complete backup before restoring missing collections.');
+  }
   if (!args.has('--apply')) {
     console.log('Read-only preflight passed. No data changed. Pause all writers before --apply --writes-paused.');
     return;
@@ -135,8 +154,13 @@ async function run() {
     console.log(`Backed up ${name}: ${count} documents`);
   }
   // A second destination check reduces the chance of colliding with an active app.
-  if ((await b.listCollections().toArray()).length) throw new Error('Target changed during backup; refusing to overwrite');
+  const latestTarget = await b.listCollections().toArray();
+  if (!same(existing.map(c => c.name).sort(), latestTarget.map(c => c.name).sort())) throw new Error('Target changed during backup; refusing to overwrite');
   for (const { name, options: collectionOptions } of collections) {
+    if (existing.some(c => c.name === name)) {
+      await verifyCollection(a, b, name, manifest.collections.find(c => c.name === name));
+      continue;
+    }
     await b.createCollection(name, { ...collectionOptions, writeConcern: { w: 'majority' } });
     const collection = b.collection(name);
     // Read BSON records with a bounded buffer, avoiding loading whole collections.

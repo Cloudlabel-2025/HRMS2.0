@@ -17,6 +17,7 @@ import { SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 import { randomUUID } from 'crypto';
 import RateLimit from '@/lib/models/RateLimit';
 import RefreshToken from '@/lib/models/RefreshToken';
+import { isAccountAllowedInEnvironment } from '@/lib/account-environment';
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX = 5;
@@ -113,6 +114,7 @@ export async function POST(req) {
     };
 
     if (!user) return handleFailure('Invalid email or password', 401, 'low');
+    if (!isAccountAllowedInEnvironment(user)) return handleFailure('Invalid email or password', 401, 'low', user._id);
 
     if (user.isLocked()) {
       const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);

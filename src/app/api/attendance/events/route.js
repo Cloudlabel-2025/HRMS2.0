@@ -4,6 +4,7 @@ import { connectDB } from '@/lib/db';
 import User from '@/lib/models/User';
 import { fail, getRefreshTokenFromRequest, verifyToken, signToken, SESSION_COOKIE_OPTIONS } from '@/lib/jwt';
 import { subscribeAttendance } from '@/lib/sse';
+import { isAccountAllowedInEnvironment } from '@/lib/account-environment';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,7 +23,7 @@ export async function GET(req) {
     if (decoded?.tokenType === 'refresh') {
       await connectDB();
       const freshUser = await User.findById(decoded.id).select('-password');
-      if (freshUser && freshUser.status === 'active') {
+      if (freshUser && freshUser.status === 'active' && isAccountAllowedInEnvironment(freshUser)) {
         user = freshUser;
         rotated = true;
       }
