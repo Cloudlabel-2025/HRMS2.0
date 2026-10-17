@@ -108,6 +108,7 @@ function payrollMonthKey(dateStr, config) {
 }
 
 async function evaluateLeave(leave, config, holidays) {
+  if (leave.classificationRequired && !leave.classifiedAt) return { leaveId: String(leave._id), skipped: true, reason: 'Awaiting leave type classification' };
   const base = {
     leaveId: String(leave._id),
     userId: String(leave.userId),

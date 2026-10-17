@@ -5,6 +5,12 @@ const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected', 'held
 const LeaveSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   typeCode: { type: String, required: true, default: 'CL' },
+  requestedTypeCode: { type: String, default: '' },
+  requestedTypeName: { type: String, default: '' },
+  classificationRequired: { type: Boolean, default: false },
+  classificationOptions: [{ code: String, name: String }],
+  classifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  classifiedAt: { type: Date, default: null },
   type:    { type: String, required: true }, // kept for backward compatibility; stores leave type name
   from:   { type: String, required: true },
   to:     { type: String, required: true },

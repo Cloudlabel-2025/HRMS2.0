@@ -1,11 +1,13 @@
 import dbConnect from '@/lib/db';
 import LeavePolicy from '@/lib/models/LeavePolicy';
 import User from '@/lib/models/User';
-import { requireAuth } from '@/lib/middleware';
+import { requireAuth, auditLog } from '@/lib/middleware';
+import mongoose from 'mongoose';
 import { isDevAdminEmail } from '@/lib/permissions';
 import { ok, fail } from '@/lib/jwt';
+import { linkedTypeError } from '@/lib/leave/linked-types';
 
-export const ALL_MASTER_LEAVE_TYPES = [
+const ALL_MASTER_LEAVE_TYPES = [
   { code: 'SL', name: 'Sick Leave', description: 'Medical recovery & health leave', annualAllocation: 10, isPaid: true, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 5, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: true, requireDocsIfConsecutiveDays: 2, genderRestriction: 'all', enabled: true, sortOrder: 1 },
   { code: 'CL', name: 'Casual Leave', description: 'Short notice leave for personal work', annualAllocation: 12, isPaid: true, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 3, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 2 },
   { code: 'PL', name: 'Privilege / Earned Leave', description: 'Planned annual vacation leave', annualAllocation: 15, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 10, minGapDays: 7, noticePeriodDays: 7, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 3 },
@@ -16,6 +18,31 @@ export const ALL_MASTER_LEAVE_TYPES = [
   { code: 'BL', name: 'Bereavement Leave', description: 'Leave for mourning immediate family member passing', annualAllocation: 5, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 5, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 8 },
   { code: 'MARL', name: 'Marriage Leave', description: 'Special leave granted for employee marriage event', annualAllocation: 5, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 5, minGapDays: 0, noticePeriodDays: 15, requiresDocuments: true, requireDocsIfConsecutiveDays: 1, genderRestriction: 'all', enabled: true, sortOrder: 9 },
 ];
+
+function leaveTypeError(configs) {
+  if (!Array.isArray(configs)) return 'Leave types must be a list';
+  const codes = new Set();
+  for (const config of configs) {
+    if (typeof config?.code !== 'string' || !config.code.trim() || typeof config?.name !== 'string' || !config.name.trim()) {
+      return 'Every leave type needs a code and name';
+    }
+    const code = config.code.trim().toUpperCase();
+    if (codes.has(code)) return `Duplicate leave type code: ${code}`;
+    codes.add(code);
+    if (config.noticePeriodDays !== undefined && (!Number.isInteger(config.noticePeriodDays) || config.noticePeriodDays < 0)) {
+      return `Notice period for ${code} must be zero or a positive whole number`;
+    }
+    if (config.annualAllocation !== undefined && (typeof config.annualAllocation !== 'number' || !Number.isFinite(config.annualAllocation) || config.annualAllocation < 0)) {
+      return `Annual entitlement for ${code} must be zero or more`;
+    }
+    if (config.creditSchedule !== undefined && !['upfront', 'monthly', 'quarterly', 'half_yearly'].includes(config.creditSchedule)) {
+      return `Invalid credit frequency for ${code}`;
+    }
+  }
+  return linkedTypeError(configs);
+}
+
+const normalizeLeaveTypes = configs => configs.map(config => ({ ...config, code: config.code.trim().toUpperCase(), name: config.name.trim() }));
 
 export async function GET(req) {
   try {
@@ -29,7 +56,7 @@ export async function GET(req) {
 
     // Fetch active policies
     let policyDocs = await LeavePolicy.find({ status: 'active' }).sort({ isDefault: -1, createdAt: -1 });
-    if (!policyDocs || policyDocs.length === 0) {
+    if (policyDocs.length === 0 && !(await LeavePolicy.exists({}))) {
       // Create default policy with all master leave types
       const defaultPolicy = await LeavePolicy.create({
         name: 'Corporate Default Leave Policy',
@@ -48,21 +75,6 @@ export async function GET(req) {
         leaveTypeConfigs: ALL_MASTER_LEAVE_TYPES,
       });
       policyDocs = [defaultPolicy];
-    } else {
-      // Auto-sync missing master leave types into existing active policies
-      for (const policyDoc of policyDocs) {
-        const existingCodes = new Set((policyDoc.leaveTypeConfigs || []).map(c => c.code));
-        let updated = false;
-        for (const masterType of ALL_MASTER_LEAVE_TYPES) {
-          if (!existingCodes.has(masterType.code)) {
-            policyDoc.leaveTypeConfigs.push(masterType);
-            updated = true;
-          }
-        }
-        if (updated) {
-          await policyDoc.save();
-        }
-      }
     }
 
     const policies = policyDocs.map(p => p.toObject());
@@ -88,14 +100,17 @@ export async function PUT(req) {
     const body = await req.json();
     const { action = 'publish', policyId, name, description, countWeekends, countHolidays, sandwichRule, maxPendingApplications, requireProbationCompletion, leaveTypeConfigs } = body;
 
-    if (!policyId) {
-      return fail('Policy ID is required', 400);
+    if (!mongoose.isValidObjectId(policyId)) return fail('A valid policy ID is required', 400);
+    if (!['publish', 'save_draft'].includes(action)) return fail('Invalid policy action', 400);
+    if (leaveTypeConfigs !== undefined) {
+      const validationError = leaveTypeError(leaveTypeConfigs);
+      if (validationError) return fail(validationError, 400);
     }
 
     await dbConnect();
 
     const policy = await LeavePolicy.findById(policyId);
-    if (!policy) {
+    if (!policy || policy.status === 'archived') {
       return fail('Policy not found', 404);
     }
 
@@ -107,7 +122,7 @@ export async function PUT(req) {
       sandwichRule: sandwichRule !== undefined ? Boolean(sandwichRule) : (policy.sandwichRule || false),
       maxPendingApplications: maxPendingApplications !== undefined ? Number(maxPendingApplications) : policy.maxPendingApplications,
       requireProbationCompletion: requireProbationCompletion !== undefined ? Boolean(requireProbationCompletion) : policy.requireProbationCompletion,
-      leaveTypeConfigs: Array.isArray(leaveTypeConfigs) ? leaveTypeConfigs : policy.leaveTypeConfigs,
+      leaveTypeConfigs: leaveTypeConfigs !== undefined ? normalizeLeaveTypes(leaveTypeConfigs) : policy.leaveTypeConfigs,
     };
 
     if (action === 'save_draft') {
@@ -151,10 +166,12 @@ export async function POST(req) {
     const body = await req.json();
     const { name, description = '', isDefault = false, applicableRoles = [], applicableDepartments = [], leaveTypeConfigs = [] } = body;
 
-    if (!name || !name.trim()) {
+    if (typeof name !== 'string' || !name.trim()) {
       return fail('Policy name is required', 400);
     }
 
+    const validationError = leaveTypeError(leaveTypeConfigs);
+    if (validationError) return fail(validationError, 400);
     await dbConnect();
 
     const defaultConfigs = leaveTypeConfigs.length > 0 ? leaveTypeConfigs : [
@@ -180,10 +197,32 @@ export async function POST(req) {
       countHolidays: false,
       sandwichRule: false,
       requireProbationCompletion: false,
-      leaveTypeConfigs: defaultConfigs,
+      leaveTypeConfigs: normalizeLeaveTypes(defaultConfigs),
     });
 
     return ok({ message: `New Leave Policy "${newPolicy.name}" created successfully!`, policy: newPolicy }, 201);
+  } catch (e) {
+    return fail(e.message, 500);
+  }
+}
+
+export async function DELETE(req) {
+  try {
+    const { user, error } = await requireAuth(req);
+    if (error) return error;
+    if (!isDevAdminEmail(user.email)) return fail('Access denied: Policy Control Portal is strictly restricted to designated Dev Admin', 403);
+
+    const { policyId } = await req.json();
+    if (!mongoose.isValidObjectId(policyId)) return fail('A valid policy ID is required', 400);
+    await dbConnect();
+    const policy = await LeavePolicy.findOneAndUpdate(
+      { _id: policyId, status: 'active' },
+      { $set: { status: 'archived', isDefault: false, draftConfig: null } },
+      { new: true, runValidators: true },
+    );
+    if (!policy) return fail('Policy not found', 404);
+    await auditLog('Leave Policy Deleted', 'Settings', user._id, `Removed policy from active use: ${policy.name}`, 'high', req.headers.get('x-forwarded-for') || '');
+    return ok({ deleted: true, message: 'Leave policy deleted. Existing leave history has been retained.' });
   } catch (e) {
     return fail(e.message, 500);
   }

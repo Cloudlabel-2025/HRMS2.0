@@ -93,6 +93,7 @@ export async function POST(req) {
           if (!policy) throw new Error('No active leave policy for this employee');
           const typeConfig = (policy.leaveTypeConfigs || []).find(c => c.code === d.typeCode);
           if (!typeConfig || !typeConfig.enabled) throw new Error(`Leave type ${d.typeCode} not enabled`);
+          if (typeConfig.balanceMode === 'linked') throw new Error('Linked leave has no independent balance. Use its underlying leave type.');
 
           const balance = await getOrCreateBalanceForYear(resolved.user._id, policy, d.cycleYear);
           if (!balance) throw new Error('Could not resolve balance record');
@@ -297,6 +298,7 @@ export async function POST(req) {
         if (!policy) throw new Error('No active leave policy for this employee');
         const typeConfig = (policy.leaveTypeConfigs || []).find(c => c.code === d.typeCode);
         if (!typeConfig || !typeConfig.enabled) throw new Error(`Leave type ${d.typeCode} not enabled`);
+        if (typeConfig.balanceMode === 'linked') throw new Error('Submit linked leave through Leave Management for Super Admin classification.');
 
         const { from, to, reason } = d;
         if (!from || !to || !reason) throw new Error('from, to and reason are required');

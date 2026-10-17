@@ -2,10 +2,31 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import AppShell from '@/components/AppShell';
+import ConfirmModal from '@/components/ConfirmModal';
+import LeaveTypeBalanceFields from '@/components/leave/LeaveTypeBalanceFields';
 import DateInput from '@/components/DateInput';
 import DevAdminNav, { devNavBtnStyle } from '@/components/dev-admin/DevAdminNav';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
+import { CREDIT_SCHEDULES, getCreditSchedule, getDaysPerCredit, getAnnualEntitlement } from '@/lib/leave/credit-schedule';
+import { linkedTypeError } from '@/lib/leave/linked-types';
+
+const LEAVE_SYMBOLS = [
+  ['bi-calendar-check', 'Calendar check'],
+  ['bi-calendar3', 'Calendar'],
+  ['bi-heart-pulse', 'Health'],
+  ['bi-bandaid', 'Medical care'],
+  ['bi-sun', 'Sun'],
+  ['bi-airplane', 'Travel'],
+  ['bi-house-heart', 'Family'],
+  ['bi-people', 'People'],
+  ['bi-flower1', 'Flower'],
+  ['bi-gift', 'Gift'],
+  ['bi-arrow-repeat', 'Compensatory off'],
+  ['bi-wallet2', 'Wallet'],
+];
+
+const editablePolicy = policy => JSON.parse(JSON.stringify({ ...policy, ...policy.draftConfig }));
 
 export default function ControlCenterPage() {
   const { user } = useAuth();
@@ -20,6 +41,12 @@ export default function ControlCenterPage() {
   const [employees, setEmployees] = useState([]);
   const [selectedPolicyId, setSelectedPolicyId] = useState('');
   const [currentPolicy, setCurrentPolicy] = useState(null);
+  const [deletePolicy, setDeletePolicy] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [showAddType, setShowAddType] = useState(false);
+  const [newType, setNewType] = useState({ code: '', name: '', annualAllocation: 0 });
+  const [typeError, setTypeError] = useState('');
+  const [removeType, setRemoveType] = useState(null);
 
   // Simulation state
   const [simForm, setSimForm] = useState({
@@ -53,8 +80,7 @@ export default function ControlCenterPage() {
       showToast(res.message || 'New Leave Policy created successfully!');
       setShowCreateModal(false);
       setNewPolicyForm({ name: '', description: '', isDefault: false });
-      await loadData();
-      if (res.policy?._id) handlePolicySelect(res.policy._id);
+      await loadData(res.policy?._id);
     } catch (err) {
       showToast(err.message || 'Failed to create policy', 'error');
     } finally {
@@ -67,7 +93,7 @@ export default function ControlCenterPage() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadData = async () => {
+  const loadData = async (preferredPolicyId) => {
     setLoading(true);
     try {
       const res = await api.get('/api/admin/control-center/policies');
@@ -76,8 +102,12 @@ export default function ControlCenterPage() {
       setPolicies(loadedPolicies);
       setEmployees(loadedEmps);
       if (loadedPolicies.length > 0) {
-        setSelectedPolicyId(loadedPolicies[0]._id);
-        setCurrentPolicy(loadedPolicies[0]);
+        const selected = loadedPolicies.find(p => p._id === (preferredPolicyId || selectedPolicyId)) || loadedPolicies[0];
+        setSelectedPolicyId(selected._id);
+        setCurrentPolicy(editablePolicy(selected));
+      } else {
+        setSelectedPolicyId('');
+        setCurrentPolicy(null);
       }
       if (loadedEmps.length > 0) {
         setSimForm(p => ({ ...p, targetUserId: loadedEmps[0]._id }));
@@ -96,7 +126,64 @@ export default function ControlCenterPage() {
   const handlePolicySelect = (id) => {
     setSelectedPolicyId(id);
     const found = policies.find(p => p._id === id);
-    if (found) setCurrentPolicy(JSON.parse(JSON.stringify(found)));
+    if (found) setCurrentPolicy(editablePolicy(found));
+  };
+
+  const updateLeaveType = (index, changes) => {
+    setCurrentPolicy(policy => ({
+      ...policy,
+      leaveTypeConfigs: policy.leaveTypeConfigs.map((config, i) => i === index ? { ...config, ...changes } : config),
+    }));
+  };
+
+  const handleDeletePolicy = async () => {
+    if (!deletePolicy || deleting) return;
+    setDeleting(true);
+    try {
+      const res = await api.delete('/api/admin/control-center/policies', { policyId: deletePolicy._id });
+      const remaining = policies.filter(policy => policy._id !== deletePolicy._id);
+      setPolicies(remaining);
+      setSelectedPolicyId(remaining[0]?._id || '');
+      setCurrentPolicy(remaining[0] ? editablePolicy(remaining[0]) : null);
+      setSimResult(null);
+      setDeletePolicy(null);
+      showToast(res.message || 'Leave policy deleted');
+    } catch (error) {
+      showToast(error.message || 'Failed to delete policy', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleAddType = () => {
+    const code = newType.code.trim().toUpperCase();
+    const name = newType.name.trim();
+    if (!code || !name) return setTypeError('Enter a code and name for the leave type.');
+    const linkedError = linkedTypeError([...(currentPolicy?.leaveTypeConfigs || []), { ...newType, code, name }]);
+    if (linkedError) return setTypeError(linkedError);
+    if ((currentPolicy?.leaveTypeConfigs || []).some(config => config.code.trim().toUpperCase() === code)) {
+      return setTypeError('This code is already used in this policy. Choose a unique code.');
+    }
+    if (newType.annualAllocation === '' || !Number.isFinite(Number(newType.annualAllocation)) || Number(newType.annualAllocation) < 0) {
+      return setTypeError('Annual allocation must be zero or more.');
+    }
+    if (!Number.isInteger(Number(newType.noticePeriodDays ?? 0)) || Number(newType.noticePeriodDays ?? 0) < 0) {
+      return setTypeError('Notice period must be zero or a positive whole number.');
+    }
+    setCurrentPolicy(policy => ({
+      ...policy,
+      leaveTypeConfigs: [...(policy.leaveTypeConfigs || []), {
+        code, name, annualAllocation: Number(newType.annualAllocation),
+        balanceMode: newType.balanceMode || 'own', linkAllLeaveTypes: !!newType.linkAllLeaveTypes, linkedLeaveTypes: newType.linkedLeaveTypes || [],
+        color: '#3b82f6', icon: 'bi-calendar-check', enabled: true,
+        isPaid: true, creditSchedule: 'upfront', accrualMode: 'upfront', allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true,
+        maxConsecutiveDays: 0, minGapDays: 0, noticePeriodDays: Number(newType.noticePeriodDays ?? 0),
+        requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all',
+        sortOrder: Math.max(0, ...(policy.leaveTypeConfigs || []).map(config => config.sortOrder || 0)) + 1,
+      }],
+    }));
+    setShowAddType(false);
+    showToast('Leave type added. Publish the policy to make it available to employees.');
   };
 
   const handleSavePolicy = async (action = 'publish') => {
@@ -117,7 +204,7 @@ export default function ControlCenterPage() {
       };
       const res = await api.put('/api/admin/control-center/policies', payload);
       showToast(res.message || (action === 'save_draft' ? 'Draft configuration saved!' : 'Policy configuration published live!'));
-      loadData();
+      await loadData(currentPolicy._id);
     } catch (e) {
       showToast(e.message || 'Failed to update policy', 'error');
     } finally {
@@ -225,6 +312,15 @@ export default function ControlCenterPage() {
         </div>
       ) : (
         <>
+          {activeTab === 'policy' && !currentPolicy && (
+            <div className="card border-0 shadow-sm p-5 text-center">
+              <h5>No active leave policies</h5>
+              <p className="text-secondary">Create a policy to configure leave types and rules.</p>
+              <button className="btn btn-primary align-self-center" onClick={() => setShowCreateModal(true)}>
+                <i className="bi bi-plus-lg me-2" />Create New Leave Policy
+              </button>
+            </div>
+          )}
           {/* TAB 1: LEAVE POLICY CONTROL */}
           {activeTab === 'policy' && currentPolicy && (
             <div className="row g-4">
@@ -250,6 +346,9 @@ export default function ControlCenterPage() {
                       </select>
                     </div>
 
+                    <button className="btn btn-outline-danger fw-bold" disabled={saving || deleting} onClick={() => setDeletePolicy(currentPolicy)}>
+                      <i className="bi bi-trash me-2" />Delete Policy
+                    </button>
                     <button
                       className="btn btn-outline-primary fw-bold"
                       onClick={() => setShowCreateModal(true)}
@@ -390,14 +489,27 @@ export default function ControlCenterPage() {
 
               {/* Leave Type Config Cards */}
               <div className="col-12">
-                <h5 style={{ fontWeight: 700, marginBottom: 16, color: '#0f172a' }}>Leave Types Rules & Constraints</h5>
+                <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+                  <div>
+                    <h5 style={{ fontWeight: 700, marginBottom: 4, color: '#0f172a' }}>Leave Types Rules & Constraints</h5>
+                    <p className="text-secondary mb-0" style={{ fontSize: 13 }}>Add or remove types, then save a draft or publish your changes.</p>
+                  </div>
+                  <button className="btn btn-outline-primary" disabled={saving} onClick={() => {
+                    setNewType({ code: '', name: '', annualAllocation: 0 });
+                    setTypeError('');
+                    setShowAddType(true);
+                  }}><i className="bi bi-plus-lg me-2" />Add Leave Type</button>
+                </div>
+                {!currentPolicy.leaveTypeConfigs?.length && <div className="alert alert-light border">No leave types in this policy. Add a leave type to get started.</div>}
                 <div className="row g-3">
                   {(currentPolicy.leaveTypeConfigs || []).map((cfg, idx) => (
                     <div key={cfg.code || idx} className="col-md-6">
                       <div className="card shadow-sm border-0 h-100" style={{ borderRadius: 14 }}>
                         <div className="card-header bg-white border-bottom-0 pt-3 px-4 d-flex justify-content-between align-items-center flex-wrap gap-2">
                           <div className="d-flex align-items-center gap-2">
-                            <span className="badge bg-primary" style={{ fontSize: 12, padding: '5px 10px' }}>{cfg.code}</span>
+                            <span className="badge" style={{ fontSize: 12, padding: '5px 10px', background: `${cfg.color || '#3b82f6'}20`, color: cfg.color || '#3b82f6' }}>
+                              <i className={`bi ${cfg.icon || 'bi-calendar-check'} me-1`} aria-hidden="true" />{cfg.code}
+                            </span>
                             <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{cfg.name}</span>
                             <span className={`badge ${cfg.enabled !== false ? 'bg-success' : 'bg-secondary'}`} style={{ fontSize: 10 }}>
                               {cfg.enabled !== false ? '✓ Listed for Users' : 'Hidden from Users'}
@@ -420,28 +532,105 @@ export default function ControlCenterPage() {
                               }}
                             />
                           </div>
+                          <div className="d-flex align-items-center gap-2">
+                          <button type="button" className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '4px 8px', whiteSpace: 'nowrap' }} disabled={saving} onClick={() => {
+                            updateLeaveType(idx, { balanceMode: 'linked' });
+                            document.getElementById(`leave-links-${idx}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}><i className="bi bi-link-45deg me-1" aria-hidden="true" />Link Leaves</button>
+                          <button type="button" className="btn btn-sm btn-outline-danger d-inline-flex align-items-center justify-content-center p-0" style={{ width: 30, height: 30, flexShrink: 0 }} disabled={saving} onClick={() => setRemoveType({ index: idx, code: cfg.code, name: cfg.name })} aria-label={`Remove ${cfg.name}`} title={`Remove ${cfg.name}`}>
+                            <i className="bi bi-trash" aria-hidden="true" />
+                          </button>
+                          </div>
                         </div>
 
                         <div className="card-body px-4 pb-4 pt-1">
                           <div className="row g-3">
-                            <div className="col-6">
-                              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Annual Allocation (Days)</label>
-                              <input
-                                type="number"
-                                className="form-control form-control-sm"
-                                value={cfg.annualAllocation ?? 0}
-                                onChange={e => {
-                                  const updated = [...currentPolicy.leaveTypeConfigs];
-                                  updated[idx].annualAllocation = parseFloat(e.target.value) || 0;
-                                  setCurrentPolicy({ ...currentPolicy, leaveTypeConfigs: updated });
-                                }}
-                              />
+                            <div className="col-12">
+                              <div className="border rounded-3 p-3" style={{ background: '#f8fafc' }}>
+                                <div className="row g-3 align-items-end">
+                                  <div className="col-sm-4">
+                                    <label htmlFor={`leave-colour-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Colour</label>
+                                    <input
+                                      id={`leave-colour-${idx}`}
+                                      type="color"
+                                      className="form-control form-control-color w-100"
+                                      value={cfg.color || '#3b82f6'}
+                                      onChange={e => updateLeaveType(idx, { color: e.target.value })}
+                                    />
+                                  </div>
+                                  <div className="col-sm-8">
+                                    <label htmlFor={`leave-symbol-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Symbol</label>
+                                    <select
+                                      id={`leave-symbol-${idx}`}
+                                      className="form-select form-select-sm"
+                                      value={cfg.icon || 'bi-calendar-check'}
+                                      onChange={e => updateLeaveType(idx, { icon: e.target.value })}
+                                    >
+                                      {cfg.icon && !LEAVE_SYMBOLS.some(([icon]) => icon === cfg.icon) && <option value={cfg.icon}>Current symbol ({cfg.icon})</option>}
+                                      {LEAVE_SYMBOLS.map(([icon, label]) => <option key={icon} value={icon}>{label}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="col-12 d-flex align-items-center gap-3">
+                                    <span style={{ fontSize: 12, color: '#64748b' }}>Preview</span>
+                                    <span className="d-inline-flex align-items-center gap-2 rounded-3 px-3 py-2" style={{ background: `${cfg.color || '#3b82f6'}20`, color: cfg.color || '#3b82f6', fontSize: 13, fontWeight: 600 }}>
+                                      <i className={`bi ${cfg.icon || 'bi-calendar-check'}`} aria-hidden="true" />{cfg.name} ({cfg.code})
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-
+                            <div className="col-12" id={`leave-links-${idx}`}>
+                              <LeaveTypeBalanceFields config={cfg} configs={currentPolicy.leaveTypeConfigs || []} onChange={changes => updateLeaveType(idx, changes)} />
+                            </div>
+                            {cfg.balanceMode !== 'linked' && <div className="col-12">
+                              <fieldset className="border rounded-3 p-3" style={{ background: '#f8fafc' }}>
+                                <legend className="float-none w-auto px-2 mb-2" style={{ fontSize: 13, fontWeight: 700 }}>Leave entitlement</legend>
+                                <div className="row g-3">
+                                  <div className="col-12">
+                                    <label htmlFor={`credit-frequency-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Credit frequency</label>
+                                    <select
+                                      id={`credit-frequency-${idx}`}
+                                      className="form-select"
+                                      value={cfg.creditSchedule || 'upfront'}
+                                      onChange={e => updateLeaveType(idx, { creditSchedule: e.target.value, accrualMode: e.target.value })}
+                                    >
+                                      {CREDIT_SCHEDULES.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                                    </select>
+                                  </div>
+                                  <div className="col-sm-6">
+                                    <label htmlFor={`days-per-credit-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Days per {getCreditSchedule(cfg.creditSchedule).unit}</label>
+                                    <input
+                                      id={`days-per-credit-${idx}`}
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      className="form-control"
+                                      value={getDaysPerCredit(cfg)}
+                                      onChange={e => updateLeaveType(idx, { annualAllocation: getAnnualEntitlement(e.target.value, cfg.creditSchedule) })}
+                                    />
+                                  </div>
+                                  <div className="col-sm-6">
+                                    <label htmlFor={`annual-entitlement-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Annual total (days)</label>
+                                    <input
+                                      id={`annual-entitlement-${idx}`}
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      className="form-control"
+                                      value={cfg.annualAllocation ?? 0}
+                                      onChange={e => updateLeaveType(idx, { annualAllocation: e.target.value === '' ? '' : Number(e.target.value) })}
+                                    />
+                                  </div>
+                                </div>
+                              </fieldset>
+                            </div>}
                             <div className="col-6">
-                              <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Notice Period (Days Required)</label>
+                              <label htmlFor={`leave-notice-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>{cfg.balanceMode === 'linked' ? `${cfg.name} notice period (days)` : 'Notice Period (Days Required)'}</label>
                               <input
+                                id={`leave-notice-${idx}`}
                                 type="number"
+                                min="0"
+                                step="1"
                                 className="form-control form-control-sm"
                                 value={cfg.noticePeriodDays ?? 0}
                                 onChange={e => {
@@ -450,6 +639,7 @@ export default function ControlCenterPage() {
                                   setCurrentPolicy({ ...currentPolicy, leaveTypeConfigs: updated });
                                 }}
                               />
+                              {cfg.balanceMode === 'linked' && <div className="form-text" style={{ fontSize: 11 }}>0 allows same-day requests. Only this notice period applies; the linked types’ notice periods are ignored.</div>}
                             </div>
 
                             <div className="col-6">
@@ -482,11 +672,12 @@ export default function ControlCenterPage() {
 
                             <div className="col-12">
                               <div className="d-flex gap-3 mt-2">
-                                <label className="form-check-label" style={{ fontSize: 12 }}>
+                                {cfg.balanceMode !== 'linked' && <label className="form-check-label" style={{ fontSize: 12 }}>
                                   <input
                                     type="checkbox"
                                     className="form-check-input me-1"
                                     checked={cfg.isPaid !== false}
+                                    disabled={cfg.balanceMode === 'linked'}
                                     onChange={e => {
                                       const updated = [...currentPolicy.leaveTypeConfigs];
                                       updated[idx].isPaid = e.target.checked;
@@ -494,7 +685,7 @@ export default function ControlCenterPage() {
                                     }}
                                   />
                                   Paid Leave
-                                </label>
+                                </label>}
 
                                 <label className="form-check-label" style={{ fontSize: 12 }}>
                                   <input
@@ -790,6 +981,62 @@ export default function ControlCenterPage() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={!!deletePolicy}
+        title="Delete leave policy?"
+        confirmText="Delete Policy"
+        variant="danger"
+        confirming={deleting}
+        onClose={() => { if (!deleting) setDeletePolicy(null); }}
+        onConfirm={handleDeletePolicy}
+      >
+        <p>Delete <strong>{deletePolicy?.name}</strong>? It will no longer apply to new leave applications. Existing leave history will be retained.</p>
+        {deletePolicy?.isDefault && <p className="text-danger">This is the corporate default policy. Employees relying on it will need another applicable policy.</p>}
+        <p className="mb-0 text-secondary">Any unsaved changes and saved draft for this policy will be discarded.</p>
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={!!removeType}
+        title="Remove leave type?"
+        confirmText="Remove Type"
+        variant="danger"
+        onClose={() => setRemoveType(null)}
+        onConfirm={() => {
+          setCurrentPolicy(policy => ({ ...policy, leaveTypeConfigs: policy.leaveTypeConfigs.filter((_, index) => index !== removeType.index) }));
+          setRemoveType(null);
+        }}
+      >
+        <p>Remove <strong>{removeType?.name} ({removeType?.code})</strong> from this policy?</p>
+        <p className="mb-0 text-secondary">The change takes effect when you publish the policy. Existing leave history will be retained.</p>
+      </ConfirmModal>
+
+      <ConfirmModal open={showAddType} title="Add leave type" confirmText="Add Leave Type" onClose={() => setShowAddType(false)} onConfirm={handleAddType}>
+        <form style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 6 }} onSubmit={event => { event.preventDefault(); handleAddType(); }}>
+          {typeError && <div className="alert alert-danger py-2" role="alert">{typeError}</div>}
+          <div className="mb-3">
+            <label className="form-label" htmlFor="new-leave-code">Code</label>
+            <input id="new-leave-code" className="form-control" placeholder="e.g. STUDY" autoFocus required value={newType.code} onChange={event => setNewType({ ...newType, code: event.target.value.toUpperCase() })} />
+          </div>
+          <div className="mb-3">
+            <label className="form-label" htmlFor="new-leave-name">Name</label>
+            <input id="new-leave-name" className="form-control" placeholder="e.g. Study Leave" required value={newType.name} onChange={event => setNewType({ ...newType, name: event.target.value })} />
+          </div>
+          <div className="mb-3">
+            <LeaveTypeBalanceFields config={newType} configs={currentPolicy?.leaveTypeConfigs || []} onChange={changes => setNewType(type => ({ ...type, ...changes }))} />
+          </div>
+          {newType.balanceMode !== 'linked' && <div className="mb-3">
+            <label className="form-label" htmlFor="new-leave-allocation">Annual allocation (days)</label>
+            <input id="new-leave-allocation" type="number" min="0" step="0.5" required className="form-control" value={newType.annualAllocation} onChange={event => setNewType({ ...newType, annualAllocation: event.target.value })} />
+          </div>}
+          <div className="mb-3">
+            <label className="form-label" htmlFor="new-leave-notice">Notice period (days)</label>
+            <input id="new-leave-notice" type="number" min="0" step="1" className="form-control" value={newType.noticePeriodDays ?? 0} onChange={event => setNewType(type => ({ ...type, noticePeriodDays: event.target.value }))} />
+            {newType.balanceMode === 'linked' && <div className="form-text">Only this leave type’s notice period applies. Use 0 for same-day emergency requests.</div>}
+          </div>
+          <p className="mb-0 text-secondary" style={{ fontSize: 13 }}>After adding, choose its colour, symbol, and rules in the leave type card. Publish the policy to apply it.</p>
+        </form>
+      </ConfirmModal>
 
       {/* Create New Policy Modal */}
       {showCreateModal && (

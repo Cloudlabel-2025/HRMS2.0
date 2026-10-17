@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
@@ -99,6 +100,7 @@ function DownloadTimerModal({ show, remaining, onClose, onCancel }) {
 }
 
 export default function WorkProgressPage() {
+  const { user } = useAuth();
   const { id } = useParams();
   const router = useRouter();
   const { formatDate, formatTime } = useSettings();
@@ -240,7 +242,7 @@ export default function WorkProgressPage() {
     const rows = toCsvRows(filteredCycles, formatTime);
     const entryCount = rows.length - 1; // minus header
 
-    if (entryCount <= 5) {
+    if (user?.role === 'super_admin' || entryCount <= 5) {
       triggerDownload(rows, `work_progress_${employee?.name || 'export'}.csv`);
       showToast('Downloaded successfully');
       return;

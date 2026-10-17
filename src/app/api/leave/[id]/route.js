@@ -11,11 +11,15 @@ import { canApproveLeave, canViewUser } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { getRelativePeriod, recordPeriodUsageSplit, recordPeriodUsage } from '@/lib/leave/accrual';
 import { reopenPayrollForLeave } from '@/lib/payroll-reopen';
+import { CLASSIFICATION_WORKFLOW, classificationError } from '@/lib/leave/linked-types';
+import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
+import { getOrCreateBalance } from '@/app/api/leave/balance/route';
 
 const ActionSchema = z.object({
   action:     z.enum(['approved', 'rejected', 'held']),
   holdReason: z.string().min(1).max(500).optional(),
   reason:     z.string().min(1).max(500).optional(),
+  classifiedTypeCode: z.string().min(1).optional(),
 }).refine(d => d.action !== 'held' || !!(d.holdReason || d.reason), {
   message: 'holdReason is required when action is held', path: ['holdReason'],
 }).refine(d => d.action !== 'rejected' || !!(d.reason || d.holdReason), {
@@ -163,10 +167,34 @@ export async function PUT(req, { params }) {
       ? await LeavePolicy.findById(leave.policyId)
       : null;
 
+    const initialClassification = leave.classificationRequired && !leave.classifiedAt && action === 'approved';
+    if (leave.classificationRequired) {
+      if (user.role !== 'super_admin') return fail('Only Super Admin can classify and approve this leave request', 403);
+      if (!policy || !leave.workflowApprovals?.length) return fail('Classification workflow is unavailable for this request', 400);
+      if (leave.classifiedAt && result.data.classifiedTypeCode && result.data.classifiedTypeCode !== leave.typeCode) return fail('This request has already been classified', 400);
+      if (initialClassification) {
+        const target = policy.leaveTypeConfigs?.find(config => config.code === result.data.classifiedTypeCode);
+        const context = await buildEmployeeContext(applicantId);
+        const validationError = classificationError(target, leave, context, evaluateEligibility);
+        if (validationError) return fail(validationError, 400);
+        const balance = await getOrCreateBalance(applicantId, policy);
+        if (!balance?.balances?.some(entry => entry.typeCode === target.code)) return fail('No eligible balance record exists for the selected leave type', 400);
+        leave.typeCode = target.code;
+        leave.type = target.name;
+        leave.isPaid = target.isPaid !== false;
+        leave.paidDays = leave.isPaid ? leave.days : 0;
+        leave.unpaidDays = leave.isPaid ? 0 : leave.days;
+        leave.classifiedBy = user._id;
+        leave.classifiedAt = new Date();
+      }
+    } else if (result.data.classifiedTypeCode) {
+      return fail('This request does not require leave type classification', 400);
+    }
+
     if (policy && leave.workflowApprovals?.length > 0) {
       // ── Dynamic workflow approval ──
       const workflow = leave.workflowApprovals;
-      const workflowDef = getActiveWorkflow(policy, leave.typeCode);
+      const workflowDef = leave.classificationRequired ? CLASSIFICATION_WORKFLOW : getActiveWorkflow(policy, leave.typeCode);
 
       if (!['super_admin', 'admin_full'].includes(user.role) && !await canViewUser(user, leave.userId)) return fail('Access denied', 403);
       if (!canApproveLeave(user, leave.userId)) return fail('You are not allowed to approve this employee\'s leave request', 403);
@@ -242,7 +270,11 @@ export async function PUT(req, { params }) {
               );
               
               const currentAvailable = entry.allocated + entry.carriedForward - entry.used - entry.pending;
-              if (entry.pending >= paidDays) {
+              if (initialClassification) {
+                // Linked requests reserve no source balance before classification.
+                // Charge only the selected source; preserve other requests' reservations.
+                entry.used = (entry.used || 0) + paidDays;
+              } else if (entry.pending >= paidDays) {
                 entry.pending -= paidDays;
                 entry.used += paidDays;
               } else if (currentAvailable >= paidDays) {
@@ -354,7 +386,7 @@ export async function PUT(req, { params }) {
       }
 
       // Attribute the action (powers "Approved/Rejected/Held by X" + history).
-      recordAction(leave, action, user, actionReason, actedStep?.step ?? null, actedStepDef?.label || actedStep?.label || '');
+      recordAction(leave, action, user, actionReason, actedStep?.step ?? null, initialClassification ? `${leave.requestedTypeCode} classified as ${leave.typeCode}` : (actedStepDef?.label || actedStep?.label || ''));
 
       // Notify next step approvers if approved
       if (action === 'approved') {

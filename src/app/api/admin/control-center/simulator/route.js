@@ -8,6 +8,7 @@ import { ok, fail } from '@/lib/jwt';
 import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
+import { CLASSIFICATION_WORKFLOW } from '@/lib/leave/linked-types';
 
 export async function POST(req) {
   try {
@@ -198,7 +199,11 @@ export async function POST(req) {
     const balance = await getOrCreateBalance(testUser._id, policy);
     const balanceEntry = balance?.balances?.find(b => b.typeCode === typeCode);
 
-    if (balanceEntry && typeConfig.isPaid) {
+    if (typeConfig.balanceMode === 'linked') {
+      paidDays = 0;
+      unpaidDays = 0;
+      addTrace('Balance Allocation', 'INFO', 'Super Admin selects an underlying leave type at approval. No balance is charged before classification.');
+    } else if (balanceEntry && typeConfig.isPaid) {
       const overallAvailable = Math.max(0, balanceEntry.allocated + balanceEntry.carriedForward - balanceEntry.used - balanceEntry.pending);
       const periodAllowed = Math.max(0, calculatePeriodAllowance(typeConfig, balanceEntry, balance.cycleStart, fromDate));
       const allowedPaidDays = Math.min(overallAvailable, periodAllowed);
@@ -217,7 +222,7 @@ export async function POST(req) {
     }
 
     // 9. Approval Workflow Routing Preview
-    const activeWorkflow = (typeConfig.useCustomWorkflow && typeConfig.approvalWorkflow?.length)
+    const activeWorkflow = typeConfig.balanceMode === 'linked' ? CLASSIFICATION_WORKFLOW : (typeConfig.useCustomWorkflow && typeConfig.approvalWorkflow?.length)
       ? typeConfig.approvalWorkflow
       : (policy.approvalWorkflow || []);
 

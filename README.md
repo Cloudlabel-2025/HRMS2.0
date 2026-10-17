@@ -16,6 +16,15 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+Local development requires Node.js 22.15 or newer. The development command uses
+the operating system's trusted certificates, including certificates installed
+by local network security software, while keeping TLS verification enabled.
+
+If login reports `querySrv ECONNREFUSED`, set
+`MONGODB_DNS_SERVERS=1.1.1.1,8.8.8.8` in `.env.local` and restart the development
+server. This overrides DNS for MongoDB's SRV/TXT lookups; leave it unset when
+your system DNS works.
+
 You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

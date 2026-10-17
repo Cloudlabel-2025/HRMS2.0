@@ -14,6 +14,7 @@ import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import { formatTaskDuration, computeWorkRowDuration } from '@/lib/attendance-constants';
 import {
   cancelWorkProgressExportJob,
+  downloadWorkProgressExcel,
   getWorkProgressExportJob,
   getWorkProgressExportRemaining,
   minimizeWorkProgressExportJob,
@@ -102,6 +103,7 @@ export default function EmployeeProfilePage() {
   const [showTimer, setShowTimer] = useState(false);
   const [downloadRemaining, setDownloadRemaining] = useState(0);
   const [exportJob, setExportJob] = useState(null);
+  const [exportBusy, setExportBusy] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [designations, setDesignations] = useState([]);
@@ -329,7 +331,26 @@ export default function EmployeeProfilePage() {
     const completed = pending.filter(t => t.completedDate).map(t => ({ text: t.text, completedDate: t.completedDate, attempts: t.attempts, totalMins: t.totalMins }));
     return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
   }, [wpCycles]);
-  const handleWpDownload = () => {
+  const handleWpDownload = async () => {
+    if (filteredCycles.length === 0 || exportBusy) return;
+    if (user?.role === 'super_admin') {
+      setExportBusy(true);
+      try {
+        await downloadWorkProgressExcel(
+          filteredCycles,
+          data?.employee?.name || 'Employee',
+          { fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate },
+          {
+            role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
+            department: data?.employee?.department || '',
+            designation: data?.employee?.designation || '',
+          },
+        );
+        showToast('Downloaded successfully');
+      } catch (e) { showToast(e.message || 'Excel export failed', 'error'); }
+      finally { setExportBusy(false); }
+      return;
+    }
     if (getWorkProgressExportJob()) {
       showToast('A work-sheet export is already running', 'error');
       return;
@@ -1064,8 +1085,8 @@ export default function EmployeeProfilePage() {
                 <span style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>Daily Work Sheet</span>
               </div>
               <button className="btn btn-sm" style={{ fontSize: 12, padding: '6px 16px', borderRadius: 8, background: '#6366f1', color: '#fff', border: 'none', fontWeight: 600 }}
-                onClick={handleWpDownload} disabled={filteredCycles.length === 0}>
-                <i className="bi bi-download me-1" />Download{filteredCycles.length > 0 ? ` (${totalEntryCount})` : ''}
+                onClick={handleWpDownload} disabled={filteredCycles.length === 0 || exportBusy}>
+                {exportBusy ? <><span className="spinner-border spinner-border-sm me-1" />Preparing Excel…</> : <><i className="bi bi-download me-1" />Download{filteredCycles.length > 0 ? ` (${totalEntryCount})` : ''}</>}
               </button>
             </div>
           </div>

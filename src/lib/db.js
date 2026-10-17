@@ -1,8 +1,14 @@
 import mongoose from 'mongoose';
+import { setServers } from 'node:dns';
 import { assertProductionConfiguration } from './runtime-config';
 
 const MONGODB_URI = process.env.MONGODB_URI;
 if (!MONGODB_URI) throw new Error('Please define MONGODB_URI in .env.local');
+
+// Optional resolver override for networks that refuse Atlas SRV/TXT lookups.
+// Keep the system resolver unless the local environment explicitly opts in.
+const dnsServers = process.env.MONGODB_DNS_SERVERS?.split(',').map(server => server.trim()).filter(Boolean);
+if (dnsServers?.length) setServers(dnsServers);
 
 let cached = global._mongoose;
 if (!cached) cached = global._mongoose = { conn: null, promise: null };

@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
+import ConfirmModal from '@/components/ConfirmModal';
 import { useSettings } from '@/lib/settings';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -78,6 +79,9 @@ export default function LeavePage() {
   const [loading, setLoading]       = useState(true);
   const [filterStatus, setFilterStatus] = useState('');
   const [toast, setToast]           = useState(null);
+  const [classifyLeave, setClassifyLeave] = useState(null);
+  const [classifiedTypeCode, setClassifiedTypeCode] = useState('');
+  const [actionSaving, setActionSaving] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
 
@@ -212,9 +216,12 @@ export default function LeavePage() {
     }
   };
 
-  const handleAction = async (id, action, reason) => {
+  const handleAction = async (id, action, reason, classification) => {
+    if (actionSaving) return;
+    setActionSaving(true);
     try {
       const payload = { action };
+      if (classification) payload.classifiedTypeCode = classification;
       if (reason) {
         if (action === 'rejected') payload.reason = reason;
         else payload.holdReason = reason;
@@ -225,9 +232,21 @@ export default function LeavePage() {
       setHoldReason('');
       setRejectModal(null);
       setRejectReason('');
+      setClassifyLeave(null);
       load(tab);
     } catch (e) {
       showToast(e.message, 'error');
+    } finally {
+      setActionSaving(false);
+    }
+  };
+
+  const openApprove = leave => {
+    if (leave.classificationRequired && !leave.classifiedAt) {
+      setClassifiedTypeCode('');
+      setClassifyLeave(leave);
+    } else {
+      handleAction(leave._id, 'approved');
     }
   };
 
@@ -235,6 +254,7 @@ export default function LeavePage() {
   const openReject = (id) => { setRejectModal({ id, action: 'rejected' }); setRejectReason(''); };
 
   const canActOn = (l) => {
+    if (l.classificationRequired && !isSuperAdmin) return false;
     if (l.workflowApprovals?.length > 0) {
       return l.canAct === true;
     }
@@ -247,7 +267,7 @@ export default function LeavePage() {
   const hasObjection = (l) => l.adminApproval === 'approved' && (l.teamAdminApproval === 'held' || l.tlApproval === 'held' || l.teamAdminApproval === 'rejected' || l.tlApproval === 'rejected');
 
   // Admin-only post-approval Hold/Reject of an already-approved leave.
-  const canReconsider = (l) => isAdmin && l.status === 'approved';
+  const canReconsider = (l) => isAdmin && l.status === 'approved' && (!l.classificationRequired || isSuperAdmin);
 
   const selectedEmployee = useMemo(() => employees.find(emp => emp.userId?.toString() === selectedEmpId) || null, [employees, selectedEmpId]);
 
@@ -341,7 +361,9 @@ export default function LeavePage() {
                 <div className="stat-card">
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 12, fontWeight: 600, color: '#64748b' }}>
-                      <span className="badge me-1" style={{ background: color, color: '#fff', fontSize: 10 }}>{lt?.code || '?'}</span>
+                      <span className="badge me-1" style={{ background: color, color: '#fff', fontSize: 10 }}>
+                        <i className={`bi ${lt?.icon || 'bi-calendar-check'} me-1`} aria-hidden="true" />{lt?.code || '?'}
+                      </span>
                       {lt?.name || 'Unknown'}
                     </span>
                     <span style={{ fontSize: 12, color, fontWeight: 700 }}>{available} left</span>
@@ -469,6 +491,9 @@ export default function LeavePage() {
                               {l.typeCode}
                             </span>
                           ) : l.type}
+                          {l.classificationRequired && <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>
+                            {l.classifiedAt ? `Applied as ${l.requestedTypeName}; charged as ${l.typeName || l.type}` : 'Awaiting Super Admin classification'}
+                          </div>}
                           {l.halfDay && (
                             <span className="badge ms-1" style={{ background: '#fef3c7', color: '#d97706' }}>
                               ½{l.halfDayType === 'first_half' ? ' FH' : l.halfDayType === 'second_half' ? ' SH' : ''}
@@ -523,12 +548,12 @@ export default function LeavePage() {
                               <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                                 {isAdmin && hasObjection(l) ? (
                                   <>
-                                    <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Override Approve</button>
+                                    <button className="btn btn-sm btn-success" disabled={actionSaving} style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openApprove(l)}>Override Approve</button>
                                     <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openReject(l._id)}>Reject</button>
                                   </>
                                 ) : (
                                   <>
-                                    <button className="btn btn-sm btn-success" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => handleAction(l._id, 'approved')}>Approve</button>
+                                    <button className="btn btn-sm btn-success" disabled={actionSaving} style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openApprove(l)}>{l.classificationRequired && !l.classifiedAt ? 'Classify & Approve' : 'Approve'}</button>
                                     <button className="btn btn-sm btn-warning"  style={{ fontSize: 11, padding: '3px 8px', color: '#fff' }} onClick={() => openHold(l._id)}>Hold</button>
                                     <button className="btn btn-sm btn-danger"  style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => openReject(l._id)}>Reject</button>
                                   </>
@@ -626,7 +651,7 @@ export default function LeavePage() {
               <div className="modal-body">
                 <div className="mb-3">
                   <label className="form-label" style={{ fontSize: 13, fontWeight: 600 }}>Leave Type</label>
-                  {(balanceData?.policy?.leaveTypeConfigs || []).filter(c => c.enabled && (!balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code))).length === 0 ? (
+                  {(balanceData?.policy?.leaveTypeConfigs || []).filter(c => c.enabled && (c.balanceMode === 'linked' || !balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code))).length === 0 ? (
                     <div className="alert alert-warning py-2 px-3 m-0" style={{ fontSize: 12 }}>
                       <i className="bi bi-exclamation-triangle-fill me-2" />
                       No leave types are available. This happens if you have no active leave policy assigned to your role, or if you do not meet the eligibility rules of any leave types.
@@ -635,7 +660,7 @@ export default function LeavePage() {
                     <select className="form-select" value={form.typeCode || ''} onChange={e => setForm(p => ({ ...p, typeCode: e.target.value, halfDay: false, halfDayType: '', customStartTime: '', customEndTime: '', _showTimePicker: false }))}>
                       <option value="">— Select —</option>
                       {(balanceData?.policy?.leaveTypeConfigs || [])
-                        .filter(c => c.enabled && (!balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code)))
+                        .filter(c => c.enabled && (c.balanceMode === 'linked' || !balanceData?.balances || balanceData.balances.some(b => b.typeCode === c.code)))
                         .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
                         .map(c => (
                           <option key={c.code} value={c.code}>
@@ -776,6 +801,17 @@ export default function LeavePage() {
           </div>
         </div>
       )}
+      <ConfirmModal open={!!classifyLeave} title="Classify & approve leave" confirmText="Approve Selected Type" confirming={actionSaving} onClose={() => { if (!actionSaving) setClassifyLeave(null); }} onConfirm={() => {
+        if (!classifiedTypeCode) return showToast('Choose the underlying leave type before approval', 'error');
+        handleAction(classifyLeave._id, 'approved', null, classifiedTypeCode);
+      }}>
+        <p>{classifyLeave?.userId?.name} requested {classifyLeave?.days} day(s) of <strong>{classifyLeave?.requestedTypeName || classifyLeave?.type}</strong>.</p>
+        <label htmlFor="classification-type" className="form-label">Classify and deduct from</label>
+        <select id="classification-type" className="form-select" value={classifiedTypeCode} disabled={actionSaving} onChange={event => setClassifiedTypeCode(event.target.value)}>
+          <option value="">Choose a leave type</option>
+          {(classifyLeave?.classificationOptions || []).map(option => <option key={option.code} value={option.code}>{option.name} ({option.code})</option>)}
+        </select>
+      </ConfirmModal>
     </AppShell>
   );
 }
