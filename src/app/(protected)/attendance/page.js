@@ -453,7 +453,7 @@ export default function AttendancePage() {
       es.onmessage = (e) => {
         let evt;
         try { evt = JSON.parse(e.data); } catch { return; }
-        if (!evt || (evt.type !== 'clockin' && evt.type !== 'clockout')) return;
+        if (!evt || !['clockin', 'clockout', 'timing_corrected'].includes(evt.type)) return;
         const h = latestHandlers.current;
         if (String(evt.userId) === String(h.user?._id)) {
           if (evt.type === 'clockout') {
@@ -692,7 +692,18 @@ export default function AttendancePage() {
   const activeWorkIndex = () => getWorkProgress().findIndex(row => row.startTime && !row.endTime);
 
   const persistTodayRecord = async (updates) => {
-    const updated = await api.put('/api/attendance', { date: today, ...updates });
+    let updated;
+    try {
+      updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecord?.timelineRevision || 0, ...updates });
+    } catch (error) {
+      if (/Attendance timing was corrected/.test(error.message)) {
+        if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
+        setWorkProgressDirty(false);
+        setIsDirty(false);
+        await loadTodayRecord(true);
+      }
+      throw error;
+    }
     setTodayRecord(updated);
     setWorkProgressDirty(false);
     return updated;
@@ -748,14 +759,22 @@ export default function AttendancePage() {
 
   const saveWorkProgress = async (rows = workProgressRef.current) => {
     try {
-      const updated = await api.put('/api/attendance', { date: today, workProgress: rows });
+      const updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecord?.timelineRevision || 0, workProgress: rows });
       // A user may keep typing while a request is in flight. Never replace their newer text.
       if (workProgressRef.current === rows) {
         setTodayRecord(updated);
         setIsDirty(false);
         setWorkProgressDirty(false);
       }
-    } catch (e) { showToast(e.message, 'error'); }
+    } catch (e) {
+      if (/Attendance timing was corrected/.test(e.message)) {
+        if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
+        setWorkProgressDirty(false);
+        setIsDirty(false);
+        await loadTodayRecord(true);
+      }
+      showToast(e.message, 'error');
+    }
   };
 
   const computeTries = (title) => {

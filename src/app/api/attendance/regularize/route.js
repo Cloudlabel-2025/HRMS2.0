@@ -16,6 +16,8 @@ import { computePermissionUsage, permissionDurationMins, getPermissionAllowanceM
 import { isTimeWithinShift, isWindowWithinShift, nowInstant, permissionOverrunMins, permissionStartInstant } from '@/lib/permission-window';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { isFullDayLeaveCovered } from '@/lib/leave-cover';
+import { reconcileAttendanceTimeline } from '@/lib/attendance-timeline';
+import { publishAttendance } from '@/lib/sse';
 
 export async function GET(req) {
   try {
@@ -344,14 +346,9 @@ export async function PUT(req) {
 
     const { action } = validation.data;
 
-    const toMins = (t) => { if (!t) return 0; const [h, m] = t.split(':').map(Number); return h * 60 + m; };
-    const shiftTime = (t, delta) => {
-      const total = (((toMins(t) + delta) % 1440) + 1440) % 1440;
-      return String(Math.floor(total / 60)).padStart(2, '0') + ':' + String(total % 60).padStart(2, '0');
-    };
-
     const reg = await AttendanceRegularization.findById(id);
     if (!reg) return fail('Request not found', 404);
+    if (reg.status !== 'pending') return fail('This request has already been processed', 400);
 
     // Role-based scope verification (regularization approval matrix)
     const requester = await User.findById(reg.userId).select('role department').lean();
@@ -502,18 +499,13 @@ export async function PUT(req) {
       }
     }
 
-    // STEP 1: Atomically claim the regulation FIRST
-    const updated = await AttendanceRegularization.findOneAndUpdate(
+    // Validate before claiming, then allow only the winning reviewer to save.
+    let updated;
+    const claimReview = () => AttendanceRegularization.findOneAndUpdate(
       { _id: id, status: 'pending' },
       { $set: { status: action, reviewedBy: user._id, reviewedAt: new Date() } },
       { new: true }
     );
-    if (!updated) {
-      const existing = await AttendanceRegularization.findById(id);
-      if (!existing) return fail('Request not found', 404);
-      auditLog(`Regularization Review Attempted`, 'Attendance', user._id, `Attempted to ${action} already-processed request (status: ${existing.status})`, 'low', req.headers.get('x-forwarded-for') || '', null, reg.userId);
-      return fail('This request has already been processed', 400);
-    }
 
     // STEP 2: Now safely update the attendance record
     let regShiftDoc = null;
@@ -528,31 +520,13 @@ export async function PUT(req) {
         });
       }
 
-      const oldClockIn = attendance.clockIn;
+      const originalTimeline = attendance.toObject();
       if (reg.requestedIn) attendance.clockIn = reg.requestedIn;
-      if (reg.requestedIn && oldClockIn && reg.requestedIn !== oldClockIn) {
-        const delta = toMins(reg.requestedIn) - toMins(oldClockIn);
-        // The approved permission window is authoritative and must never be
-        // shifted — only work/break rows move with the corrected clock-in.
-        attendance.workProgress = (attendance.workProgress || []).map(w => {
-          if (w.type === 'permission') return w;
-          return {
-            ...w,
-            startTime: w.startTime ? shiftTime(w.startTime, delta) : w.startTime,
-            endTime:   w.endTime   ? shiftTime(w.endTime, delta)   : w.endTime,
-          };
-        });
-        attendance.breaks = (attendance.breaks || []).map(b => ({
-          ...b,
-          start: b.start ? shiftTime(b.start, delta) : b.start,
-          end:   b.end   ? shiftTime(b.end, delta)   : b.end,
-        }));
-      }
       if (reg.requestedOut) attendance.clockOut = reg.requestedOut;
 
       // Apply requested breaks from regularization
-      const attendanceBreaks = attendance.breaks ? [...attendance.breaks] : [];
-      const attendanceWorkProgress = attendance.workProgress ? [...attendance.workProgress] : [];
+      const attendanceBreaks = (attendance.breaks || []).map(row => row.toObject ? row.toObject() : { ...row });
+      const attendanceWorkProgress = (attendance.workProgress || []).map(row => row.toObject ? row.toObject() : { ...row });
 
       if (reg.requestedBreaks && reg.requestedBreaks.length > 0) {
         const ruleKey = (b) => (b.ruleIdx != null ? 'r' + b.ruleIdx : (b.name ? b.type + '|' + b.name : b.type || ''));
@@ -721,22 +695,24 @@ export async function PUT(req) {
             approvedAt: prevPerm.approvedAt || new Date(),
             endedAt: actualEnd,
             endedEarly: true,
-            endedLate: endedLate || !!prevPerm.endedLate,
-            endedLateMins: overrunMins > 0 ? overrunMins : (prevPerm.endedLateMins ?? null),
-            overrunMins: overrunMins > 0 ? overrunMins : (prevPerm.overrunMins ?? null),
+            endedLate,
+            endedLateMins: overrunMins,
+            overrunMins,
             endedBy: 'manual',
           };
 
-          const rows = attendance.workProgress || [];
-          const permissionRowIdx = rows.findIndex(w =>
+          const rows = (attendance.workProgress || []).map(row => row.toObject ? row.toObject() : { ...row });
+          let permissionRowIdx = rows.findIndex(w =>
             w.type === 'permission' && String(w.permissionRequestId || '') === String(attendance.permission.requestId || '')
           );
+          if (permissionRowIdx < 0) permissionRowIdx = rows.findIndex(row => row.type === 'permission' && !row.permissionRequestId);
           if (permissionRowIdx >= 0) {
             // Re-regularization can reuse the same approved request. Refresh
             // its existing work-log row so the actual end and overrun stay
             // aligned with the newly approved regularization values.
             attendance.workProgress = rows.map((row, idx) => idx === permissionRowIdx ? {
               ...row,
+              permissionRequestId: attendance.permission.requestId,
               taskDetails: endedLate
                 ? `Permission (${regPerm.startTime}-${regPerm.endTime}) · ended ${actualEnd} (+${overrunMins}m over)`
                 : `Permission (${regPerm.startTime}-${regPerm.endTime})`,
@@ -872,7 +848,15 @@ export async function PUT(req) {
       }
 
       finalClockOut = attendance.clockOut || null;
+      reconcileAttendanceTimeline(originalTimeline, attendance);
+      attendance.timelineRevision = (attendance.timelineRevision || 0) + 1;
+      updated = await claimReview();
+      if (!updated) return fail('This request has already been processed', 400);
       await attendance.save();
+      publishAttendance({ type: 'timing_corrected', userId: String(reg.userId), date: reg.date, clockIn: attendance.clockIn, clockOut: attendance.clockOut });
+    } else {
+      updated = await claimReview();
+      if (!updated) return fail('This request has already been processed', 400);
     }
 
     // Send notification to the employee
@@ -898,6 +882,6 @@ export async function PUT(req) {
 
     return ok(updated);
   } catch (e) {
-    return fail(e.message, 500);
+    return fail(e.message, e.statusCode || 500);
   }
 }
