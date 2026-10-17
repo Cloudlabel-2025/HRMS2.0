@@ -5,6 +5,7 @@ import { ok, fail } from '@/lib/jwt';
 import { notifyExpiredProbations } from '@/lib/core/probation';
 import { EMPLOYER_ROLES } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
+import { getDaysPerCredit } from '@/lib/leave/credit-schedule';
 
 export async function POST(req) {
   const cronSecret = process.env.CRON_SECRET;
@@ -81,15 +82,15 @@ export async function POST(req) {
       let updated = false;
       for (const entry of bal.balances) {
         const config = policy.leaveTypeConfigs.find(c => c.code === entry.typeCode);
-        if (!config || !config.enabled) continue;
+        if (!config || !config.enabled || config.isPaid === false || config.balanceMode === 'linked') continue;
 
         let creditAmount = 0;
         if (config.creditSchedule === 'monthly') {
-          creditAmount = Number((config.annualAllocation / 12).toFixed(2));
+          creditAmount = getDaysPerCredit(config);
         } else if (config.creditSchedule === 'quarterly' && monthsDiff % 3 === 0) {
-          creditAmount = Number((config.annualAllocation / 4).toFixed(2));
+          creditAmount = getDaysPerCredit(config);
         } else if (config.creditSchedule === 'half_yearly' && monthsDiff % 6 === 0) {
-          creditAmount = Number((config.annualAllocation / 2).toFixed(2));
+          creditAmount = getDaysPerCredit(config);
         }
 
         if (creditAmount > 0) {
@@ -129,7 +130,7 @@ export async function POST(req) {
         const typeStr = entry.typeCode;
         const config = policy.leaveTypeConfigs.find(c => c.code === typeStr);
         
-        if (!config || !config.enabled || !config.carryForwardAllowed) continue;
+        if (!config || !config.enabled || !config.carryForwardAllowed || config.balanceMode === 'linked') continue;
 
         const unused = Math.max(0, (entry.allocated + entry.carriedForward) - entry.used - entry.pending);
         const carryOver = Math.min(unused, config.carryForwardMaxDays || Infinity);
@@ -141,7 +142,7 @@ export async function POST(req) {
 
         nextBalances.push({
           typeCode: entry.typeCode,
-          allocated: config.annualAllocation || 0,
+          allocated: config.isPaid === false ? 0 : getDaysPerCredit(config),
           used: 0,
           pending: 0,
           carriedForward: carryOver,

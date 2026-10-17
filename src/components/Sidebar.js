@@ -40,7 +40,6 @@ const NAV_ITEMS = [
   { module: 'dev_admin', href: '/admin/dev-admin', icon: 'bi-terminal', label: 'Dev Admin Portal', section: 'SYSTEM' },
   { module: 'settings',      href: '/settings',         icon: 'bi-gear',                  label: 'Settings',         section: 'SYSTEM' },
   { module: 'notifications', href: '/notifications', icon: 'bi-bell', label: 'Notifications', section: 'SYSTEM' },
-  { module: 'settings',      href: '/leave-policies',   icon: 'bi-calendar-check',       label: 'Leave Policies',    section: 'SYSTEM' },
   { module: 'audit',         href: '/audit',             icon: 'bi-shield-check',          label: 'Audit Logs',        section: 'SYSTEM' },
 ];
 

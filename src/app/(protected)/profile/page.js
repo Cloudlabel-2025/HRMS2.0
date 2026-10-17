@@ -351,7 +351,7 @@ export default function ProfilePage() {
       return;
     }
     const existing = getWorkProgressExportJob();
-    if (existing) {
+    if (existing && user?.role !== 'super_admin') {
       const mine = data?.employee?._id && String(existing.employeeId) === String(data.employee._id);
       if (mine) { setExportJob(existing); setShowTimer(!existing.minimized); setDownloadRemaining(getWorkProgressExportRemaining(existing)); }
       setPhotoError(mine ? 'Your work-sheet export is already running.' : 'Another work-sheet export is already running.');
@@ -359,8 +359,8 @@ export default function ProfilePage() {
     }
     const filters = buildExportFilters();
     const employeeMeta = buildEmployeeMeta();
-    // Small datasets download immediately as Excel — no countdown needed.
-    if (totalEntryCount <= 5) {
+    // Super admins bypass the countdown for every dataset size.
+    if (user?.role === 'super_admin' || totalEntryCount <= 5) {
       setExportBusy(true);
       try {
         await downloadWorkProgressExcel(filteredCycles, data?.employee?.name || 'Employee', filters, employeeMeta);

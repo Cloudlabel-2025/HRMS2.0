@@ -11,6 +11,7 @@ import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
 import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
 import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
+import { getLinkedTypes, CLASSIFICATION_WORKFLOW } from '@/lib/leave/linked-types';
 
 function getActiveWorkflow(policy, typeCode) {
   const typeConfig = policy?.leaveTypeConfigs?.find(config => config.code === typeCode);
@@ -114,11 +115,12 @@ export async function GET(req) {
       const policyById = new Map(policies.map(policy => [policy._id.toString(), policy]));
 
       leaves = leaves.filter(leave => {
+        if (leave.classificationRequired && user.role !== 'super_admin') return false;
         if (!canApproveLeave(user, leave.userId)) return false;
         if (!leave.workflowApprovals?.length || !leave.policyId) return canActOnLegacyLeave(leave, user.role);
 
         const policy = policyById.get(leave.policyId.toString());
-        const workflowDef = getActiveWorkflow(policy, leave.typeCode);
+        const workflowDef = leave.classificationRequired ? CLASSIFICATION_WORKFLOW : getActiveWorkflow(policy, leave.typeCode);
         const pendingStep = leave.workflowApprovals.find(step => step.action === 'pending');
         const heldStep = leave.workflowApprovals.find(step => ['held', 'rejected'].includes(step.action));
         const stepDef = pendingStep && workflowDef.find(step => step.step === pendingStep.step);
@@ -289,6 +291,8 @@ export async function POST(req) {
         return fail('This leave type is not available under your current leave policy', 400);
       }
 
+      if (typeConfig.balanceMode === 'linked') return fail('Linked leave requests require an employee leave balance profile', 400);
+
       const leave = await Leave.create({
         userId: user._id,
         type: typeConfig.name,
@@ -341,6 +345,10 @@ export async function POST(req) {
       console.log('[LEAVE DEBUG] Type config not found for code:', typeCode, '| available codes:', policy.leaveTypeConfigs?.map(c => c.code));
       return fail(`${typeConfig?.name || 'This leave type'} is not available under your current leave policy`, 400);
     }
+
+    const isLinked = typeConfig.balanceMode === 'linked';
+    const classificationOptions = isLinked ? getLinkedTypes(typeConfig, policy.leaveTypeConfigs).map(config => ({ code: config.code, name: config.name })) : [];
+    if (isLinked && !classificationOptions.length) return fail('No underlying leave types are configured for this request', 400);
 
     // Check dynamic eligibility rules
     const employeeContext = await buildEmployeeContext(user._id);
@@ -479,7 +487,7 @@ export async function POST(req) {
       return fail('Could not resolve or create your leave balance record.', 400);
     }
     const balanceEntry = balance.balances.find(b => b.typeCode === typeCode);
-    if (!balanceEntry) {
+    if (!balanceEntry && !isLinked) {
       return fail(`No balance record found or you are not eligible for ${typeConfig.name}`, 400);
     }
 
@@ -491,7 +499,10 @@ export async function POST(req) {
     let unpaidDays = 0;
     let balanceWarning = null;
 
-    if (!typeConfig.isPaid) {
+    if (isLinked) {
+      paidDays = 0;
+      unpaidDays = 0;
+    } else if (!typeConfig.isPaid) {
       // Only an explicitly unpaid type (Loss of Pay) creates LOP.
       paidDays = 0;
       unpaidDays = days;
@@ -514,7 +525,7 @@ export async function POST(req) {
     }
 
     // Build workflow approvals from policy
-    const activeWorkflow = (typeConfig.useCustomWorkflow && Array.isArray(typeConfig.approvalWorkflow) && typeConfig.approvalWorkflow.length > 0)
+    const activeWorkflow = isLinked ? CLASSIFICATION_WORKFLOW : (typeConfig.useCustomWorkflow && Array.isArray(typeConfig.approvalWorkflow) && typeConfig.approvalWorkflow.length > 0)
       ? typeConfig.approvalWorkflow
       : (Array.isArray(policy.approvalWorkflow) ? policy.approvalWorkflow : []);
 
@@ -539,12 +550,16 @@ export async function POST(req) {
       userId: user._id,
       typeCode,
       type: typeConfig.name,
+      requestedTypeCode: isLinked ? typeCode : '',
+      requestedTypeName: isLinked ? typeConfig.name : '',
+      classificationRequired: isLinked,
+      classificationOptions,
       from,
       to,
       days,
       paidDays,
       unpaidDays,
-      isPaid: !!typeConfig.isPaid,
+      isPaid: isLinked ? false : !!typeConfig.isPaid,
       halfDay,
       halfDayType: halfDay ? halfDayType : null,
       reason,
@@ -566,7 +581,7 @@ export async function POST(req) {
     });
 
     // Update pending balance (versioned; concurrent POSTs get 409 not double-pending)
-    balanceEntry.pending += paidDays;
+    if (!isLinked) balanceEntry.pending += paidDays;
     try {
       await balance.save();
     } catch (e) {

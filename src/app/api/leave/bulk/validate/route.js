@@ -119,6 +119,7 @@ export async function POST(req) {
         if (policy && typeCode) {
           typeConfig = (policy.leaveTypeConfigs || []).find(c => c.code === typeCode);
           if (!typeConfig || !typeConfig.enabled) errors.push(`Leave type ${typeCode} is not enabled in policy ${policy.name}`);
+          if (typeConfig?.balanceMode === 'linked') errors.push('Linked leave has no independent balance. Use its underlying leave type.');
         }
 
         const nums = {};
@@ -206,6 +207,7 @@ export async function POST(req) {
         if (policy && typeCode) {
           typeConfig = (policy.leaveTypeConfigs || []).find(c => c.code === typeCode);
           if (!typeConfig || !typeConfig.enabled) errors.push(`Leave type ${typeCode} is not enabled in policy ${policy?.name || ''}`);
+          if (typeConfig?.balanceMode === 'linked') errors.push('Submit linked leave through Leave Management for Super Admin classification. Import classified history using its underlying type.');
         }
 
         const from = coerceDateStr(obj.from);
