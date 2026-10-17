@@ -651,6 +651,14 @@ export async function PUT(req) {
     const allowed = ['breaks', 'workProgress', 'hoursWorked', 'baseHoursWorked', 'breakDeduction', 'note', 'absenceReason'];
     const update = {};
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
+    const editsTimeline = 'workProgress' in update || 'breaks' in update;
+    const expectedRevision = body.timelineRevision ?? 0;
+    if (editsTimeline) {
+      if (!Number.isInteger(expectedRevision) || expectedRevision < 0) return fail('Invalid attendance timeline revision', 400);
+      const current = await Attendance.findOne({ userId: targetUserId, date: today }).select('timelineRevision').lean();
+      if (!current) return fail('Attendance record not found', 404);
+      if ((current.timelineRevision || 0) !== expectedRevision) return fail('Attendance timing was corrected. Reload the latest record and try again.', 409);
+    }
 
     if (update.workProgress) {
       // Self-heal instead of wedging the day: keep the most recently
@@ -713,11 +721,13 @@ export async function PUT(req) {
     }
 
     const record = await Attendance.findOneAndUpdate(
-      { userId: targetUserId, date: today },
+      { userId: targetUserId, date: today, ...(editsTimeline ? (expectedRevision === 0
+        ? { $or: [{ timelineRevision: 0 }, { timelineRevision: { $exists: false } }] }
+        : { timelineRevision: expectedRevision }) : {}) },
       update,
       { new: true }
     );
-    if (!record) return fail('Attendance record not found', 404);
+    if (!record) return fail(editsTimeline ? 'Attendance timing was corrected. Reload the latest record and try again.' : 'Attendance record not found', editsTimeline ? 409 : 404);
     return ok(record);
   } catch (e) {
     return fail(e.message, 500);
