@@ -9,13 +9,14 @@ const constants = await import('../src/lib/attendance-constants.js');
 const breaks = await import('../src/lib/attendance-breaks.js');
 const windows = await import('../src/lib/permission-window.js');
 const timeline = await import('../src/lib/attendance-timeline.js');
+const breakWork = await import('../src/lib/break-work-progress.js');
 const reviewSource = await readFile(new URL('../src/app/api/attendance/regularize/route.js', import.meta.url), 'utf8');
 const attendanceSource = await readFile(new URL('../src/app/api/attendance/route.js', import.meta.url), 'utf8');
 const userId = '507f1f77bcf86cd799439011';
 const permId = '507f1f77bcf86cd799439012';
 const request = data => ({ json: async () => data, headers: { get: () => '' } });
 
-async function setup({ permission = false, conflict = false } = {}) {
+async function setup({ permission = false, conflict = false, beforeWrite } = {}) {
   const eventType = permission ? 'permission' : 'break';
   const record = new Attendance({
     userId, date: '2026-10-16', clockIn: '09:00', clockOut: '18:00',
@@ -36,8 +37,15 @@ async function setup({ permission = false, conflict = false } = {}) {
   const writeFilters = [];
   const selfRequest = { _id: permId, status: 'approved', payload: { startTime: '10:00', endTime: '10:30' } };
   const attendanceModel = {
-    findOne: () => ({ then: resolve => resolve(record), select: () => ({ lean: async () => ({ timelineRevision: record.timelineRevision }) }) }),
-    findOneAndUpdate: async (filter, update) => { writeFilters.push(filter); Object.assign(record, update); return record; },
+    findOne: () => ({ then: resolve => resolve(record), select: () => ({ lean: async () => record.toObject() }) }),
+    findOneAndUpdate: async (filter, update) => {
+      writeFilters.push(filter);
+      beforeWrite?.(record);
+      const revision = filter.timelineRevision ?? (filter.$or ? 0 : undefined);
+      if (revision !== undefined && revision !== record.timelineRevision) return null;
+      Object.assign(record, update);
+      return record;
+    },
   };
   const adapters = {
     '@/lib/db': { connectDB: async () => {} },
@@ -62,6 +70,7 @@ async function setup({ permission = false, conflict = false } = {}) {
     '@/lib/attendance-resolver': { resolveDayStatus: () => ({ lateFlag: false }) },
     '@/lib/leave-cover': { isFullDayLeaveCovered: async () => false },
     '@/lib/attendance-timeline': timeline,
+    '@/lib/break-work-progress': breakWork,
     '@/lib/sse': { publishAttendance: event => events.push(event) },
     '@/lib/timezone': { getTzTime: async () => new Date(2026, 9, 17, 12) },
     '@/lib/shift-today': { getShiftAwareToday: async () => record.date },
@@ -92,6 +101,7 @@ async function setup({ permission = false, conflict = false } = {}) {
   return { record, reg, events, writeFilters, saves: () => saves,
     approve: () => review.PUT(request({ id: 'reg', action: 'approved' })),
     saveWork: revision => attendance.PUT(request({ userId, date: record.date, workProgress: record.toObject().workProgress, ...(revision === undefined ? {} : { timelineRevision: revision }) })),
+    put: data => attendance.PUT(request({ userId, date: record.date, ...data })),
   };
 }
 
@@ -140,4 +150,40 @@ test('stale work saves cannot overwrite approved timing corrections', async () =
   assert.equal(state.writeFilters.length, 0);
   assert.equal((await state.saveWork(1)).status, 200);
   assert.equal(state.writeFilters[0].timelineRevision, 1);
+});
+
+test('a break save advances the revision and rejects an older task autosave', async () => {
+  const state = await setup();
+  const staleRows = state.record.toObject().workProgress.filter(row => row.type === 'task');
+  const result = await state.put({ timelineRevision: 0, breaks: state.record.toObject().breaks, workProgress: staleRows });
+  assert.equal(result.status, 200, result.error);
+  assert.equal(state.record.timelineRevision, 1);
+  assert.equal(state.record.workProgress.filter(row => row.type === 'break').length, 1);
+  assert.equal(state.events[0].type, 'work_progress');
+  assert.equal(state.events[0].userId, userId);
+  const stale = await state.put({ timelineRevision: 0, workProgress: staleRows });
+  assert.equal(stale.status, 409);
+  assert.equal(state.record.workProgress.filter(row => row.type === 'break').length, 1);
+  assert.equal(state.events.length, 1);
+});
+
+test('a task-only save repairs a missing sheet row from the saved break', async () => {
+  const state = await setup();
+  state.record.workProgress = [{ type: 'task', taskDetails: 'Continued work', startTime: '09:00', endTime: '18:00', status: 'completed', remarks: 'Keep' }];
+  const result = await state.saveWork(0);
+  assert.equal(result.status, 200, result.error);
+  assert.deepEqual(state.record.workProgress.map(row => [row.type, row.startTime, row.endTime]), [
+    ['task', '09:00', '10:00'], ['break', '10:00', '10:45'], ['task', '10:45', '18:00'],
+  ]);
+  assert.equal(state.record.workProgress[2].remarks, 'Keep');
+  assert.equal(state.record.workProgress[1].duration, 45);
+  assert.equal((await state.saveWork(1)).status, 200);
+  assert.equal(state.record.timelineRevision, 2);
+});
+
+test('the atomic write rejects a concurrent timeline change without broadcasting success', async () => {
+  const state = await setup({ beforeWrite: record => { record.timelineRevision++; } });
+  const result = await state.saveWork(0);
+  assert.equal(result.status, 409);
+  assert.equal(state.events.length, 0);
 });
