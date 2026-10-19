@@ -660,7 +660,7 @@ export async function PUT(req) {
       if (!Number.isInteger(expectedRevision) || expectedRevision < 0) return fail('Invalid attendance timeline revision', 400);
       const current = await Attendance.findOne({ userId: targetUserId, date: today }).select('timelineRevision clockIn clockOut shiftStartTime permission breaks workProgress').lean();
       if (!current) return fail('Attendance record not found', 404);
-      if ((current.timelineRevision || 0) !== expectedRevision) return fail('Attendance timing was corrected. Reload the latest record and try again.', 409);
+      if ((current.timelineRevision || 0) !== expectedRevision) return fail('Attendance was updated elsewhere. Reload the latest record and try again.', 409);
       currentTimeline = current;
       update.workProgress = reconcileBreakWorkProgress({ ...current, ...update });
       // Advance on every sheet write, so a task autosave that was already in
@@ -735,7 +735,7 @@ export async function PUT(req) {
       update,
       { new: true }
     );
-    if (!record) return fail(editsTimeline ? 'Attendance timing was corrected. Reload the latest record and try again.' : 'Attendance record not found', editsTimeline ? 409 : 404);
+    if (!record) return fail(editsTimeline ? 'Attendance was updated elsewhere. Reload the latest record and try again.' : 'Attendance record not found', editsTimeline ? 409 : 404);
     if (editsTimeline) {
       publishAttendance({ type: 'work_progress', userId: targetUserId.toString(), date: today });
     }

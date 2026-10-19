@@ -15,6 +15,7 @@ import { getRuleAllowance, calculateBreakDeduction, isBreakType, breakStyle, mat
 import { formatTaskDuration, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
 import Pagination from '@/components/Pagination';
 import { permissionOverrunMins } from '@/lib/permission-window';
+import { createAttendanceSaveQueue } from '@/lib/attendance-save-queue';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -157,13 +158,17 @@ export default function AttendancePage() {
   const triesRef = useRef(new Map());
   const pinRef = useRef(null);
   const todayRecordRef = useRef(null);
+  const attendanceSaveQueue = useRef(null);
+  if (!attendanceSaveQueue.current) attendanceSaveQueue.current = createAttendanceSaveQueue();
+  const savedWorkProgressRef = useRef(null);
 
   // Work progress save
   const [saveWorkLoading, setSaveWorkLoading] = useState(false);
   const handleSaveWork = async () => {
     setSaveWorkLoading(true);
     try {
-      await saveWorkProgress();
+      const saved = await saveWorkProgress();
+      if (!saved) return;
       showToast('Work progress saved');
     } catch (e) { showToast(e.message, 'error'); }
     finally { setSaveWorkLoading(false); }
@@ -692,12 +697,12 @@ export default function AttendancePage() {
   const getWorkProgress = () => todayRecord?.workProgress || [];
   const activeWorkIndex = () => getWorkProgress().findIndex(row => row.startTime && !row.endTime);
 
-  const persistTodayRecord = async (updates) => {
+  const persistTodayRecord = (updates) => attendanceSaveQueue.current(JSON.stringify({ date: today, ...updates }), async () => {
     let updated;
     try {
       updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecordRef.current?.timelineRevision || 0, ...updates });
     } catch (error) {
-      if (/Attendance timing was corrected/.test(error.message)) {
+      if (/Attendance timing was corrected|Attendance was updated elsewhere/.test(error.message)) {
         if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
         setWorkProgressDirty(false);
         setIsDirty(false);
@@ -705,12 +710,20 @@ export default function AttendancePage() {
       }
       throw error;
     }
-    todayRecordRef.current = updated;
-    workProgressRef.current = updated.workProgress || [];
-    setTodayRecord(updated);
-    setWorkProgressDirty(false);
+    savedWorkProgressRef.current = updated.workProgress;
+    if (workProgressRef.current === updates.workProgress) {
+      todayRecordRef.current = updated;
+      workProgressRef.current = updated.workProgress || [];
+      setTodayRecord(updated);
+      setWorkProgressDirty(false);
+      setIsDirty(false);
+    } else {
+      // Preserve text entered while a task/break action was saving too.
+      todayRecordRef.current = { ...updated, workProgress: workProgressRef.current };
+      setTodayRecord(prev => ({ ...updated, workProgress: prev?.workProgress || [] }));
+    }
     return updated;
-  };
+  });
 
   // Keep workProgressRef and the debounced auto-save in sync so a pending save
   // can never overwrite a newer change (e.g. a task resumed right after a break).
@@ -761,27 +774,39 @@ export default function AttendancePage() {
   };
 
   const saveWorkProgress = async (rows = workProgressRef.current) => {
+    if (workProgressSaveTimer.current) {
+      clearTimeout(workProgressSaveTimer.current);
+      workProgressSaveTimer.current = null;
+    }
     try {
-      const updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecordRef.current?.timelineRevision || 0, workProgress: rows });
-      todayRecordRef.current = { ...todayRecordRef.current, timelineRevision: updated.timelineRevision };
-      // A user may keep typing while a request is in flight. Never replace their newer text.
-      if (workProgressRef.current === rows) {
-        todayRecordRef.current = updated;
-        workProgressRef.current = updated.workProgress || [];
-        setTodayRecord(updated);
-        setIsDirty(false);
-        setWorkProgressDirty(false);
-      } else {
-        setTodayRecord(prev => ({ ...prev, timelineRevision: updated.timelineRevision }));
-      }
+      return await attendanceSaveQueue.current(JSON.stringify({ date: today, workProgress: rows }), async () => {
+        // Successful saves replace local rows with the canonical server rows.
+        // Blurring an unchanged field must not create another timeline revision.
+        if (rows === savedWorkProgressRef.current) return true;
+        const updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecordRef.current?.timelineRevision || 0, workProgress: rows });
+        todayRecordRef.current = { ...todayRecordRef.current, timelineRevision: updated.timelineRevision };
+        // A user may keep typing while a request is in flight. Never replace their newer text.
+        if (workProgressRef.current === rows) {
+          todayRecordRef.current = updated;
+          workProgressRef.current = updated.workProgress || [];
+          savedWorkProgressRef.current = workProgressRef.current;
+          setTodayRecord(updated);
+          setIsDirty(false);
+          setWorkProgressDirty(false);
+        } else {
+          setTodayRecord(prev => ({ ...prev, timelineRevision: updated.timelineRevision }));
+        }
+        return true;
+      });
     } catch (e) {
-      if (/Attendance timing was corrected/.test(e.message)) {
+      if (/Attendance timing was corrected|Attendance was updated elsewhere/.test(e.message)) {
         if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
         setWorkProgressDirty(false);
         setIsDirty(false);
         await loadTodayRecord(true);
       }
       showToast(e.message, 'error');
+      return false;
     }
   };
 
