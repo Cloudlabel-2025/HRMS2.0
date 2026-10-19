@@ -9,7 +9,7 @@ import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
 import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
-import { getShiftConfig, calculateHoursWorked, computeWorkRowDuration, closeExtraActiveRows } from '@/lib/attendance-constants';
+import { getShiftConfig, calculateHoursWorked, computeWorkRowDuration, closeExtraActiveRows, diffMins } from '@/lib/attendance-constants';
 import { preClockInPermissionMins } from '@/lib/permission-hours';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
@@ -20,6 +20,7 @@ import { getAccessibleDepartments } from '@/lib/rbac';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 import { publishAttendance } from '@/lib/sse';
+import { reconcileBreakWorkProgress } from '@/lib/break-work-progress';
 
 // Throttle for the read-path calendar sync (Step: self-healing register).
 // Keyed by range + roster size so rapid refreshes don't re-issue bulkWrites.
@@ -529,6 +530,7 @@ export async function GET(req) {
       }
     }
 
+    for (const rec of raw) rec.workProgress = reconcileBreakWorkProgress(rec);
     return ok(raw);
   } catch (e) {
     return fail(e.message, 500);
@@ -664,11 +666,17 @@ export async function PUT(req) {
     allowed.forEach(f => { if (f in body) update[f] = body[f]; });
     const editsTimeline = 'workProgress' in update || 'breaks' in update;
     const expectedRevision = body.timelineRevision ?? 0;
+    let currentTimeline;
     if (editsTimeline) {
       if (!Number.isInteger(expectedRevision) || expectedRevision < 0) return fail('Invalid attendance timeline revision', 400);
-      const current = await Attendance.findOne({ userId: targetUserId, date: today }).select('timelineRevision').lean();
+      const current = await Attendance.findOne({ userId: targetUserId, date: today }).select('timelineRevision clockIn clockOut shiftStartTime permission breaks workProgress').lean();
       if (!current) return fail('Attendance record not found', 404);
       if ((current.timelineRevision || 0) !== expectedRevision) return fail('Attendance timing was corrected. Reload the latest record and try again.', 409);
+      currentTimeline = current;
+      update.workProgress = reconcileBreakWorkProgress({ ...current, ...update });
+      // Advance on every sheet write, so a task autosave that was already in
+      // flight cannot erase a newly recorded break (or another task change).
+      update.timelineRevision = expectedRevision + 1;
     }
 
     if (update.workProgress) {
@@ -709,7 +717,7 @@ export async function PUT(req) {
         }
       }
 
-      const current = await Attendance.findOne({ userId: targetUserId, date: today }).lean();
+      const current = currentTimeline;
       if (current?.clockIn && current?.clockOut) {
         const elapsed = Math.max(0, diffMins(current.clockIn, current.clockOut));
         const deduction = calculateBreakDeduction(body.breaks, shiftCfg.breaks);
@@ -741,6 +749,9 @@ export async function PUT(req) {
       { new: true }
     );
     if (!record) return fail(editsTimeline ? 'Attendance timing was corrected. Reload the latest record and try again.' : 'Attendance record not found', editsTimeline ? 409 : 404);
+    if (editsTimeline) {
+      publishAttendance({ type: 'work_progress', userId: targetUserId.toString(), date: today });
+    }
     return ok(record);
   } catch (e) {
     return fail(e.message, 500);

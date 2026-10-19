@@ -410,13 +410,13 @@ export default function AttendancePage() {
     finally { setRegLoading(false); }
   };
 
-  const loadProgressRecord = async (uid) => {
+  const loadProgressRecord = async (uid, quiet = false) => {
     if (!uid) { setProgressRecord(null); return; }
-    setProgressLoading(true);
+    if (!quiet) setProgressLoading(true);
     try {
       const records = await api.get('/api/attendance?scope=team&userId=' + uid + '&date=' + today);
       setProgressRecord(Array.isArray(records) && records.length > 0 ? records[0] : null);
-    } catch { setProgressRecord(null); }
+    } catch { if (!quiet) setProgressRecord(null); }
     finally { setProgressLoading(false); }
   };
 
@@ -453,9 +453,9 @@ export default function AttendancePage() {
       es.onmessage = (e) => {
         let evt;
         try { evt = JSON.parse(e.data); } catch { return; }
-        if (!evt || !['clockin', 'clockout', 'timing_corrected'].includes(evt.type)) return;
+        if (!evt || !['clockin', 'clockout', 'timing_corrected', 'work_progress'].includes(evt.type)) return;
         const h = latestHandlers.current;
-        if (String(evt.userId) === String(h.user?._id)) {
+        if (evt.type !== 'work_progress' && String(evt.userId) === String(h.user?._id)) {
           if (evt.type === 'clockout') {
             // Keep the completed sheet visible for 10 minutes even when the
             // clock-out happened in another tab.
@@ -464,7 +464,7 @@ export default function AttendancePage() {
           h.loadTodayRecord(true);
         }
         if (h.isAdmin && String(evt.userId) === String(h.selectedProgressUserId)) {
-          h.loadProgressRecord(h.selectedProgressUserId);
+          h.loadProgressRecord(h.selectedProgressUserId, true);
         }
         if (h.isAdmin) debounceTeam();
       };
@@ -492,6 +492,18 @@ export default function AttendancePage() {
     // No `today` dependency: new-day data for the selected employee arrives via
     // SSE and on re-selection, never from a midnight rollover.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProgressUserId, tab]);
+
+  // SSE is process-local; poll the visible admin sheet as a fallback when
+  // requests are served by different instances or a connection drops.
+  useEffect(() => {
+    if (tab !== 'progress' || !selectedProgressUserId) return;
+    const refresh = () => {
+      if (document.visibilityState === 'visible') latestHandlers.current.loadProgressRecord(selectedProgressUserId, true);
+    };
+    const timer = setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    return () => { clearInterval(timer); window.removeEventListener('focus', refresh); };
   }, [selectedProgressUserId, tab]);
 
   useEffect(() => {
@@ -694,7 +706,7 @@ export default function AttendancePage() {
   const persistTodayRecord = async (updates) => {
     let updated;
     try {
-      updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecord?.timelineRevision || 0, ...updates });
+      updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecordRef.current?.timelineRevision || 0, ...updates });
     } catch (error) {
       if (/Attendance timing was corrected/.test(error.message)) {
         if (workProgressSaveTimer.current) clearTimeout(workProgressSaveTimer.current);
@@ -704,6 +716,8 @@ export default function AttendancePage() {
       }
       throw error;
     }
+    todayRecordRef.current = updated;
+    workProgressRef.current = updated.workProgress || [];
     setTodayRecord(updated);
     setWorkProgressDirty(false);
     return updated;
@@ -759,12 +773,17 @@ export default function AttendancePage() {
 
   const saveWorkProgress = async (rows = workProgressRef.current) => {
     try {
-      const updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecord?.timelineRevision || 0, workProgress: rows });
+      const updated = await api.put('/api/attendance', { date: today, timelineRevision: todayRecordRef.current?.timelineRevision || 0, workProgress: rows });
+      todayRecordRef.current = { ...todayRecordRef.current, timelineRevision: updated.timelineRevision };
       // A user may keep typing while a request is in flight. Never replace their newer text.
       if (workProgressRef.current === rows) {
+        todayRecordRef.current = updated;
+        workProgressRef.current = updated.workProgress || [];
         setTodayRecord(updated);
         setIsDirty(false);
         setWorkProgressDirty(false);
+      } else {
+        setTodayRecord(prev => ({ ...prev, timelineRevision: updated.timelineRevision }));
       }
     } catch (e) {
       if (/Attendance timing was corrected/.test(e.message)) {

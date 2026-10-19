@@ -5,6 +5,7 @@ import { getGlobalConfig, getPayrollDay, getCycleMonth, getCycleLabel } from '@/
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getDepartmentUserIds } from '@/lib/rbac';
+import { reconcileBreakWorkProgress } from '@/lib/break-work-progress';
 
 export async function GET(req, { params }) {
   try {
@@ -50,7 +51,7 @@ export async function GET(req, { params }) {
 
     const query = {
       userId: targetUserId,
-      'workProgress.0': { $exists: true },
+      $or: [{ 'workProgress.0': { $exists: true } }, { 'breaks.0': { $exists: true } }],
     };
     if (Object.keys(dateFilter).length) query.date = dateFilter;
 
@@ -76,7 +77,7 @@ export async function GET(req, { params }) {
         clockOut: rec.clockOut,
         hoursWorked: rec.hoursWorked,
         status: rec.status,
-        workProgress: rec.workProgress,
+        workProgress: reconcileBreakWorkProgress(rec),
       });
     }
 
