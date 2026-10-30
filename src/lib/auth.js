@@ -37,7 +37,9 @@ export function AuthProvider({ children }) {
 
     const loadSession = async () => {
       try {
-        const response = await fetch('/api/auth/bootstrap', { credentials: 'same-origin' });
+        const response = await fetch('/api/auth/bootstrap', {
+          credentials: 'same-origin', signal: AbortSignal.timeout(30000),
+        });
         if (!response.ok) throw new Error('Bootstrap request failed');
         const json = await response.json();
         if (cancelled) return;

@@ -16,32 +16,38 @@ if (!cached) cached = global._mongoose = { conn: null, promise: null };
 async function dbConnect() {
   assertProductionConfiguration();
   if (cached.conn) {
-    if (cached.conn.readyState === 1) return cached.conn;
+    // mongoose.connect resolves to Mongoose, not its Connection object.
+    if (cached.conn.connection?.readyState === 1) return cached.conn;
     cached.conn = null;
     cached.promise = null;
   }
 
-  if (cached.promise) {
-    try {
-      cached.conn = await cached.promise;
-      return cached.conn;
-    } catch {
-      cached.promise = null;
-      cached.conn = null;
-    }
-  }
+  // All callers share the same attempt and the same failure. Retrying inside
+  // each waiting request used to create a reconnect storm during outages.
+  if (cached.promise) return cached.promise;
+  if (cached.retryAfter > Date.now()) throw cached.error;
 
   cached.promise = mongoose.connect(MONGODB_URI, {
     bufferCommands: false,
     family: 4,
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    waitQueueTimeoutMS: 10000,
+  }).then(conn => {
+    cached.conn = conn;
+    cached.error = null;
+    cached.retryAfter = 0;
+    return conn;
   }).catch((err) => {
-    cached.promise = null;
     cached.conn = null;
+    cached.error = err;
+    cached.retryAfter = Date.now() + 3000;
     throw err;
+  }).finally(() => {
+    cached.promise = null;
   });
 
-  cached.conn = await cached.promise;
-  return cached.conn;
+  return cached.promise;
 }
 
 export default dbConnect;

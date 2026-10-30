@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
+import DayShiftEditor from '@/components/DayShiftEditor';
 import Time from '@/components/Time';
 import { isBreakType, breakStyle } from '@/lib/attendance-breaks';
 import { formatTaskDuration } from '@/lib/attendance-constants';
@@ -17,6 +18,7 @@ export default function DayActivityPage() {
   const router = useRouter();
   const { date } = useParams();
   const [loading, setLoading] = useState(true);
+  const [scheduleRevision, setScheduleRevision] = useState(0);
   const [data, setData] = useState(null);
   const [actionsExpanded, setActionsExpanded] = useState(true);
   const [dayEmployees, setDayEmployees] = useState([]);
@@ -100,7 +102,7 @@ export default function DayActivityPage() {
       }
     };
     load();
-  }, [user, date]);
+  }, [user, date, scheduleRevision]);
 
   const d = Array.isArray(date) ? date[0] : date;
   const dt = d ? new Date(d + 'T00:00:00') : new Date();
@@ -109,6 +111,7 @@ export default function DayActivityPage() {
   return (
     <AppShell title={`Activity - ${MONTHS[dt.getMonth()]} ${dt.getDate()}, ${dt.getFullYear()}`}>
       <div className="container-fluid px-4 py-3" style={{ maxWidth: 900, margin: '0 auto' }}>
+        {['super_admin', 'admin_full'].includes(user?.role) && <DayShiftEditor key={d} date={d} onSaved={() => { setSelectedEmployeeActivity(null); setScheduleRevision(value => value + 1); }} />}
         <button className="btn btn-sm btn-outline-secondary mb-3" style={{ borderRadius: 8, padding: '6px 14px', fontSize: 12 }}
           onClick={() => router.back()}>
           <i className="bi bi-arrow-left me-1" /> Back
@@ -550,7 +553,7 @@ export default function DayActivityPage() {
           </>
         )}
       </div>
-      {selectedEmployeeActivity && <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{selectedEmployeeActivity.employee.name} — {d}</h5><button className="btn-close" onClick={() => setSelectedEmployeeActivity(null)} /></div><div className="modal-body"><div className="row g-3 mb-3"><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Hours worked</div><strong>{((selectedEmployeeActivity.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Shift target</div><strong>{(() => { const a = selectedEmployeeActivity.attendance; const s = a?.shiftStartTime, e = a?.shiftEndTime; if (!s || !e) return '—'; const [sh, sm] = s.split(':').map(Number); const [eh, em] = e.split(':').map(Number); if ([sh, sm, eh, em].some(Number.isNaN)) return '—'; let d = (eh * 60 + em) - (sh * 60 + sm); if (d <= 0) d += 1440; return `${Math.floor(d / 60)}h ${d % 60}m`; })()}</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Clock times</div><strong>{formatTime(selectedEmployeeActivity.attendance?.clockIn) || '—'} – {formatTime(selectedEmployeeActivity.attendance?.clockOut) || '—'}</strong></div></div><div style={{ fontWeight: 700, marginBottom: 8 }}>Audit log</div>{selectedEmployeeActivity.logs.length ? selectedEmployeeActivity.logs.map(log => <div key={log._id} style={{ padding: '10px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</div><div style={{ fontSize: 12, color: '#64748b' }}>{log.details}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDateTime(log.createdAt)}</div></div>) : <div style={{ fontSize: 13, color: '#94a3b8' }}>No audit activity recorded for this day.</div>}</div></div></div></div>}
+      {selectedEmployeeActivity && <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}><div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content"><div className="modal-header"><h5 className="modal-title">{selectedEmployeeActivity.employee.name} — {d}</h5><button className="btn-close" onClick={() => setSelectedEmployeeActivity(null)} /></div><div className="modal-body"><div className="row g-3 mb-3"><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Hours worked</div><strong>{((selectedEmployeeActivity.attendance?.hoursWorked || 0) / 60).toFixed(1)}h</strong></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Shift target</div><strong>{(() => { const a = selectedEmployeeActivity.attendance; const s = a?.shiftStartTime, e = a?.shiftEndTime; if (!s || !e) return '—'; const [sh, sm] = s.split(':').map(Number); const [eh, em] = e.split(':').map(Number); if ([sh, sm, eh, em].some(Number.isNaN)) return '—'; let d = (eh * 60 + em) - (sh * 60 + sm); if (d <= 0) d += 1440; return `${Math.floor(d / 60)}h ${d % 60}m`; })()}</strong><div style={{ fontSize: 11, color: (selectedEmployeeActivity.attendance?.hoursWorked || 0) >= (selectedEmployeeActivity.schedule?.expectedHours ?? 480) ? '#16a34a' : '#dc2626' }}>{(selectedEmployeeActivity.schedule?.expectedHours ?? 480) / 60}h work target: {(selectedEmployeeActivity.attendance?.hoursWorked || 0) >= (selectedEmployeeActivity.schedule?.expectedHours ?? 480) ? 'Met' : 'Not met'}</div></div><div className="col-4"><div className="text-muted" style={{ fontSize: 12 }}>Clock times</div><strong>{formatTime(selectedEmployeeActivity.attendance?.clockIn) || '—'} – {formatTime(selectedEmployeeActivity.attendance?.clockOut) || '—'}</strong></div></div><div style={{ fontWeight: 700, marginBottom: 8 }}>Audit log</div>{selectedEmployeeActivity.logs.length ? selectedEmployeeActivity.logs.map(log => <div key={log._id} style={{ padding: '10px 0', borderTop: '1px solid #f1f5f9' }}><div style={{ fontSize: 13, fontWeight: 600 }}>{log.action}</div><div style={{ fontSize: 12, color: '#64748b' }}>{log.details}</div><div style={{ fontSize: 11, color: '#94a3b8' }}>{formatDateTime(log.createdAt)}</div></div>) : <div style={{ fontSize: 13, color: '#94a3b8' }}>No audit activity recorded for this day.</div>}</div></div></div></div>}
     </AppShell>
   );
 }

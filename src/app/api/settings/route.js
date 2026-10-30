@@ -1,4 +1,8 @@
 import dbConnect from '@/lib/db';
+import mongoose from 'mongoose';
+import { overrideValidation } from '@/lib/shift-schedule';
+import ShiftDayOverride from '@/lib/models/ShiftDayOverride';
+import { getTzDateStr } from '@/lib/timezone';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
 import { Department, Shift, Holiday, SystemConfig, Role, Designation, AssetCategory, Leave, SmeExpertise, Employee } from '@/lib/models/index';
@@ -7,6 +11,8 @@ import { ok, fail } from '@/lib/jwt';
 import { notify } from '@/lib/notify';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
+import { reconcileAllLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
+import { payrollDay } from '@/lib/payroll-periods';
 
 const MODEL_MAP = {
   departments:        Department,
@@ -28,7 +34,7 @@ const HOLIDAY_SOURCES = ['manual', 'saturday_alternate'];
 
 const FIELD_ALLOWLIST = {
   departments:  ['name', 'head', 'members', 'visibleDepartments'],
-  shifts:       ['name', 'startTime', 'endTime', 'days', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
+  shifts:       ['name', 'parentShiftId', 'startTime', 'endTime', 'days', 'expectedHours', 'absentThreshold', 'lateThreshold', 'earlyLoginWindow', 'breaks', 'autoLogoutAfterShiftEnd', 'halfDayThreshold'],
   holidays:     ['name', 'date', 'type', 'source', 'workingDayOverride', 'overrideReason'],
   config:       ['key', 'value'],
   roles:        ['name', 'description'],
@@ -40,6 +46,16 @@ const FIELD_ALLOWLIST = {
 function requireSettingsAdmin(user) {
   if (!ADMIN_ROLES.includes(user.role)) return fail('Access denied', 403);
   return null;
+}
+
+async function validateMiniShift(data, id = null) {
+  if (!data.parentShiftId) return null;
+  if (!mongoose.isValidObjectId(data.parentShiftId) || String(data.parentShiftId) === String(id)) return fail('Choose a different parent shift.', 400);
+  const parent = await Shift.findById(data.parentShiftId).lean();
+  if (!parent || parent.parentShiftId) return fail('A mini shift must belong to a main shift.', 400);
+  if (id && await Shift.exists({ parentShiftId: id })) return fail('A shift with mini shifts cannot become a mini shift.', 400);
+  const invalid = overrideValidation(data);
+  return invalid ? fail(invalid, 400) : null;
 }
 
 function localTodayStr() {
@@ -213,7 +229,16 @@ export async function POST(req) {
   if (validationError) return validationError;
 
   if (type === 'config') {
+    const previous = data.key === 'global_config' ? await getGlobalConfig() : null;
+    if (previous) {
+      const start = payrollDay(data.value?.payrollStartDay, 26), end = payrollDay(data.value?.payrollEndDay, 25);
+      if (!(start === 1 && end === 31) && end !== start - 1) return fail('Payroll periods must be continuous: the end day must precede the start day (or use 1–31 for calendar months).', 400);
+    }
     const doc = await MODEL_MAP[type].findOneAndUpdate({ key: data.key }, { value: data.value }, { new: true, upsert: true });
+    if (previous && (payrollDay(previous.payrollStartDay, 26) !== payrollDay(data.value?.payrollStartDay, 26) || payrollDay(previous.payrollEndDay, 25) !== payrollDay(data.value?.payrollEndDay, 25))) {
+      const reconciliation = await reconcileAllLeaveAndPayroll(user);
+      return ok({ ...doc.toObject(), reconciliation });
+    }
     return ok(doc);
   }
 
@@ -237,6 +262,10 @@ export async function POST(req) {
     }
   }
 
+  if (type === 'shifts') {
+    const miniError = await validateMiniShift(data);
+    if (miniError) return miniError;
+  }
   const doc = await MODEL_MAP[type].create(data);
 
   if (type === 'holidays') {
@@ -274,7 +303,21 @@ export async function PUT(req) {
   if (type === 'departments' && data.visibleDepartments !== undefined) {
     data.visibleDepartments = Array.isArray(data.visibleDepartments) ? data.visibleDepartments : [];
   }
-  const prev = (type === 'shifts' || type === 'holidays') ? await MODEL_MAP[type].findById(id).lean() : null;
+  const prev = (type === 'shifts' || type === 'holidays' || type === 'config') ? await MODEL_MAP[type].findById(id).lean() : null;
+  if (type === 'config' && (data.key === 'global_config' || prev?.key === 'global_config')) {
+    const start = payrollDay(data.value?.payrollStartDay, 26), end = payrollDay(data.value?.payrollEndDay, 25);
+    if (!(start === 1 && end === 31) && end !== start - 1) return fail('Payroll periods must be continuous: the end day must precede the start day (or use 1–31 for calendar months).', 400);
+  }
+  if (type === 'shifts') {
+    const miniError = await validateMiniShift({ ...prev, ...data }, id);
+    if (miniError) return miniError;
+    if (prev && Object.keys(data).some(key => !['name', 'parentShiftId'].includes(key) && JSON.stringify(data[key]) !== JSON.stringify(prev[key]))) {
+      const assigned = await User.find({ $or: [{ shiftId: id }, { shift: prev.name }] }).select('_id').lean();
+      if (await ShiftDayOverride.exists({ userId: { $in: assigned.map(item => item._id) }, status: 'active', date: { $gte: await getTzDateStr() } })) {
+        return fail('Cancel upcoming day overrides for this shift’s employees before changing their normal shift rules.', 409);
+      }
+    }
+  }
   if (type === 'holidays' && data.date && prev && prev.date !== data.date) {
     const conflict = await approvedLeaveOn(data.date);
     if (conflict) {
@@ -295,6 +338,11 @@ export async function PUT(req) {
   }
   const doc = await MODEL_MAP[type].findByIdAndUpdate(id, data, { new: true, runValidators: true });
   if (!doc) return fail('Not found', 404);
+
+  if (type === 'config' && doc.key === 'global_config' && (payrollDay(prev?.value?.payrollStartDay, 26) !== payrollDay(doc.value?.payrollStartDay, 26) || payrollDay(prev?.value?.payrollEndDay, 25) !== payrollDay(doc.value?.payrollEndDay, 25))) {
+    const reconciliation = await reconcileAllLeaveAndPayroll(user);
+    return ok({ ...doc.toObject(), reconciliation });
+  }
 
   if (type === 'holidays') {
     const dates = [...new Set([prev?.date, doc.date].filter(Boolean))];
@@ -348,6 +396,7 @@ export async function DELETE(req) {
     });
   }
 
+  if (type === 'shifts' && await Shift.exists({ parentShiftId: id })) return fail('Remove or reassign the mini shifts before deleting their parent.', 409);
   const doc = await MODEL_MAP[type].findByIdAndDelete(id);
   if (!doc) return fail('Not found', 404);
 

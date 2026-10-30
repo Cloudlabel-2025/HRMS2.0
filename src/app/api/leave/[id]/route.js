@@ -1,3 +1,7 @@
+import { payrollPeriod } from '@/lib/payroll-periods';
+import { getGlobalConfig as entitlementConfig } from '@/lib/payroll-cycle';
+import { getTzDateStr as entitlementToday } from '@/lib/timezone';
+import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
 import { connectDB } from '@/lib/db';
 import { Leave, LeavePolicy, UserLeaveBalance, Holiday } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
@@ -260,7 +264,7 @@ export async function PUT(req, { params }) {
 
         if (isPaid && paidDays > 0) {
           const now = new Date();
-          const cycleStart = new Date(now.getFullYear(), 0, 1);
+          const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
           const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
           if (balance) {
             const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -296,43 +300,13 @@ export async function PUT(req, { params }) {
         await notify(applicantId, 'Leave Approved', `Your ${leave.type} from ${leave.from} to ${leave.to} (${leave.days} day(s)) has been approved by ${actorName}.`, 'leave', leave._id);
       }
 
-      // Re-assert the paid/unpaid split at APPROVAL time, not just at creation.
-      // A PAID leave type is always paid in full — the balance is an
-      // administrative flag and must never clamp payable days. This also
-      // repairs legacy rows written before that rule, which could carry
-      // unpaidDays > 0 on a paid leave type and silently become LOP.
       let payableWarning = null;
-      if (newStatus === 'approved') {
-        const isPaidType = policy.leaveTypeConfigs?.find(c => c.code === leave.typeCode)?.isPaid ?? true;
-        leave.isPaid = isPaidType;
-        if (isPaidType && (leave.unpaidDays || 0) > 0) {
-          payableWarning = {
-            typeCode: leave.typeCode,
-            typeName: leave.type,
-            repairedDays: Number(leave.unpaidDays || 0),
-            message: `${leave.type} is a paid leave type. ${Number(leave.unpaidDays || 0)} day(s) previously marked unpaid have been restored to paid — no LOP will be applied.`,
-          };
-          leave.paidDays = leave.days;
-          leave.unpaidDays = 0;
-          await auditLog(
-            'Leave LOP Repaired',
-            'Leave',
-            user._id,
-            `Leave ${leave._id} (${leave.from} to ${leave.to}): ${payableWarning.repairedDays} unpaid day(s) restored — ${leave.type} is a paid leave type`,
-            'high',
-            req.headers.get('x-forwarded-for') || '',
-            null,
-            applicantId
-          ).catch(() => {});
-        }
-        if (leave.paidDays == null) leave.paidDays = isPaidType ? leave.days : 0;
-      }
 
       if (newStatus === 'rejected') {
         // Restore pending balance; if balance was already applied (used),
         // reverse used as well and revert period usage symmetrically.
         const now = new Date();
-        const cycleStart = new Date(now.getFullYear(), 0, 1);
+        const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
         const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
         if (balance) {
           const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -359,7 +333,7 @@ export async function PUT(req, { params }) {
       if (prevStatus === 'approved' && newStatus === 'pending' && (action === 'held' || action === 'rejected')) {
         try {
           const now = new Date();
-          const cycleStart = new Date(now.getFullYear(), 0, 1);
+          const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
           const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
           if (balance) {
             const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -498,7 +472,9 @@ export async function PUT(req, { params }) {
         }
       }
 
-      return ok({ ...leave.toObject(), payableWarning, reopenedPayrollMonths });
+      const entitlementResult = await reconcileLeaveAndPayroll(applicantId, user, null, { forceAllPayrolls: true });
+      const refreshed = await Leave.findById(leave._id);
+      return ok({ ...refreshed.toObject(), payableWarning, reopenedPayrollMonths, entitlementResult });
     }
 
     // ── Fallback to legacy approval logic ──
@@ -586,7 +562,8 @@ export async function PUT(req, { params }) {
         }
       }
       await auditLog(`Leave ${action}`, 'Leave', user._id, `${actorName} ${action} SME leave for ${applicantName} (${leave.days} days, ${leave.from} to ${leave.to})${actionReason ? ` — ${actionReason}` : ''}`, action === 'approved' ? 'medium' : 'low', req.headers.get('x-forwarded-for') || '', null, applicantId);
-      return ok(leave);
+      await reconcileLeaveAndPayroll(applicantId, user, null, { forceAllPayrolls: true });
+      return ok(await Leave.findById(leave._id));
     }
     let legacyLabel = 'Admin';
     if (isAdmin) {
@@ -683,7 +660,7 @@ export async function PUT(req, { params }) {
       const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
       if (isPaidLegacy && paidDays > 0) {
         const now = new Date();
-        const cycleStart = new Date(now.getFullYear(), 0, 1);
+        const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
         const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
         if (balance) {
           const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -717,7 +694,7 @@ export async function PUT(req, { params }) {
     if (prevStatus === 'approved' && newStatus === 'pending' && (action === 'held' || action === 'rejected')) {
       try {
         const now = new Date();
-        const cycleStart = new Date(now.getFullYear(), 0, 1);
+        const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
         const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
         if (balance) {
           const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -746,7 +723,7 @@ export async function PUT(req, { params }) {
     if (newStatus === 'rejected') {
       // Restore balance symmetrically (legacy path had no restore at all).
       const now = new Date();
-      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
       const balance = await UserLeaveBalance.findOne({ userId: applicantId, cycleStart });
       if (balance) {
         const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -842,7 +819,8 @@ export async function PUT(req, { params }) {
       applicantId
     );
 
-    return ok(leave);
+    await reconcileLeaveAndPayroll(applicantId, user, null, { forceAllPayrolls: true });
+      return ok(await Leave.findById(leave._id));
   } catch (e) {
     return fail(e.message, e.statusCode || 500);
   }
@@ -860,25 +838,6 @@ export async function DELETE(req, { params }) {
     if (leave.userId.toString() !== user._id.toString()) return fail('Access denied', 403);
     if (!['pending', 'approved'].includes(leave.status)) return fail('Cannot cancel an already processed leave', 400);
 
-    // Finalized payroll guard: cancelling an approved leave inside a locked
-    // cycle must go through retro adjustment, not silent delete.
-    if (leave.status === 'approved') {
-      const { Payroll } = await import('@/lib/models/Payroll');
-      const { getGlobalConfig: getCfg, getPayrollDay: getDay, getCycleRange: getRange, getCycleMonth: getMonth } = await import('@/lib/payroll-cycle');
-      const cfg = await getCfg();
-      const { year, month } = getMonth(leave.from, getDay(cfg.payrollStartDay, 26));
-      const cycMonth = `${year}-${String(month + 1).padStart(2, '0')}`;
-      const locked = await Payroll.findOne({ userId: leave.userId, month: cycMonth, status: 'finalized' }).lean();
-      if (locked) {
-        leave.status = 'cancelled';
-        leave.isRetroactive = true;
-        leave.retroAdjustedInPayroll = false;
-        await leave.save();
-        await auditLog('Leave Cancel Retro-Flagged', 'Leave', user._id, `Cancel of approved leave ${leave.from} to ${leave.to} flagged retro (payroll ${cycMonth} finalized)`, 'medium', req.headers.get('x-forwarded-for') || '', null, user._id);
-        return ok({ retro: true, message: 'Payroll for this cycle is finalized. Cancellation flagged for retro adjustment in the next run.' });
-      }
-    }
-
     // Restore balance (isPaid from policy, not hard-coded LOP only)
     const paidDays = leave.paidDays !== undefined ? leave.paidDays : leave.days;
     let isPaidDelete = leave.typeCode !== 'LOP';
@@ -889,7 +848,7 @@ export async function DELETE(req, { params }) {
     } catch { /* default */ }
     if (leave.status === 'approved' && leave.balanceApplied !== false && isPaidDelete && paidDays > 0) {
       const now = new Date();
-      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
       if (balance) {
         const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -906,7 +865,7 @@ export async function DELETE(req, { params }) {
       // Restore pending (single branch — a pending leave only ever holds
       // pending balance, never used).
       const now = new Date();
-      const cycleStart = new Date(now.getFullYear(), 0, 1);
+      const cycleStart = new Date(payrollPeriod(await entitlementToday(), await entitlementConfig()).yearStart + 'T00:00:00Z');
       const balance = await UserLeaveBalance.findOne({ userId: leave.userId, cycleStart });
       if (balance) {
         const entry = balance.balances.find(b => b.typeCode === leave.typeCode);
@@ -924,6 +883,7 @@ export async function DELETE(req, { params }) {
       await Attendance.deleteMany({ relatedLeaveId: leave._id });
     } catch { /* non-fatal */ }
     await leave.deleteOne();
+    await reconcileLeaveAndPayroll(leave.userId, user, null, { forceAllPayrolls: true });
     return ok({ deleted: true });
   } catch (e) {
     return fail(e.message, e.statusCode || 500);

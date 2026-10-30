@@ -1,4 +1,5 @@
 import dbConnect from '@/lib/db';
+import ShiftDayOverride from '@/lib/models/ShiftDayOverride';
 import { Shift, ShiftChange } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -39,6 +40,9 @@ export async function POST(req) {
     // judged per-day via resolveShiftForDate instead of current shift.
     // Timezone-aware: Vercel runs UTC, app days are Asia/Kolkata.
     const today = await todayStrTz().catch(() => todayStr());
+    if (await ShiftDayOverride.exists({ userId: { $in: userIds }, status: 'active', date: { $gte: effectiveDate || today } })) {
+      return fail('Cancel affected day overrides before changing the normal assignment for these employees.', 409);
+    }
     if (!effectiveDate || effectiveDate <= today) {
       const inferredFromShiftId = targets?.fromShiftId || await inferCommonFromShiftId(userIds);
       const userAssignments = await snapshotUserShiftAssignments(userIds, shiftDoc);
@@ -137,6 +141,9 @@ export async function DELETE(req) {
     const change = await ShiftChange.findById(id);
     if (!change) return fail('Not found', 404);
     if (change.status !== 'pending') return fail('Only pending changes can be cancelled', 400);
+    if (await ShiftDayOverride.exists({ userId: { $in: change.userIds }, status: 'active', date: { $gte: change.effectiveDate } })) {
+      return fail('Cancel affected day overrides before cancelling this scheduled assignment.', 409);
+    }
 
     change.status = 'cancelled';
     await change.save();

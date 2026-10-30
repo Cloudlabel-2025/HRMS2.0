@@ -17,7 +17,7 @@ export async function GET(req) {
     // Bookable window shared with the request validator: earliest date is
     // the earlier of calendar/shift-aware today, latest is +30 days.
     // Shift times are returned so the UI can anchor overnight windows.
-    const dayInfo = await getShiftDayInfo(user._id);
+    const dayInfo = await getShiftDayInfo(user._id, searchParams.get('date'));
     const { minDate } = dayInfo;
     const maxDate = addDaysStr(minDate, MAX_PERMISSION_ADVANCE_DAYS);
     const date = searchParams.get('date') || dayInfo.calToday;

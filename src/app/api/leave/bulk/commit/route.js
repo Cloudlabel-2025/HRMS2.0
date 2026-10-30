@@ -1,3 +1,4 @@
+import { payrollPeriod } from '@/lib/payroll-periods';
 import { connectDB } from '@/lib/db';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -401,8 +402,8 @@ export async function POST(req) {
         } else if (paidDays === null || unpaidDays === null) {
           if (typeConfig.isPaid) {
             // Dynamic split via period + overall caps (mirror single POST)
-            const cycleYear = new Date(`${from}T00:00:00`).getFullYear();
-            const bal = await UserLeaveBalance.findOne({ userId: fullUser._id, cycleStart: new Date(cycleYear, 0, 1) }).lean();
+            const cycleYear = payrollPeriod(from, config).year;
+            const bal = await UserLeaveBalance.findOne({ userId: fullUser._id, cycleStart: new Date(payrollPeriod(from, config).yearStart + 'T00:00:00Z') }).lean();
             if (bal) {
               const entry = (bal.balances || []).find(b => b.typeCode === d.typeCode);
               if (entry) {
@@ -458,7 +459,7 @@ export async function POST(req) {
         });
 
         // Balance movement
-        const cycleYear = new Date(`${from}T00:00:00`).getFullYear();
+        const cycleYear = payrollPeriod(from, config).year;
         if (typeConfig.isPaid && paidDays > 0) {
           const balance = await getOrCreateBalanceForYear(fullUser._id, policy, cycleYear);
           if (balance) {
@@ -498,6 +499,8 @@ export async function POST(req) {
           } catch { /* non-fatal */ }
         }
 
+        const { reconcileLeaveAndPayroll } = await import('@/lib/leave/reconcile-entitlements');
+        await reconcileLeaveAndPayroll(fullUser._id, user, policy, { forceAllPayrolls: true });
         committed.push({ rowNum, leaveId: String(leave._id), userId: String(fullUser._id) });
       } catch (e) {
         failed.push({ rowNum, error: e.statusCode === 409 ? 'Concurrent update — retry this row' : (e.message || 'Failed') });

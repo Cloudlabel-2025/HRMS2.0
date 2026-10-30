@@ -151,6 +151,7 @@ export default function AttendancePage() {
 
   const [shifts, setShifts] = useState([]);
   const [shiftConfig, setShiftConfig] = useState(null);
+  const resolvedScheduleRef = useRef(null);
   const [shiftsLoaded, setShiftsLoaded] = useState(false);
 
   // Progress tab states
@@ -279,6 +280,7 @@ export default function AttendancePage() {
   // While a session is open the date is pinned to the session date (no 12am
   // refresh); after clock-out it stays pinned for 10 minutes before rolling.
   const computeToday = useCallback((d, shiftsList, u) => {
+    if (resolvedScheduleRef.current?.date) return resolvedScheduleRef.current.date;
     if ((u?.shift || u?.shiftId) && shiftsList.length > 0) {
       const matched = shiftsList.find(s => (u?.shiftId && s._id === u.shiftId) || s.name === u?.shift);
       if (matched?.startTime && matched?.endTime) {
@@ -287,6 +289,31 @@ export default function AttendancePage() {
     }
     return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    let pending = false;
+    const refreshSchedule = async () => {
+      if (pending || document.visibilityState === 'hidden') return;
+      pending = true;
+      try {
+        const result = await api.get('/api/shifts/day?current=1');
+        if (cancelled) return;
+        resolvedScheduleRef.current = result;
+        const open = todayRecordRef.current;
+        setShiftConfig(open?.clockIn && !open.clockOut && open.scheduleSnapshot ? open.scheduleSnapshot : result.schedule);
+        if (!open?.clockIn || open.clockOut) {
+          if (!pinRef.current || Date.now() >= pinRef.current.until) setToday(result.date);
+        }
+        setShiftsLoaded(true);
+      } catch { /* keep the last display; server validates clock operations */ }
+      finally { pending = false; }
+    };
+    const timer = setInterval(refreshSchedule, 60000);
+    document.addEventListener('visibilitychange', refreshSchedule);
+    return () => { cancelled = true; clearInterval(timer); document.removeEventListener('visibilitychange', refreshSchedule); };
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -381,7 +408,7 @@ export default function AttendancePage() {
       for (const r of (Array.isArray(r1) ? r1 : [])) {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
         if (!uid) continue;
-        const empShift = shifts.find(s => s.name === r.userId?.shift);
+        const empShift = r.effectiveShift || shifts.find(s => s.name === r.userId?.shift);
         if (empShift?.startTime && empShift?.endTime) {
           const shiftAwareDate = getAttendanceDate(now, empShift.startTime, empShift.endTime);
           if (r.date !== shiftAwareDate) continue;
@@ -392,7 +419,7 @@ export default function AttendancePage() {
         const uid = r.userId?._id?.toString() || r.userId?.toString();
         if (!uid) continue;
         if (merged[uid]) continue;
-        const empShift = shifts.find(s => s.name === r.userId?.shift);
+        const empShift = r.effectiveShift || shifts.find(s => s.name === r.userId?.shift);
         if (!(empShift?.startTime && empShift?.endTime)) continue;
         const shiftAwareDate = getAttendanceDate(now, empShift.startTime, empShift.endTime);
         if (r.date !== shiftAwareDate) continue;
@@ -531,13 +558,14 @@ export default function AttendancePage() {
 
   useEffect(() => {
     if (!user) return;
-    api.get('/api/settings?type=shifts').then(d => {
+    Promise.all([api.get('/api/settings?type=shifts'), api.get('/api/shifts/day?current=1')]).then(([d, schedule]) => {
       const allShifts = Array.isArray(d) ? d : [];
       setShifts(allShifts);
       setShiftsLoaded(true);
-      const matched = allShifts.find(s => (user?.shiftId && s._id === user.shiftId) || s.name === user?.shift);
-      setShiftConfig(matched || null);
-    }).catch(() => setShiftsLoaded(true));
+      resolvedScheduleRef.current = schedule;
+      setShiftConfig(schedule.schedule || null);
+      setToday(schedule.date);
+    }).catch(e => { setShiftsLoaded(false); showToast(e.message, 'error'); });
     Promise.all([
       isAdmin ? loadEmployees() : Promise.resolve(),
       (() => {

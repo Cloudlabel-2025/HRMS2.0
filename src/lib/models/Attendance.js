@@ -4,6 +4,9 @@ const AttendanceSchema = new mongoose.Schema({
   userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   date:       { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
   timelineRevision: { type: Number, default: 0 },
+  scheduleSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
+  dayOverrideId: { type: mongoose.Schema.Types.ObjectId, ref: 'ShiftDayOverride', default: null },
+  scheduleRevision: { type: Number, default: null },
   clockIn:    { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   clockOut:   { type: String, default: null, match: /^([01]\d|2[0-3]):[0-5]\d$/ },
   hoursWorked:{ type: Number, default: 0 },              // in minutes
@@ -129,7 +132,7 @@ const AttendanceSchema = new mongoose.Schema({
 
 AttendanceSchema.index({ userId: 1, date: 1 }, { unique: true });
 
-if (mongoose.models.Attendance && !mongoose.models.Attendance.schema.path('timelineRevision')) {
+if (mongoose.models.Attendance && !mongoose.models.Attendance.schema.path('scheduleSnapshot')) {
   delete mongoose.models.Attendance;
   if (mongoose.connection.models.Attendance) delete mongoose.connection.models.Attendance;
 }

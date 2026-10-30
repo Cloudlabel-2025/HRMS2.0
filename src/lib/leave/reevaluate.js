@@ -13,6 +13,9 @@ import User from '@/lib/models/User';
 import { getGlobalConfig, getPayrollDay, getCycleMonth, countWorkingDaysInRange } from '@/lib/payroll-cycle';
 import { calculatePeriodAllowance, getRelativePeriod } from '@/lib/leave/accrual';
 import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
+import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
+import { payrollPeriod } from '@/lib/payroll-periods';
+import { getTzDateStr } from '@/lib/timezone';
 
 export function assertSaturdayDate(dateStr) {
   const d = new Date(String(dateStr || '') + 'T00:00:00');
@@ -23,8 +26,6 @@ export function assertSaturdayDate(dateStr) {
   }
 }
 
-const yearStart = (d) => new Date(new Date(d).getFullYear(), 0, 1);
-
 async function loadPolicyForLeave(leave) {
   if (!leave.policyId) return null;
   return LeavePolicy.findById(leave.policyId).lean().catch(() => null);
@@ -33,9 +34,10 @@ async function loadPolicyForLeave(leave) {
 // The deduction lives in the leave-year cycle; fall back to the live
 // current-year cycle (approval-time behaviour) if that doc is gone.
 async function loadBalanceForLeave(userId, leave) {
-  const years = [...new Set([new Date(leave.createdAt).getFullYear(), new Date().getFullYear()])];
-  for (const y of years) {
-    const b = await UserLeaveBalance.findOne({ userId, cycleStart: new Date(y, 0, 1) });
+  const config = await getGlobalConfig();
+  const starts = [...new Set([leave.from, await getTzDateStr()].map(date => payrollPeriod(date, config).yearStart))];
+  for (const start of starts) {
+    const b = await UserLeaveBalance.findOne({ userId, cycleStart: new Date(start + 'T00:00:00Z') });
     if (b) return b;
   }
   return null;
@@ -292,5 +294,6 @@ export async function applyLeaveDateImpact(dateStr, actor, ip = '') {
       'medium', ip, null, null);
   } catch { /* non-fatal */ }
 
+  for (const userId of new Set(applied.map(change => String(change.userId)))) await reconcileLeaveAndPayroll(userId, actor, null, { forceAllPayrolls: true });
   return { date: dateStr, applied, skipped, conflicts, synced, totals: preview.totals };
 }

@@ -6,6 +6,9 @@ import mongoose from 'mongoose';
 import { isDevAdminEmail } from '@/lib/permissions';
 import { ok, fail } from '@/lib/jwt';
 import { linkedTypeError } from '@/lib/leave/linked-types';
+import { normalizeEntitlementType, payrollPeriod } from '@/lib/payroll-periods';
+import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { getTzDateStr } from '@/lib/timezone';
 
 const ALL_MASTER_LEAVE_TYPES = [
   { code: 'SL', name: 'Sick Leave', description: 'Medical recovery & health leave', annualAllocation: 10, isPaid: true, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 5, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: true, requireDocsIfConsecutiveDays: 2, genderRestriction: 'all', enabled: true, sortOrder: 1 },
@@ -42,7 +45,7 @@ function leaveTypeError(configs) {
   return linkedTypeError(configs);
 }
 
-const normalizeLeaveTypes = configs => configs.map(config => ({ ...config, code: config.code.trim().toUpperCase(), name: config.name.trim() }));
+const normalizeLeaveTypes = configs => configs.map(config => normalizeEntitlementType({ ...config, code: config.code.trim().toUpperCase(), name: config.name.trim() }));
 
 export async function GET(req) {
   try {
@@ -81,7 +84,8 @@ export async function GET(req) {
     const employees = await User.find({ status: 'active' }).select('_id name email role department designation').sort({ name: 1 }).lean();
 
     return ok({
-      policies,
+      policies: policies.map(policy => ({ ...policy, leaveTypeConfigs: normalizeLeaveTypes(policy.leaveTypeConfigs) })),
+      payrollPeriod: payrollPeriod(await getTzDateStr(), await getGlobalConfig()),
       employees,
     });
   } catch (e) {

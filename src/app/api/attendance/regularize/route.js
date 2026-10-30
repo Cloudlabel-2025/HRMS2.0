@@ -621,7 +621,9 @@ export async function PUT(req) {
       // Per-user effective-dated assignments are authoritative. Use the frozen
       // snapshot only when no assignment history covers this date.
       try {
-        regShiftDoc = await resolveShiftForDate(empUser, reg.date, { fallbackToCurrent: false });
+        regShiftDoc = attendance.scheduleSnapshot?.startTime
+          ? { ...attendance.scheduleSnapshot, _id: attendance.shiftId }
+          : await resolveShiftForDate(empUser, reg.date, { fallbackToCurrent: false });
       } catch { regShiftDoc = null; }
       if (!regShiftDoc && attendance.shiftStartTime) {
         regShiftDoc = {

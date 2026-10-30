@@ -1,4 +1,5 @@
 import { connectDB } from '@/lib/db';
+import { loadDayOverrides } from '@/lib/shift-utils';
 import { Employee, Holiday, Shift, ShiftChange } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import Leave from '@/lib/models/Leave';
@@ -28,6 +29,7 @@ export async function GET(req) {
     if (scopedIds !== null) employeeQuery.userId = { $in: scopedIds };
     const employees = await Employee.find(employeeQuery).select('userId name department').lean();
     const ids = employees.map(employee => employee.userId);
+    const dayOverrides = await loadDayOverrides(ids);
     const [attendance, leaves, holidays, users, shifts, shiftChanges] = await Promise.all([
       Attendance.find({ userId: { $in: ids }, date: { $gte: startDate, $lte: endDate } }).select('userId date status lateFlag halfDayThresholdExceeded clockIn shiftId shiftName shiftStartTime shiftEndTime shiftLateThreshold approvedHalfDayLeave permission leaveOverride nonWorkingDayType').lean(),
       Leave.find({ userId: { $in: ids }, status: 'approved', from: { $lte: endDate }, to: { $gte: startDate } }).select('userId from to').lean(),
@@ -47,6 +49,8 @@ export async function GET(req) {
       }
     }
     const shiftForDate = (userId, date, record) => {
+      if (record.scheduleSnapshot?.startTime) return { ...record.scheduleSnapshot, _id: record.shiftId };
+      if (dayOverrides.has(`${userId}|${date}`)) return dayOverrides.get(`${userId}|${date}`);
       const changes = historyByUser.get(userId) || [];
       const current = userById.get(userId);
       const prior = changes.find(c => c.effectiveDate <= date);

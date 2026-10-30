@@ -46,8 +46,10 @@ export async function POST(req) {
 
     // Persistent Topbar alert (type payroll) so the run result survives the
     // transient 3s toast — the runResult modal reads the same payload.
-    const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
-    await notifyPayrollRun(admins, summary);
+    try {
+      const admins = await User.find({ role: { $in: ['super_admin', 'admin_full'] }, status: 'active' }).select('_id').lean();
+      await notifyPayrollRun(admins, summary);
+    } catch (error) { console.error('Payroll completed; notification failed:', error.message); }
 
     return ok({ ...summary, reopened });
   } catch (e) {

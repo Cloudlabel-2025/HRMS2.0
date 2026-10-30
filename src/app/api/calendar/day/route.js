@@ -4,6 +4,7 @@ import User from '@/lib/models/User';
 import { AuditLog } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
+import { resolveShiftForDate } from '@/lib/shift-utils';
 
 export async function GET(req) {
   try {
@@ -20,12 +21,13 @@ export async function GET(req) {
 
     if (userId) {
       const [employee, attendance, logs] = await Promise.all([
-        User.findById(userId).select('name avatar department designation'),
+        User.findById(userId).select('name avatar department designation shift shiftId'),
         Attendance.findOne({ userId, date }).lean(),
         AuditLog.find({ userId, createdAt: { $gte: start, $lte: end } }).sort({ createdAt: -1 }).lean(),
       ]);
       if (!employee) return fail('Employee not found', 404);
-      return ok({ employee, attendance, logs });
+      const schedule = attendance?.scheduleSnapshot || await resolveShiftForDate(employee, date);
+      return ok({ employee, attendance, logs, schedule });
     }
 
     const [employees, attendance, auditCounts] = await Promise.all([

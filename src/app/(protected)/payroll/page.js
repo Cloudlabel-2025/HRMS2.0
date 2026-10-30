@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useSettings } from '@/lib/settings';
@@ -32,6 +32,9 @@ export default function PayrollPage() {
   const strVal = (v) => v === '' || v === undefined || v === null ? '' : String(v);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
+  const toastTimer = useRef(null);
+  const exportInFlight = useRef(false);
+  useEffect(() => () => clearTimeout(toastTimer.current), []);
   const [registerPage, setRegisterPage] = useState(1);
   const [structurePage, setStructurePage] = useState(1);
   const [rules, setRules] = useState([]);
@@ -46,7 +49,11 @@ export default function PayrollPage() {
     setStructurePage(1);
   }, [tab, month]);
 
-  const showToast = (msg, type = 'success') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
+  const showToast = (msg, type = 'success') => {
+    clearTimeout(toastTimer.current);
+    setToast({ msg, type });
+    toastTimer.current = setTimeout(() => setToast(null), type === 'error' ? 8000 : 5000);
+  };
   const isAdmin = ['super_admin', 'admin_full'].includes(user?.role);
 
   const logAlertCancel = (details) => {
@@ -115,14 +122,15 @@ export default function PayrollPage() {
   useEffect(() => { if (user) load(); }, [user, month]);
 
   const handleExportExcel = async (silent = false) => {
-    if (exporting) return;
+    if (exportInFlight.current) return;
     if (running && !silent) return; // auto-download after a run passes silent=true
     setExporting(true);
+    exportInFlight.current = true;
     try {
-      const data = await api.get(`/api/payroll/report?month=${month}`);
+      const data = await api.get(`/api/payroll/report?month=${month}`, { timeoutMs: 120000 });
       const list = Array.isArray(data?.payrolls) ? data.payrolls : [];
       if (list.length === 0) {
-        if (!silent) showToast(`No payroll records for ${month} to export`, 'error');
+        showToast(`No payroll records for ${month} to export`, 'error');
         return;
       }
       const { buildPayrollExcel } = await import('@/lib/payroll-report-export');
@@ -136,16 +144,18 @@ export default function PayrollPage() {
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      if (!silent) showToast(`Payroll report downloaded — ${list.length} employee(s)`);
+      if (!silent) showToast(`Payroll Excel download started — ${list.length} employee(s)`);
     } catch (e) {
-      if (!silent) showToast(e.message, 'error');
+      showToast(`Payroll Excel download failed: ${e.message || 'An unexpected error occurred.'}`, 'error');
     } finally {
       setExporting(false);
+      exportInFlight.current = false;
     }
   };
 
   const doRun = async (force = false) => {
     setRunning(true);
+    clearTimeout(toastTimer.current); setToast(null);
     try {
       const res = await api.post('/api/payroll/run', { month, force });
       const empById = new Map(employees.map(e => [String(e.userId || e._id), e]));
@@ -157,13 +167,15 @@ export default function PayrollPage() {
         }),
       };
       setAlert({ mode: 'result', result: enriched });
-      if (force && (res.reopened || 0) > 0) showToast(`Force re-run — ${res.reopened} locked record(s) reopened and recomputed`);
+      if (res.skipped?.length) showToast(`Payroll run incomplete — ${res.processed || 0} processed, ${res.skipped.length} skipped. ${[...new Set(res.skipped.map(row => row.reason).filter(Boolean))].join('; ')}`, 'warning');
+      else if (res.processed > 0) showToast(`Payroll ${force ? 'rerun' : 'run'} completed — ${res.processed} draft record(s) generated.`);
+      else showToast('Payroll run completed — no records were generated. Check the run summary.', 'warning');
       load();
       // Auto-download the payroll Excel report (summary + per-date LOP) after
       // every run. Export failure must never fail the run itself.
       try { await handleExportExcel(true); } catch { /* non-fatal */ }
     } catch (e) {
-      showToast(e.message, 'error');
+      showToast(`Payroll ${force ? 'rerun' : 'run'} failed: ${e.message || 'An unexpected error occurred.'}`, 'error');
     } finally {
       setRunning(false);
     }

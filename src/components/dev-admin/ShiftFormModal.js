@@ -13,6 +13,7 @@ export function hrMinToMinutes(hours, minutes) {
 
 export const DEFAULT_SHIFT_FORM = {
   name: '',
+  parentShiftId: null,
   startTime: '',
   endTime: '',
   absentThreshold: 240,
@@ -35,7 +36,7 @@ export function validateShiftForm(form) {
   return errs;
 }
 
-export default function ShiftFormModal({ form, setForm, errors, setErrors, saving, onSave, onClose }) {
+export default function ShiftFormModal({ form, setForm, errors, setErrors, saving, onSave, onClose, shifts = [] }) {
   return (
     <div className="modal show d-block" style={{ background: 'rgba(0,0,0,0.5)' }}>
       <div className="modal-dialog modal-dialog-centered" style={{ maxWidth: 720 }}>
@@ -46,6 +47,14 @@ export default function ShiftFormModal({ form, setForm, errors, setErrors, savin
           </div>
           <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
             <div className="row g-3">
+              <div className="col-12">
+                <label className="form-label fw-semibold">Parent shift (optional)</label>
+                <select className="form-select form-select-sm" value={form.parentShiftId || ''} onChange={e => setForm(p => ({ ...p, parentShiftId: e.target.value || null }))}>
+                  <option value="">Main shift</option>
+                  {shifts.filter(shift => !shift.parentShiftId && shift._id !== form._id).map(shift => <option key={shift._id} value={shift._id}>{shift.name}</option>)}
+                </select>
+                <div className="form-text">A mini shift has its own times and rules. Choose it on the calendar for a one-day replacement.</div>
+              </div>
               <div className="col-md-6">
                 <label className="form-label fw-semibold" style={{ fontSize: 13 }}>Shift Name *</label>
                 <input className="form-control form-control-sm" value={form.name || ''} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} />

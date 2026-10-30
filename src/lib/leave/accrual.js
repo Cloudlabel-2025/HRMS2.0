@@ -9,7 +9,9 @@ export function getRelativePeriod(usagePeriod, cycleStart, date) {
   const dStart = new Date(cycleStart);
   const dEval = new Date(date);
 
-  let monthsDiff = (dEval.getFullYear() - dStart.getFullYear()) * 12 + dEval.getMonth() - dStart.getMonth();
+  let monthsDiff = (dEval.getFullYear() - dStart.getUTCFullYear()) * 12 + dEval.getMonth() - dStart.getUTCMonth();
+  // A month begins on the payroll start day, not on the first.
+  if (dEval.getDate() < dStart.getUTCDate()) monthsDiff -= 1;
   // Clamp between 0 and 11 for a 12-month cycle
   monthsDiff = Math.max(0, Math.min(11, monthsDiff));
 
