@@ -103,7 +103,7 @@ export default function DevAdminShiftsPage() {
         loading={loading}
         endingSessions={endingSessions}
         formatTime={formatTime}
-        onAdd={() => { setModalForm({ ...DEFAULT_SHIFT_FORM }); setShiftErrs({}); setShowForm(true); }}
+        onAdd={(parent) => { setModalForm(parent ? { ...DEFAULT_SHIFT_FORM, parentShiftId: parent._id, name: `${parent.name} — Mini` } : { ...DEFAULT_SHIFT_FORM }); setShiftErrs({}); setShowForm(true); }}
         onEdit={(s) => { setModalForm({ ...s }); setShiftErrs({}); setShowForm(true); }}
         onDelete={deleteShift}
         onEndSession={setEndSessionTarget}
@@ -111,6 +111,7 @@ export default function DevAdminShiftsPage() {
 
       {showForm && (
         <ShiftFormModal
+          shifts={shifts}
           form={modalForm}
           setForm={setModalForm}
           errors={shiftErrs}

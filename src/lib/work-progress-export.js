@@ -236,8 +236,6 @@ export async function downloadWorkProgressExcel(cycles, employeeName, filters = 
     ['Designation', designationLabel || '—'],
     ['Downloaded From (Date)', filters.fromDate || 'All available'],
     ['Downloaded To (Date)', filters.toDate || 'All available'],
-    ['Downloaded From (Month)', filters.fromMonth || 'All available'],
-    ['Downloaded To (Month)', filters.toMonth || 'All available'],
     ['Months', monthlyCycles.length], ['Dates', dateCount], ['Work entries', taskCount], ['Generated at', new Date()],
   ];
   summary.addRows(summaryRows);
@@ -282,11 +280,9 @@ export async function executeWorkProgressExport(job) {
   saveWorkProgressExportJob({ ...current, status: 'exporting' });
   try {
     const params = new URLSearchParams();
-    if (job.filters?.fromMonth) params.set('fromMonth', job.filters.fromMonth);
-    if (job.filters?.toMonth) params.set('toMonth', job.filters.toMonth);
     if (job.filters?.fromDate) params.set('fromDate', job.filters.fromDate);
     if (job.filters?.toDate) params.set('toDate', job.filters.toDate);
-    const cycles = await api.get(`/api/employees/${job.employeeId}/work-progress${params.size ? `?${params}` : ''}`);
+    const cycles = await api.get(`/api/employees/${job.employeeId}/work-progress${params.size ? `?${params}` : ''}`, { timeoutMs: 0 });
     await downloadWorkProgressExcel(Array.isArray(cycles) ? cycles : [], job.employeeName, job.filters, job.employeeMeta);
     // Countdown reached zero -> Excel auto-download completes, then clear the job.
     cancelWorkProgressExportJob();

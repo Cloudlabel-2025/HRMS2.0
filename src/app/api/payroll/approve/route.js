@@ -18,6 +18,8 @@ export async function POST(req) {
     if (!['approve', 'finalize'].includes(action)) return fail('Invalid action');
 
     const filter = payrollId ? { _id: payrollId } : { month };
+    if (await Payroll.exists({ ...filter, leaveRecalculationRequired: true })) return fail('Leave entitlement changed. Rerun payroll before approval or finalization.', 409);
+    filter.leaveRecalculationRequired = { $ne: true };
     const ip = req.headers.get('x-forwarded-for') || '';
 
     // Never lock a mid-cycle preview: its salaryPerDay uses the elapsed-day

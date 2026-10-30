@@ -712,7 +712,7 @@ export default function SettingsPage() {
               loading={loading}
               endingSessions={endingSessions}
               formatTime={formatTime}
-              onAdd={() => { setModalForm({ ...DEFAULT_SHIFT_FORM }); setShiftErrs({}); setShowModal('shift'); }}
+              onAdd={(parent) => { setModalForm(parent ? { ...DEFAULT_SHIFT_FORM, parentShiftId: parent._id, name: `${parent.name} — Mini` } : { ...DEFAULT_SHIFT_FORM }); setShiftErrs({}); setShowModal('shift'); }}
               onEdit={(s) => { setModalForm({ ...s }); setShiftErrs({}); setShowModal('shift'); }}
               onDelete={(id) => deleteItem('shifts', id)}
               onEndSession={endShiftSessions}
@@ -1064,6 +1064,7 @@ export default function SettingsPage() {
       {/* SHIFT MODAL */}
       {showModal === 'shift' && (
         <ShiftFormModal
+          shifts={shifts}
           form={modalForm}
           setForm={setModalForm}
           errors={shiftErrs}

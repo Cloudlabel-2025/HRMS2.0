@@ -34,6 +34,8 @@ const LeaveSchema = new mongoose.Schema({
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'cancelled'], default: 'pending' },
   // Guards balance movement against repeat approvals in legacy and policy workflows.
   balanceApplied: { type: Boolean, default: false },
+  entitlementVersion: { type: Number, default: 0 },
+  payrollDaySplit: [{ date: String, paidDays: Number, unpaidDays: Number, _id: false }],
 
   // Retroactive Payroll Auto-Adjustment Flags
   isRetroactive: { type: Boolean, default: false },

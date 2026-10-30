@@ -9,7 +9,8 @@ import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payrol
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { getTzTime, toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
-import { resolveShift, getShiftEndMinutes } from '@/lib/shift-utils';
+import { resolveShiftAtTime, resolveRecordShift, getShiftEndMinutes } from '@/lib/shift-utils';
+import { snapshotShift } from '@/lib/shift-schedule';
 import { getShiftConfig, calculateHoursWorked, diffMins } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { isFullDayLeaveCovered } from '@/lib/leave-cover';
@@ -76,18 +77,19 @@ export async function POST(req) {
       /* non-fatal */
     }
 
-    let shiftDoc = await resolveShift(user);
+    const resolvedSchedule = await resolveShiftAtTime(user, now);
+    let shiftDoc = resolvedSchedule.shift;
     const config = await getGlobalConfig();
 
     // Resolve shift-aware attendance date
     let today;
     try {
-      today = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+      today = resolvedSchedule.date;
     } catch {
       today = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0');
     }
 
-    const cfg = getShiftConfig(shiftDoc, config);
+    let cfg = getShiftConfig(shiftDoc, config);
 
     let record = await Attendance.findOne({ userId: user._id, date: today });
 
@@ -118,7 +120,8 @@ export async function POST(req) {
           // open records from previous attendance dates.
           for (const stale of openRecords) {
             if (stale.date === today) continue;
-            await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
+            const staleShift = await resolveRecordShift(user, stale);
+            await checkAndApplyAutoLogout(stale, now, getShiftConfig(staleShift, config), staleShift, isEmployer(user.role), { force: true });
             await stale.save();
             publishRecordEvent('clockout', stale);
             auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
@@ -128,7 +131,8 @@ export async function POST(req) {
         // The open session belongs to a PREVIOUS attendance date (overnight shift). Force-close
         // it and proceed with today's clock-in — never return the old 400 lockout.
         for (const stale of openRecords) {
-          await checkAndApplyAutoLogout(stale, now, cfg, shiftDoc, isEmployer(user.role), { force: true });
+          const staleShift = await resolveRecordShift(user, stale);
+          await checkAndApplyAutoLogout(stale, now, getShiftConfig(staleShift, config), staleShift, isEmployer(user.role), { force: true });
           await stale.save();
           publishRecordEvent('clockout', stale);
           auditLog('Clock In (Auto-Closed Stale Session)', 'Attendance', user._id, `Auto-closed stale session from ${stale.date} ${stale.clockIn} -> ${stale.clockOut}`, 'medium', ip, null, user._id);
@@ -312,6 +316,9 @@ export async function POST(req) {
             // Frozen per-day shift snapshot — past rows stay judged by this
             // shift even if the employee's shift is changed later.
             shiftId: shiftDoc?._id || null,
+            scheduleSnapshot: snapshotShift(shiftDoc),
+            dayOverrideId: shiftDoc?.dayOverrideId || null,
+            scheduleRevision: shiftDoc?.scheduleRevision || null,
             shiftName: shiftDoc?.name || user.shift || null,
             shiftStartTime: shiftDoc?.startTime || null,
             shiftEndTime: shiftDoc?.endTime || null,
@@ -455,6 +462,8 @@ export async function POST(req) {
         return fail('You have not clocked in yet', 400);
       }
 
+      shiftDoc = await resolveRecordShift(user, outRecord);
+      cfg = getShiftConfig(shiftDoc, config);
       const [ih, im] = outRecord.clockIn.split(':').map(Number);
       const [oh, om] = timeStr.split(':').map(Number);
       let elapsedMins = (oh * 60 + om) - (ih * 60 + im);

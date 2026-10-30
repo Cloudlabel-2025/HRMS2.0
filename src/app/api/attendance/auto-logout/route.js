@@ -1,7 +1,6 @@
 import { connectDB } from '@/lib/db';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
-import { Shift } from '@/lib/models/index';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
@@ -9,15 +8,10 @@ import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
 import { finalizeDayWork } from '@/lib/attendance-utils';
 import { closePermissionEarly } from '@/lib/permission-work';
-import { getShiftEndMinutes, resolveShift, resolveShiftForDate } from '@/lib/shift-utils';
+import { getShiftEndMinutes, createAttendanceShiftResolver } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { publishAttendance } from '@/lib/sse';
 
-function parseTimeToMinutes(timeStr) {
-  if (!timeStr) return null;
-  const [h, m] = timeStr.split(':').map(Number);
-  return h * 60 + m;
-}
 
 // getTodayStr is removed as we get the timezone-aware date string directly in POST
 
@@ -40,49 +34,13 @@ export async function POST(req) {
     const now = await getTzTime();
     const todayStr = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
 
-    // Get all shifts
-    const shifts = await Shift.find({}).lean();
     const globalConfig = await getGlobalConfig();
     const autoLoggedOut = [];
-
-    for (const shift of shifts) {
-      if (!shift.startTime || !shift.endTime) continue;
-
-      const endMinutes = parseTimeToMinutes(shift.endTime);
-      if (endMinutes === null) continue;
-
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
-      // Check if 5 hours have passed since shift end
-      // For overnight shifts (end < start), add 24h to end time
-      const startMinutes = parseTimeToMinutes(shift.startTime);
-      let effectiveEndMinutes = endMinutes;
-      if (startMinutes !== null && endMinutes < startMinutes) {
-        effectiveEndMinutes = endMinutes + 24 * 60;
-      }
-
-      const effectiveNowMinutes = nowMinutes < effectiveEndMinutes ? nowMinutes + 24 * 60 : nowMinutes;
-      if (effectiveNowMinutes < effectiveEndMinutes) continue;
-
-      // Find users on this shift (by shiftId first, falling back to the shift
-      // name so a stale user.shift string still matches) who haven't clocked out
-      const users = await User.find({
-        $or: [{ shift: shift.name }, { shiftId: shift._id }],
-        status: 'active',
-        role: { $ne: 'super_admin' },
-      }).select('shift shiftId name').lean();
-      const userIds = users.map(u => u._id);
-      const usersById = new Map(users.map(u => [u._id.toString(), u]));
-
-      if (userIds.length === 0) continue;
-
-      const records = await Attendance.find({
-        userId: { $in: userIds },
-        clockIn: { $ne: null },
-        clockOut: null,
-        autoLoggedOut: { $ne: true },
-        regularizationOutOpen: { $ne: true },
-      }).lean();
+    const users = await User.find({ status: 'active', role: { $ne: 'super_admin' } }).select('shift shiftId name').lean();
+    const usersById = new Map(users.map(u => [String(u._id), u]));
+    const resolver = await createAttendanceShiftResolver(users);
+    const records = await Attendance.find({ userId: { $in: users.map(u => u._id) },
+      clockIn: { $ne: null }, clockOut: null, autoLoggedOut: { $ne: true }, regularizationOutOpen: { $ne: true } }).lean();
 
       for (const record of records) {
         const [ih, im] = record.clockIn.split(':').map(Number);
@@ -93,7 +51,9 @@ export async function POST(req) {
         // current shift. A later shift change must never move this deadline.
         const recordUser = usersById.get(record.userId.toString());
         let userShift = null;
-        if (record.shiftStartTime) {
+        if (record.scheduleSnapshot?.startTime) {
+          userShift = { ...record.scheduleSnapshot, _id: record.shiftId };
+        } else if (record.shiftStartTime) {
           userShift = {
             _id: record.shiftId || null,
             name: record.shiftName || recordUser?.shift || '',
@@ -102,13 +62,9 @@ export async function POST(req) {
             lateThreshold: record.shiftLateThreshold ?? null,
           };
         } else {
-          try {
-            userShift = (await resolveShiftForDate(recordUser, record.date)) || (await resolveShift(recordUser)) || shift;
-          } catch {
-            userShift = (await resolveShift(recordUser)) || shift;
-          }
+          userShift = resolver.forDate(recordUser, record.date) || resolver.current(recordUser);
         }
-        if (!userShift) userShift = shift;
+        if (!userShift) continue;
         const recordShiftCfg = getShiftConfig(userShift, globalConfig);
         const endMins = getShiftEndMinutes(userShift, globalConfig);
         const deadlineMins = endMins + (recordShiftCfg.autoLogoutBuffer ?? 360);
@@ -189,7 +145,6 @@ export async function POST(req) {
           clockOut: finalClockOut,
         });
       }
-    }
 
     try {
       const { markAbsentEmployees } = await import('@/lib/attendance-utils');

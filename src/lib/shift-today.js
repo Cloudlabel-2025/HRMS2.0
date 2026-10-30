@@ -1,6 +1,5 @@
 import User from './models/User';
-import { resolveShift } from './shift-utils';
-import { getAttendanceDate } from './attendance-date';
+import { resolveShiftAtTime, resolveShiftForDate } from './shift-utils';
 import { getTzTime, formatDateStr } from './timezone';
 
 /**
@@ -23,21 +22,20 @@ export async function getShiftAwareToday(userId) {
  * today, shift-aware today, the bookable floor (earlier of the two) and
  * the shift window used for overnight time anchoring.
  */
-export async function getShiftDayInfo(userId) {
+export async function getShiftDayInfo(userId, requestedDate = null) {
   const now = await getTzTime();
   const calToday = formatDateStr(now);
   let shiftToday = null;
   let shiftStart = null;
   let shiftEnd = null;
-  try {
-    const u = await User.findById(userId).select('shift shiftId').lean();
-    if (u) {
-      const shiftDoc = await resolveShift(u);
-      shiftStart = shiftDoc?.startTime || null;
-      shiftEnd = shiftDoc?.endTime || null;
-      shiftToday = getAttendanceDate(now, shiftStart, shiftEnd);
-    }
-  } catch { /* fall through with calendar today */ }
+  const u = await User.findById(userId).select('shift shiftId').lean();
+  if (u) {
+    const resolved = await resolveShiftAtTime(u, now);
+    const shiftDoc = requestedDate ? await resolveShiftForDate(u, requestedDate) : resolved.shift;
+    shiftStart = shiftDoc?.startTime || null;
+    shiftEnd = shiftDoc?.endTime || null;
+    shiftToday = resolved.date;
+  }
   const minDate = shiftToday && shiftToday < calToday ? shiftToday : calToday;
   return { now, calToday, shiftToday, minDate, shiftStart, shiftEnd };
 }

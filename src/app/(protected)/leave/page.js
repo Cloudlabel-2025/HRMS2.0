@@ -67,6 +67,7 @@ export default function LeavePage() {
   const [leaves, setLeaves]         = useState([]);
   const [employees, setEmployees]   = useState([]);
   const [balanceData, setBalanceData] = useState(null);
+  const [balanceError, setBalanceError] = useState('');
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [tab, setTab]               = useState('my');
   const [showModal, setShowModal]   = useState(false);
@@ -117,12 +118,15 @@ export default function LeavePage() {
     if (!user) return;
     let cancelled = false;
     setLoading(true);
+    setBalanceError('');
+    setBalanceData(null);
     const url = targetUserId ? `/api/leave/balance?userId=${targetUserId}` : '/api/leave/balance';
     api.get(url).then(d => {
       if (!cancelled) setBalanceData(d);
     }).catch(e => {
       // 'Session expired' is handled globally by api.js (redirect to login); don't spam console.
       if (!cancelled && e.message !== 'Session expired') {
+        setBalanceError(e.message || 'Unable to load leave balances.');
         console.error('Balance API error:', e.message);
       }
     }).finally(() => { if (!cancelled) setLoading(false); });
@@ -320,11 +324,14 @@ export default function LeavePage() {
         </div>
       )}
 
+      {tab === 'my' && (!isSuperAdmin || selectedEmpId) && !isSme && balanceError && (
+        <div className="alert alert-danger" role="alert">Unable to load leave balances: {balanceError}</div>
+      )}
       {tab === 'my' && (!isSuperAdmin || selectedEmpId) && !isSme && balanceData?.balances && (
         <div className="row g-3 mb-4">
           {balanceData.balances.map(b => {
             const lt = typeMap[b.typeCode];
-            const available = b.allocated + b.carriedForward - b.used - b.pending;
+            const available = b.displayBalance ?? (b.allocated + b.carriedForward - b.used - b.pending);
             const total = b.allocated + b.carriedForward;
             const pct = total > 0 ? Math.min(Math.round(((b.used + b.pending) / total) * 100), 100) : 0;
             const color = lt?.color || '#3b82f6';
@@ -346,8 +353,10 @@ export default function LeavePage() {
 
               const periodUsageEntry = b.periodUsage?.find(p => (p.period || p.periodCode) === periodCode);
               const periodUsed = periodUsageEntry ? Number(periodUsageEntry.used || 0) : 0;
-              const periodLeft = Math.max(0, cfg.maxUsagePerPeriod - periodUsed);
-              periodText = `${periodLeft} left of ${cfg.maxUsagePerPeriod} this ${unit.replace('_', '-')}`;
+              const periodLeft = cfg.maxUsagePerPeriod - periodUsed;
+              periodText = b.displayBalance !== undefined
+                ? `${cfg.maxUsagePerPeriod} days per ${unit === 'quarterly' ? 'quarter' : unit === 'monthly' ? 'month' : unit.replace('_', '-')}${cfg.unusedPeriodRollover ? ' + unused carry-forward' : ''}`
+                : `${periodLeft} left of ${cfg.maxUsagePerPeriod} this ${unit.replace('_', '-')}`;
             }
 
             return (
@@ -360,13 +369,13 @@ export default function LeavePage() {
                       </span>
                       {lt?.name || 'Unknown'}
                     </span>
-                    <span style={{ fontSize: 12, color, fontWeight: 700 }}>{available} left</span>
+                    <span style={{ fontSize: 16, color: available < 0 ? '#dc2626' : color, fontWeight: 700 }}>{available} days</span>
                   </div>
                   <div className="progress mb-2">
                     <div className="progress-bar" style={{ width: `${pct}%`, background: color }} />
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#94a3b8' }}>
-                    <span>Used: {b.used}{b.pending > 0 ? ` (+${b.pending})` : ''}</span>
+                    <span>Paid used: {b.used}{b.pending > 0 ? ` (+${b.pending} pending)` : ''}</span>
                     <span>Total: {total}</span>
                   </div>
                   {b.carriedForward > 0 && (
@@ -374,6 +383,7 @@ export default function LeavePage() {
                       Carry fwd: +{b.carriedForward}
                     </div>
                   )}
+                  {b.excessDays > 0 && <div style={{ fontSize: 11, color: '#dc2626', marginTop: 4 }}>Excess leave: {b.excessDays} days · LOP when approved</div>}
                   {periodText && (
                     <div style={{ fontSize: 10, color: '#0ea5e9', marginTop: 4, borderTop: '1px dashed #e2e8f0', paddingTop: 4 }}>
                       <i className="bi bi-hourglass-split me-1" />{periodText}

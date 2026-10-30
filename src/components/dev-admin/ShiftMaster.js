@@ -16,7 +16,7 @@ export default function ShiftMaster({
     <div className="card p-3 p-md-4">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
         <div className="section-title" style={{ margin: 0 }}>{title}</div>
-        <button className="btn btn-primary btn-sm" onClick={onAdd}>
+        <button className="btn btn-primary btn-sm" onClick={() => onAdd()}>
           <i className="bi bi-plus-lg me-1" />Add Shift
         </button>
       </div>
@@ -31,12 +31,14 @@ export default function ShiftMaster({
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 14 }}>{s.name}</span>
                   <div style={{ display: 'flex', gap: 4 }}>
+                    {!s.parentShiftId && <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onAdd(s)}>Add mini shift</button>}
                     <button className="btn btn-sm btn-outline-warning" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onEndSession(s)} disabled={endingSessions}>End Session</button>
                     <button className="btn btn-sm btn-outline-primary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onEdit(s)}>Edit</button>
                     <button className="btn btn-sm btn-outline-danger"  style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => onDelete(s._id)}>Delete</button>
                   </div>
                 </div>
                 <div style={{ fontSize: 13, color: '#64748b' }}>
+                  {s.parentShiftId && <div className="small mb-1">Mini shift of {shifts.find(parent => parent._id === s.parentShiftId)?.name || 'parent shift'}</div>}
                   <i className="bi bi-clock me-2" />
                   {s.startTime && s.endTime ? `${fmt(s.startTime)} – ${fmt(s.endTime)}` : 'No timing set'}
                 </div>

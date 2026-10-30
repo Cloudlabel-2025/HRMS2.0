@@ -38,7 +38,7 @@ export function ShellDataProvider({ children }) {
         .catch(() => {});
     };
 
-    const loadAnnouncements = () => api.get('/api/announcements')
+    const loadAnnouncements = () => api.get('/api/announcements?recent=1')
       .then(data => {
         if (cancelled) return;
         const cutoff = Date.now() - (24 * 60 * 60 * 1000);
@@ -49,18 +49,26 @@ export function ShellDataProvider({ children }) {
       })
       .catch(() => { if (!cancelled) setNewsAnnouncements([]); });
 
-    void Promise.all([loadNotifications(), loadPendingRequests(), loadAnnouncements()]);
+    let polling = false;
+    const poll = async () => {
+      if (polling || document.visibilityState === 'hidden') return;
+      polling = true;
+      try {
+        await Promise.all([loadNotifications(), loadPendingRequests(), loadAnnouncements()]);
+      } finally { polling = false; }
+    };
+    void poll();
     api.get('/api/employees/me')
       .then(data => { if (!cancelled) setEmployeeProfileId(data?.employeeId || null); })
       .catch(() => {});
 
-    const interval = setInterval(() => {
-      void Promise.all([loadNotifications(), loadPendingRequests(), loadAnnouncements()]);
-    }, 30000);
+    const interval = setInterval(poll, 30000);
+    document.addEventListener('visibilitychange', poll);
 
     return () => {
       cancelled = true;
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', poll);
     };
   }, [user]);
 

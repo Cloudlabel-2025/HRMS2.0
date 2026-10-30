@@ -66,9 +66,14 @@ export async function GET(req) {
       };
     }
 
+    // The persistent news strip only needs the last day; avoid downloading
+    // the entire announcement archive every 30 seconds on every open tab.
+    if (new URL(req.url).searchParams.get('recent') === '1') {
+      query.createdAt = { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) };
+    }
     const announcements = await Announcement.find(query)
       .populate('author', 'name avatar')
-      .sort({ pinned: -1, createdAt: -1 });
+      .sort({ pinned: -1, createdAt: -1 }).lean();
     return ok({ announcements });
   } catch (e) {
     return fail(e.message, 500);

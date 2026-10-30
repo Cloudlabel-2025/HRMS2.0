@@ -3,6 +3,7 @@ import { Payroll, SalaryStructure } from '@/lib/models/Payroll';
 import PayrollRule from '@/lib/models/PayrollRule';
 import Attendance from '@/lib/models/Attendance';
 import User from '@/lib/models/User';
+import Leave from '@/lib/models/Leave';
 import { getGlobalConfig, getPayrollDay, getCycleRange, getWorkingDayCalendar, getCycleLabel, getCycleCalendarStats, buildWorkingDateSet, buildCalendarMap } from '@/lib/payroll-cycle';
 import { calculatePayroll } from '@/lib/payroll-calculator';
 import { classifyDayPay } from '@/lib/attendance-resolver';
@@ -11,9 +12,13 @@ import { syncEmployeeCalendarRows } from '@/lib/attendance-sync';
 import { auditLog } from '@/lib/middleware';
 import { notify } from '@/lib/notify';
 import { isEmployer } from '@/lib/permissions';
-import { resolveShiftForDate } from '@/lib/shift-utils';
+import { resolveRecordShift, loadDayOverrides } from '@/lib/shift-utils';
+import { elapsedScheduleMinutes } from '@/lib/shift-schedule';
+import { getTzTime, formatDateStr } from '@/lib/timezone';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 import { getEmploymentStartDate, countUnpaidWorkingDays } from '@/lib/payroll-lop-utils';
+import { leavePaidFraction } from '@/lib/payroll-periods';
+import { reconcileEntitlements } from '@/lib/leave/reconcile-entitlements';
 
 const DEFAULT_LOP_CONFIG = { basis: 'working_days', deductFrom: 'gross', countHalfDay: true, graceDays: 0, lateLopMode: 'half', lateGraceMinutes: 0, halfDayThresholdFullLop: true };
 
@@ -49,7 +54,7 @@ function isUnpaidLeave(leave) {
  *                                          (only set by an explicit reopen)
  * @returns {Object} summary
  */
-export async function runPayrollForMonth({ month, userIds = null, actor = null, ip = '', force = false }) {
+export async function runPayrollForMonth({ month, userIds = null, actor = null, ip = '', force = false, session = null, skipEntitlementReconcile = false }) {
   const [y, m] = month.split('-').map(Number);
   const year = y;
   const monthIndex = m - 1;
@@ -59,7 +64,8 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
   const endDay = getPayrollDay(config.payrollEndDay, 25);
   const { fromDate, toDate } = getCycleRange(startDay, endDay, year, monthIndex);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const scheduleNow = await getTzTime();
+  const todayStr = formatDateStr(scheduleNow);
   const isMidCycle = todayStr <= toDate;
 
   const workingCalendar = await getWorkingDayCalendar(fromDate, toDate, config);
@@ -81,11 +87,12 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
 
   const calendarStats = getCycleCalendarStats(fromDate, toDate, config);
 
-  const defaultRule = await PayrollRule.findOne({ isDefault: true }).lean();
+  const defaultRule = await PayrollRule.findOne({ isDefault: true }).session(session).lean();
 
-  const userFilter = { status: 'active' };
+  const userFilter = force && userIds?.length ? {} : { status: 'active' };
   if (Array.isArray(userIds) && userIds.length) userFilter._id = { $in: userIds.map(id => new mongoose.Types.ObjectId(String(id))) };
-  const employees = await User.find(userFilter);
+  const employees = await User.find(userFilter).session(session);
+  const dayOverrides = await loadDayOverrides(employees.map(employee => employee._id), session);
 
   const results = [];
   const skipped = [];
@@ -93,18 +100,20 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
 
   try {
     for (const emp of employees) {
-      const existing = await Payroll.findOne({ userId: emp._id, month });
+      const existing = await Payroll.findOne({ userId: emp._id, month }).session(session);
       if (!force) {
         if (existing?.status === 'finalized') continue;
         // Never demote an approved payroll back to draft without reopen.
         if (existing?.status === 'approved') continue;
       }
+      if (!skipEntitlementReconcile && !isEmployer(emp.role)) await reconcileEntitlements(emp._id, { session, actor });
 
-      const structure = await SalaryStructure.findOne({ userId: emp._id });
+      const structure = await SalaryStructure.findOne({ userId: emp._id }).session(session);
+      if (!structure && session) throw new Error(`Cannot recalculate payroll for ${emp.name}: salary structure is missing.`);
       if (!structure) { skipped.push({ userId: emp._id, reason: 'no salary structure' }); continue; }
 
       const rule = structure.ruleId
-        ? (await PayrollRule.findById(structure.ruleId).lean()) || defaultRule
+        ? (await PayrollRule.findById(structure.ruleId).session(session).lean()) || defaultRule
         : defaultRule;
       const lopConfig = rule?.lopConfig || DEFAULT_LOP_CONFIG;
 
@@ -132,13 +141,12 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         daysWorked = workingDays;
         lopDays = 0;
       } else {
-        const { default: Leave } = await import('@/lib/models/Leave');
         const approvedLeaves = await Leave.find({
           userId: emp._id,
           status: 'approved',
           from: { $lte: toDate },
           to: { $gte: fromDate },
-        });
+        }).session(session);
 
         // Employment-start guard (same rule as attendance-sync): pre-joining
         // dates are never LOP. The sync skips materialising them, so without
@@ -163,7 +171,9 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         // row (missing working days become absent, non-working days become
         // holiday, approved-leave days become leave). Clocked rows are never
         // touched, so this is a pure backfill — the LOP below counts real rows.
-        await syncEmployeeCalendarRows({
+        // In a correction transaction, count missing rows with the existing
+        // safety-net below; never backfill outside the caller's transaction.
+        if (!session) await syncEmployeeCalendarRows({
           userId: emp._id,
           fromDate,
           toDate,
@@ -177,7 +187,7 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         const records = await Attendance.find({
           userId: emp._id,
           date: { $gte: fromDate, $lte: toDate },
-        });
+        }).session(session);
 
         // Recompute status and the half-day-threshold flag from the frozen
         // shift snapshot. The stored flag is unreliable — seed data set it true
@@ -190,7 +200,7 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         const eligibleRecords = records.filter(r => workingDateSet.has(r.date) && isWorkedDay(r));
         for (const record of eligibleRecords) {
           if (!record.clockIn || record.approvedHalfDayLeave || ['leave', 'holiday'].includes(record.status)) continue;
-          const shift = await resolveShiftForDate(emp, record.date).catch(() => null);
+          const shift = await resolveRecordShift(emp, record);
           if (!shift?.startTime) continue;
           const cfg = getShiftConfig(shift, config);
           const [sh, sm] = shift.startTime.split(':').map(Number);
@@ -232,6 +242,9 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         for (const d of workingDateSet) {
           if (employmentStartDate && d < employmentStartDate) continue;
           const r = byDate.get(d);
+          const override = dayOverrides.get(`${emp._id}|${d}`);
+          if (override && !isWorkedDay(r) && !leaveCoveredDates.has(d)
+            && elapsedScheduleMinutes(scheduleNow, d, override.startTime) < (override.halfDayThreshold ?? 180)) continue;
           if (!r) { if (!leaveCoveredDates.has(d)) absentDaysVal += 1; continue; }
           if (r.status === 'absent' && !r.clockIn) { if (!leaveCoveredDates.has(d)) absentDaysVal += 1; continue; }
           // Days Worked: integer count of working dates actually turned up
@@ -274,13 +287,13 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         let unpaidLeaveDays = 0;
         let unpaidHalfDayRemainder = 0;
         for (const leave of approvedLeaves) {
-          const paidRatio = isUnpaidLeave(leave) ? 0 : 1;
           const halfDayCountsAsFull = leave.halfDay && lopConfig.countHalfDay === false;
           const start = leave.from < fromDate ? fromDate : leave.from;
           const end = leave.to > toDate ? toDate : leave.to;
           for (let cursor = new Date(`${start}T00:00:00`), last = new Date(`${end}T00:00:00`); cursor <= last; cursor.setDate(cursor.getDate() + 1)) {
             const d = cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0');
             if (!workingDateSet.has(d)) continue;
+            const paidRatio = leavePaidFraction(leave, d);
             if (employmentStartDate && d < employmentStartDate) continue;
             const workedThatDay = clockedDates.has(d);
             // Leave wins: a clocked-in leave day keeps status 'leave', which
@@ -294,7 +307,7 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
             // Remainder is LOP-only: a paid half-day leave never creates LOP,
             // and when countHalfDay is false the full-day credit already
             // covers the whole working day.
-            if (leave.halfDay && !workedThatDay && paidRatio === 0 && !halfDayCountsAsFull) unpaidHalfDayRemainder += 0.5;
+            if (leave.halfDay && !workedThatDay && isUnpaidLeave(leave) && !halfDayCountsAsFull) unpaidHalfDayRemainder += 0.5;
           }
         }
         unpaidLeaveDays += unpaidHalfDayRemainder;
@@ -309,13 +322,14 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         // Retroactive Leave Adjustments for prior locked cycles. Scoped to
         // leaves that closed BEFORE this cycle started — an unscoped query
         // pushed a backdated adjustment onto whatever cycle ran next.
-        const retroLeaves = await Leave.find({
+        const retroLeaves = session && existing ? [] : await Leave.find({
           userId: emp._id,
           status: 'approved',
           isRetroactive: true,
           retroAdjustedInPayroll: false,
+          entitlementVersion: { $ne: 1 },
           to: { $lt: fromDate },
-        });
+        }).session(session);
 
         let retroLopDays = 0;
         const retroLeaveIds = [];
@@ -327,7 +341,7 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           retroLeaveIds.push(rLeave._id);
         }
         retroLopDays = Math.round(retroLopDays * 100) / 100;
-        retroLopDaysVal = retroLopDays;
+        retroLopDaysVal = session && existing ? (existing.retroLopDays || 0) : retroLopDays;
         retroLeaveIdsVal = retroLeaveIds;
       }
 
@@ -341,8 +355,8 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         lopBreakdownAbsent: absentDaysVal,
         lopBreakdownLate: lateLopDaysVal,
         lopBreakdownUnpaid: unpaidLeaveDaysVal,
-        overrides: structure.overrides || [],
-        adhocBonuses: [],
+        overrides: session && existing ? (structure.overrides || []).filter(row => row.type !== 'bonus') : structure.overrides || [],
+        adhocBonuses: session && existing ? existing.bonuses || [] : [],
       });
 
       const payroll = await Payroll.findOneAndUpdate(
@@ -394,10 +408,12 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
           cycleLabel,
           runId,
           status: 'draft',
+          leaveRecalculationRequired: false,
+          ...(session ? { approvedBy: null, approvedAt: null, finalizedBy: null, finalizedAt: null } : {}),
           processedBy: actor?._id || null,
           processedAt: new Date(),
         },
-        { upsert: true, new: true }
+        { upsert: true, new: true, session }
       );
 
       // Mark retro leaves consumed so the next run does not re-deduct them.
@@ -405,15 +421,19 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
         try {
           await Leave.updateMany(
             { _id: { $in: retroLeaveIdsVal }, retroAdjustedInPayroll: { $ne: true } },
-            { $set: { retroAdjustedInPayroll: true, retroPayrollRunId: payroll._id } }
+            { $set: { retroAdjustedInPayroll: true, retroPayrollRunId: payroll._id } },
+            { session }
           );
         } catch (e) {
+          if (session) throw e;
           await auditLog('Payroll Retro Mark Failed', 'Payroll', actor?._id || null, `Run ${runId} could not mark retro leaves: ${e?.message || e}`, 'high', ip, null, emp._id);
         }
       }
       results.push(payroll);
     }
   } catch (runErr) {
+    // The caller owns rollback, including the previous payroll amounts.
+    if (session) throw runErr;
     // Compensate: remove drafts created by this run so a retry starts clean.
     // Records that were already approved/finalized and merely re-run under
     // `force` are preserved — only drafts bearing this runId are removed.
@@ -422,9 +442,9 @@ export async function runPayrollForMonth({ month, userIds = null, actor = null, 
     throw runErr;
   }
 
-  await Promise.all(results.map(r =>
+  if (!session) await Promise.all(results.map(r =>
     auditLog('Payroll Run', 'Payroll', actor?._id || null, `Payroll draft generated for ${month} (${effectiveWorkingDays} working days) run ${runId}`, 'high', ip, null, r.userId)
-  ));
+  )).catch(error => { console.error('Payroll completed; audit logging failed:', error.message); });
 
   return {
     month,

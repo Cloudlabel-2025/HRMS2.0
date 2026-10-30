@@ -1,3 +1,9 @@
+import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { payrollPeriod, payrollDay } from '@/lib/payroll-periods';
+import { leaveBalanceDisplay } from '@/lib/leave/balance-display';
+import Leave from '@/lib/models/Leave';
+import { getTzDateStr } from '@/lib/timezone';
+import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
 import dbConnect from '@/lib/db';
 import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
 import User from '@/lib/models/User';
@@ -128,136 +134,21 @@ function isEligibleForType(config, employeeContext) {
 /** Get or create a user's balance for the current cycle */
 export async function getOrCreateBalance(userId, policy) {
   await dbConnect();
-  const user = await User.findById(userId).select('role');
-  if (!user || isEmployer(user.role)) return null;
-
-  const now = new Date();
-  const cycleStart = new Date(now.getFullYear(), 0, 1);
-  const cycleEnd = new Date(now.getFullYear(), 11, 31);
-
-  const { buildEmployeeContext } = require('@/lib/leave/eligibility');
-  const employeeContext = await buildEmployeeContext(userId);
-
-  let balance = await UserLeaveBalance.findOne({ userId, cycleStart });
-  if (balance) {
-    // Sanitize: remove stale entries that lack typeCode (from pre-merge records)
-    const staleCount = balance.balances.filter(b => !b.typeCode).length;
-    if (staleCount > 0) {
-      balance.balances = balance.balances.filter(b => b.typeCode);
-      await balance.save();
-    }
-
-    // Sync: add balance entries for any new leave types added to the policy
-    const existingCodes = new Set(balance.balances.map(b => b.typeCode));
-    let changed = false;
-    for (const config of policy.leaveTypeConfigs || []) {
-      if (!config.code || !config.enabled || config.balanceMode === 'linked') continue;
-      if (!isEligibleForType(config, employeeContext)) continue;
-      // Unpaid types (LOP) never hold an allocated balance — cap controls via maxUsagePerPeriod
-      if (config.isPaid === false) {
-        if (!existingCodes.has(config.code)) {
-          balance.balances.push({
-            typeCode: config.code,
-            allocated: 0,
-            used: 0,
-            pending: 0,
-            carriedForward: 0,
-            expiryDate: null,
-            periodUsage: [],
-          });
-          changed = true;
-        } else {
-          const entry = balance.balances.find(b => b.typeCode === config.code);
-          if (entry && Number(entry.allocated || 0) !== 0) {
-            entry.allocated = 0;
-            changed = true;
-          }
-        }
-        continue;
-      }
-
-      if (!existingCodes.has(config.code)) {
-        const allocated = getDaysPerCredit(config);
-
-        balance.balances.push({
-          typeCode: config.code,
-          allocated,
-          used: 0,
-          pending: 0,
-          carriedForward: 0,
-          expiryDate: config.carryForwardExpiryMonths
-            ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
-            : null,
-          periodUsage: [],
-        });
-        changed = true;
-      } else if ((config.annualAllocation || 0) > 0) {
-        // Reconcile: backfill allocations that were never credited (e.g. balances
-        // created under a policy whose configs lacked a code). Only touches zero
-        // credits so accrued/manually-adjusted amounts are preserved.
-        const entry = balance.balances.find(b => b.typeCode === config.code);
-        if (entry && (entry.allocated === 0 || entry.allocated == null)) {
-          entry.allocated = getDaysPerCredit(config);
-          changed = true;
-        }
-      }
-    }
-    // Re-point to the resolved policy so accrual runs credit against the right one
-    if (String(balance.policyId) !== String(policy._id)) {
-      balance.policyId = policy._id;
-      changed = true;
-    }
-    if (changed) await balance.save();
-    return balance;
-  }
-
-  // Create new balances from policy
-  const balances = [];
-  for (const config of policy.leaveTypeConfigs || []) {
-    if (!config.code || !config.enabled || config.balanceMode === 'linked') continue;
-    if (!isEligibleForType(config, employeeContext)) continue;
-    // Unpaid types never hold allocation
-    if (config.isPaid === false) {
-      balances.push({
-        typeCode: config.code,
-        allocated: 0,
-        used: 0,
-        pending: 0,
-        carriedForward: 0,
-        expiryDate: null,
-        periodUsage: [],
-      });
-      continue;
-    }
-
-    const allocated = getDaysPerCredit(config);
-
-    balances.push({
-      typeCode: config.code,
-      allocated,
-      used: 0,
-      pending: 0,
-      carriedForward: 0,
-      expiryDate: config.carryForwardExpiryMonths
-        ? new Date(cycleEnd.getTime() + config.carryForwardExpiryMonths * 30 * 24 * 60 * 60 * 1000)
-        : null,
-      periodUsage: [],
-    });
-  }
-
-  balance = await UserLeaveBalance.create({ userId, policyId: policy._id, cycleStart, cycleEnd, balances });
-  return balance;
+  const result = await reconcileLeaveAndPayroll(userId, null, policy);
+  if (result.skipped) return null;
+  return UserLeaveBalance.findOne({ userId, cycleStart: new Date(result.cycleStart + 'T00:00:00Z') });
 }
 
-/** Get or create a user's balance for a specific cycle year (bulk import / history) */
 export async function getOrCreateBalanceForYear(userId, policy, year) {
   await dbConnect();
   const y = Number(year) || new Date().getFullYear();
-  const cycleStart = new Date(y, 0, 1);
-  const cycleEnd = new Date(y, 11, 31);
+  const globalConfig = await getGlobalConfig();
+  const period = payrollPeriod(y + '-06-15', globalConfig);
+  const cycleStart = new Date(period.yearStart + 'T00:00:00Z');
+  const cycleEnd = new Date(period.yearEnd + 'T23:59:59.999Z');
 
   const now = new Date();
-  if (y === now.getFullYear()) {
+  if (y === payrollPeriod(await getTzDateStr(), globalConfig).year) {
     return getOrCreateBalance(userId, policy);
   }
 
@@ -327,11 +218,11 @@ export async function GET(req) {
     if (!targetUser) return fail('User not found', 404);
 
     if (isEmployer(targetUser.role)) {
-      const now = new Date();
+      const period = payrollPeriod(await getTzDateStr(), await getGlobalConfig());
       return ok({
         policy: null,
-        cycleStart: new Date(now.getFullYear(), 0, 1),
-        cycleEnd: new Date(now.getFullYear(), 11, 31),
+        cycleStart: new Date(period.yearStart + 'T00:00:00Z'),
+        cycleEnd: new Date(period.yearEnd + 'T23:59:59.999Z'),
         balances: [],
       });
     }
@@ -364,6 +255,7 @@ export async function GET(req) {
     }
 
     const balance = await getOrCreateBalance(targetUserId, policy);
+    if (!balance) return fail('No leave balance could be loaded for this employee.', 404);
 
     // Populate type details
     const populated = await UserLeaveBalance.findById(balance._id).lean();
@@ -372,6 +264,10 @@ export async function GET(req) {
     const employeeContext = await buildEmployeeContext(targetUserId);
 
     const eligibleBalances = [];
+    const payrollConfig = await getGlobalConfig();
+    const currentPeriod = payrollPeriod(await getTzDateStr(), payrollConfig);
+    const activeLeaves = await Leave.find({ userId: targetUserId, status: { $in: ['approved', 'pending'] }, from: { $lte: currentPeriod.yearEnd }, to: { $gte: currentPeriod.yearStart } })
+      .select('typeCode status classificationRequired classifiedAt payrollDaySplit').lean();
     for (const b of populated.balances || []) {
       const typeCodeStr = b.typeCode || '';
       if (!typeCodeStr) continue;
@@ -389,7 +285,9 @@ export async function GET(req) {
           if (userGender !== 'female') continue;
         }
       }
-      eligibleBalances.push(b);
+      eligibleBalances.push({ ...b, ...leaveBalanceDisplay(b, config, activeLeaves, currentPeriod, {
+        startDay: payrollDay(payrollConfig.payrollStartDay, 26), endDay: payrollDay(payrollConfig.payrollEndDay, 25),
+      }) });
     }
 
     return ok({
@@ -412,195 +310,15 @@ export async function POST(req) {
   const body = await req.json();
   const { action, userId, adjustments } = body;
 
-  if (action === 'recalculate') {
-    // Admin manually recalculates balance for a user
-    if (!userId) return fail('userId is required', 400);
-    const targetUser = await User.findById(userId).select('-password');
-    if (!targetUser) return fail('User not found', 404);
-
-    if (isEmployer(targetUser.role)) {
-      const now = new Date();
-      const cycleStart = new Date(now.getFullYear(), 0, 1);
-      await UserLeaveBalance.deleteOne({ userId, cycleStart });
-      return ok({ message: 'Employer accounts do not track leave balances', balance: null });
-    }
-
-    const policy = await resolvePolicyForUser(targetUser);
-    if (!policy) return fail('No active leave policy found', 400);
-
-    // Delete existing balance for current cycle and recreate
-    const now = new Date();
-    const cycleStart = new Date(now.getFullYear(), 0, 1);
-    await UserLeaveBalance.deleteOne({ userId, cycleStart });
-
-    const balance = await getOrCreateBalance(userId, policy);
-    const populated = await UserLeaveBalance.findById(balance._id).lean();
-
-    await auditLog('Leave Balance Recalculated', 'Leave', user._id, `Recalculated leave balance for user ${userId}`, 'medium', req.headers.get('x-forwarded-for') || '', null, userId);
-    return ok({ message: 'Balance recalculated', balance: populated });
+  if (['recalculate', 'monthly-accrual', 'carry-forward'].includes(action)) {
+    if (action === 'recalculate' && !userId) return fail('userId is required', 400);
+    const targets = await User.find(userId ? { _id: userId } : { status: 'active', role: { $nin: EMPLOYER_ROLES } }).select('_id');
+    const results = [];
+    for (const target of targets) results.push(await reconcileLeaveAndPayroll(target._id, user));
+    return ok({ message: 'Payroll-period leave balances reconciled', processed: results.length, results });
   }
 
-  if (action === 'monthly-accrual') {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
-    const employerIds = employers.map(u => u._id.toString());
-    const allBalances = await UserLeaveBalance.find();
-    let processed = 0;
+  if (action === 'adjust') return fail('Use the leave balance adjustment form so adjustments are recorded in the entitlement ledger.', 400);
 
-    for (const bal of allBalances) {
-      if (employerIds.includes(bal.userId.toString())) continue;
-      if (now < bal.cycleStart || now > bal.cycleEnd) continue;
-
-      // Idempotency (year-aware): skip if already accrued this YYYY-MM
-      const accrualKey = `${now.getFullYear()}-${String(currentMonth).padStart(2, '0')}`;
-      if (bal.lastAccrualKey === accrualKey) continue;
-      // Legacy fallback: same month number in same year only
-      if (bal.lastAccrualMonth === currentMonth && String(bal.updatedAt || '').slice(0, 4) === String(now.getFullYear())) {
-        bal.lastAccrualKey = accrualKey;
-        await bal.save().catch(() => {});
-        continue;
-      }
-
-      const policy = await LeavePolicy.findById(bal.policyId);
-      if (!policy) continue;
-
-      const cycleStart = new Date(bal.cycleStart);
-      const monthsDiff = (now.getFullYear() - cycleStart.getFullYear()) * 12 + now.getMonth() - cycleStart.getMonth();
-
-      if (monthsDiff <= 0) continue; // Skip first month (initialized on creation)
-
-      let updated = false;
-      for (const entry of bal.balances) {
-        const config = policy.leaveTypeConfigs.find(c => c.code === entry.typeCode);
-        if (!config || !config.enabled || config.balanceMode === 'linked') continue;
-        // Never accrue unpaid types
-        if (config.isPaid === false) {
-          if (Number(entry.allocated || 0) !== 0) {
-            entry.allocated = 0;
-            updated = true;
-          }
-          continue;
-        }
-
-        let creditAmount = 0;
-        if (config.creditSchedule === 'monthly') {
-          creditAmount = getDaysPerCredit(config);
-        } else if (config.creditSchedule === 'quarterly' && monthsDiff % 3 === 0) {
-          creditAmount = getDaysPerCredit(config);
-        } else if (config.creditSchedule === 'half_yearly' && monthsDiff % 6 === 0) {
-          creditAmount = getDaysPerCredit(config);
-        }
-
-        if (creditAmount > 0) {
-          entry.allocated = (entry.allocated || 0) + creditAmount;
-          // Cap it at annual allocation
-          if (entry.allocated > config.annualAllocation) {
-            entry.allocated = config.annualAllocation;
-          }
-          updated = true;
-        }
-      }
-      if (updated) {
-        bal.lastAccrualMonth = currentMonth;
-        bal.lastAccrualKey = `${now.getFullYear()}-${String(currentMonth).padStart(2, '0')}`;
-        await bal.save();
-        processed++;
-      }
-    }
-
-    await auditLog('Monthly Accrual Processed', 'Leave', user._id, `Processed periodic accruals for ${processed} users`, 'high', req.headers.get('x-forwarded-for') || '');
-    return ok({ message: `Periodic accruals processed for ${processed} users` });
-  }
-
-  if (action === 'adjust') {
-    // Legacy adjust handler - but frontend now uses /api/leave/balance/adjust
-    if (!userId || !adjustments?.typeCode || adjustments.used === undefined) {
-      return fail('userId, typeCode, and used are required', 400);
-    }
-    const now = new Date();
-    const cycleStart = new Date(now.getFullYear(), 0, 1);
-    const balance = await UserLeaveBalance.findOne({ userId, cycleStart });
-    if (!balance) return fail('No balance record found for this user', 404);
-
-    const entry = balance.balances.find(b => b.typeCode === adjustments.typeCode);
-    if (!entry) return fail('Leave type not found in balance', 400);
-
-    if (adjustments.used !== undefined) entry.used = adjustments.used;
-    if (adjustments.allocated !== undefined) entry.allocated = adjustments.allocated;
-    if (adjustments.carriedForward !== undefined) entry.carriedForward = adjustments.carriedForward;
-    if (adjustments.pending !== undefined) entry.pending = adjustments.pending;
-
-    await balance.save();
-    await auditLog('Leave Balance Adjusted', 'Leave', user._id, `Adjusted balance for user ${userId}`, 'medium', req.headers.get('x-forwarded-for') || '', null, userId);
-    return ok({ message: 'Balance adjusted' });
-  }
-
-  if (action === 'carry-forward') {
-    // Process carry forward for all users (annual)
-    const now = new Date();
-    const currentCycleStart = new Date(now.getFullYear(), 0, 1);
-    const nextCycleStart = new Date(now.getFullYear() + 1, 0, 1);
-    const nextCycleEnd = new Date(now.getFullYear() + 1, 11, 31);
-
-    const allBalances = await UserLeaveBalance.find({ cycleStart: currentCycleStart });
-    const employers = await User.find({ role: { $in: EMPLOYER_ROLES } }).select('_id');
-    const employerIds = employers.map(u => u._id.toString());
-
-    let processed = 0;
-    for (const bal of allBalances) {
-      if (employerIds.includes(bal.userId.toString())) continue;
-      const policy = await LeavePolicy.findById(bal.policyId);
-      if (!policy) continue;
-
-      // Idempotence: skip if next cycle already exists
-      const existingNext = await UserLeaveBalance.findOne({ userId: bal.userId, cycleStart: nextCycleStart }).select('_id').lean();
-      if (existingNext) continue;
-
-      const nextBalances = [];
-      // Copy ALL enabled types (not just carry-allowed) — non-carry types start fresh
-      for (const config of policy.leaveTypeConfigs || []) {
-        if (!config.code || !config.enabled || config.balanceMode === 'linked') continue;
-        const entry = (bal.balances || []).find(b => b.typeCode === config.code);
-        const unused = entry ? Math.max(0, (entry.allocated || 0) + (entry.carriedForward || 0) - (entry.used || 0) - (entry.pending || 0)) : 0;
-        const carryOver = config.carryForwardAllowed ? Math.min(unused, config.carryForwardMaxDays || Infinity) : 0;
-
-        let expiryDate = null;
-        if (carryOver > 0 && config.carryForwardExpiryMonths > 0) {
-          const d = new Date(nextCycleStart);
-          d.setMonth(d.getMonth() + config.carryForwardExpiryMonths);
-          expiryDate = d;
-        }
-
-        // Quarterly/monthly types start with first installment, not full annual
-        const firstAlloc = config.isPaid === false ? 0 : getDaysPerCredit(config);
-
-        nextBalances.push({
-          typeCode: config.code,
-          allocated: firstAlloc,
-          used: 0,
-          pending: 0,
-          carriedForward: carryOver,
-          expiryDate,
-          periodUsage: [],
-        });
-      }
-
-      if (nextBalances.length > 0) {
-        await UserLeaveBalance.create({
-          userId: bal.userId,
-          policyId: bal.policyId,
-          cycleStart: nextCycleStart,
-          cycleEnd: nextCycleEnd,
-          balances: nextBalances,
-        });
-        processed++;
-      }
-    }
-
-    await auditLog('Carry Forward Processed', 'Leave', user._id, `Processed carry forward for ${processed} users`, 'high', req.headers.get('x-forwarded-for') || '');
-    return ok({ message: `Carry forward processed for ${processed} users` });
-  }
-
-  return fail('Unknown action', 400);
+  return fail('Invalid action', 400);
 }

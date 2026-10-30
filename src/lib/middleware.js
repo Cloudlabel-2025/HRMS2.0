@@ -15,10 +15,12 @@ export async function requireAuth(req) {
   await connectDB();
   
   // Check if token is blacklisted (revoked)
-  const blacklisted = await TokenBlacklist.findOne({ token });
+  const [blacklisted, user] = await Promise.all([
+    TokenBlacklist.exists({ token }),
+    User.findById(decoded.id).select('-password'),
+  ]);
   if (blacklisted) return { error: fail('Token has been revoked', 401) };
 
-  const user = await User.findById(decoded.id).select('-password');
   if (!user || user.status !== 'active') return { error: fail('User not found or inactive', 401) };
 
   // Impersonation: if X-Impersonate header is set and the authenticated user is super_admin,
@@ -50,10 +52,12 @@ export async function requirePortalAuth(req) {
   if (!decoded || decoded.tokenType === 'refresh') return { error: fail('Invalid or expired token', 401) };
 
   await connectDB();
-  const blacklisted = await TokenBlacklist.findOne({ token });
+  const [blacklisted, user] = await Promise.all([
+    TokenBlacklist.exists({ token }),
+    User.findById(decoded.id).select('-password'),
+  ]);
   if (blacklisted) return { error: fail('Token has been revoked', 401) };
 
-  const user = await User.findById(decoded.id).select('-password');
   if (!user) return { error: fail('User not found', 401) };
   if (user.status === 'active') return { user, portalAccess: 'hrms' };
 

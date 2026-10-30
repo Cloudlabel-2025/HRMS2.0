@@ -31,6 +31,7 @@ const UserSchema = new mongoose.Schema({
   phone:        { type: String, default: '' },
   shift:        { type: String, default: 'Morning (9AM-6PM)' },
   shiftId:      { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
+  scheduleRevision: { type: Number, default: 0 },
   avatar:       { type: String, default: '' },
   profilePhoto: { type: String, default: '' },
   skills:       [{ type: String }],

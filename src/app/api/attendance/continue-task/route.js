@@ -5,7 +5,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
 import { getAttendanceDate } from '@/lib/attendance-date';
-import { resolveShift } from '@/lib/shift-utils';
+import { resolveShiftAtTime } from '@/lib/shift-utils';
 import { computeWorkRowDuration } from '@/lib/attendance-constants';
 
 export async function POST(req) {
@@ -27,8 +27,7 @@ export async function POST(req) {
 
     const now = await getTzTime();
     const targetUser = await User.findById(user._id).select('shift shiftId').lean();
-    const shiftDoc = targetUser ? await resolveShift(targetUser) : null;
-    const today = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+    const { date: today } = await resolveShiftAtTime(targetUser, now);
 
     const record = await Attendance.findOne({ userId: user._id, date: today });
     if (!record || !record.clockIn) {

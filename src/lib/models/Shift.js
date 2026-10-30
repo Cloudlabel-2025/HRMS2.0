@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 
 const ShiftSchema = new mongoose.Schema({
   name:             { type: String, required: true },
+  parentShiftId:    { type: mongoose.Schema.Types.ObjectId, ref: 'Shift', default: null },
   startTime:        { type: String, required: true },
   endTime:          { type: String, required: true },
   days:             [{ type: String }],
@@ -21,4 +22,8 @@ const ShiftSchema = new mongoose.Schema({
 
 ShiftSchema.index({ name: 1 });
 
+if (mongoose.models.Shift && !mongoose.models.Shift.schema.path('parentShiftId')) {
+  delete mongoose.models.Shift;
+  delete mongoose.connection.models.Shift;
+}
 export default mongoose.models.Shift || mongoose.model('Shift', ShiftSchema);

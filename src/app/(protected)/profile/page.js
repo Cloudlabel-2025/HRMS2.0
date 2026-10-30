@@ -88,8 +88,6 @@ export default function ProfilePage() {
   const [wpLoading, setWpLoading] = useState(false);
   const [expandedCycle, setExpandedCycle] = useState(null);
   const [expandedDate, setExpandedDate] = useState(null);
-  const [filterFromMonth, setFilterFromMonth] = useState('');
-  const [filterToMonth, setFilterToMonth] = useState('');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
   const [fromDateError, setFromDateError] = useState('');
@@ -251,21 +249,11 @@ export default function ProfilePage() {
     setExpandedDate(prev => prev === dateId ? null : dateId);
   };
   const resetWpFilters = () => {
-    setFilterFromMonth('');
-    setFilterToMonth('');
     setFilterFromDate('');
     setFilterToDate('');
     setFromDateError('');
     setToDateError('');
   };
-  const wpMonthOptions = useMemo(() => {
-    const seen = new Set();
-    const opts = [];
-    for (const cycle of wpCycles) {
-      if (!seen.has(cycle.key)) { seen.add(cycle.key); opts.push({ key: cycle.key, label: cycle.label }); }
-    }
-    return opts;
-  }, [wpCycles]);
   // Actual data range — From/To dates are strictly limited to this range.
   const dataBounds = useMemo(() => {
     const dates = wpCycles.flatMap(c => (c.dates || []).map(d => d.date)).filter(Boolean).sort();
@@ -280,8 +268,6 @@ export default function ProfilePage() {
   const dateFiltersInvalid = Boolean(fromDateError || toDateError || dateRangeError);
   const filteredCycles = useMemo(() => {
     let filtered = wpCycles;
-    if (filterFromMonth) filtered = filtered.filter(c => c.key >= filterFromMonth);
-    if (filterToMonth) filtered = filtered.filter(c => c.key <= filterToMonth);
     if (filterFromDate || filterToDate) {
       filtered = filtered.map(c => {
         const dates = c.dates.filter(d => {
@@ -293,7 +279,7 @@ export default function ProfilePage() {
       }).filter(c => c.dates.length > 0);
     }
     return filtered;
-  }, [wpCycles, filterFromMonth, filterToMonth, filterFromDate, filterToDate]);
+  }, [wpCycles, filterFromDate, filterToDate]);
   const totalEntryCount = useMemo(() => {
     let count = 0;
     for (const c of filteredCycles) for (const d of c.dates) count += d.workProgress?.length || 0;
@@ -339,7 +325,7 @@ export default function ProfilePage() {
     const completed = pending.filter(t => t.completedDate).map(t => ({ text: t.text, completedDate: t.completedDate, attempts: t.attempts, totalMins: t.totalMins }));
     return { pending, completed, pendingCount: pending.length, completedCount: completed.length };
   }, [wpCycles]);
-  const buildExportFilters = () => ({ fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate });
+  const buildExportFilters = () => ({ fromDate: filterFromDate, toDate: filterToDate });
   const buildEmployeeMeta = () => ({
     role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
     department: data?.employee?.department || '',
@@ -1106,21 +1092,7 @@ export default function ProfilePage() {
             </div>
             <div style={{ padding: '14px 20px' }}>
               <div className="row g-3 align-items-end">
-                <div className="col-md-3">
-                  <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Month</label>
-                  <select className="form-select" style={{ fontSize: 13 }} value={filterFromMonth} onChange={e => setFilterFromMonth(e.target.value)}>
-                    <option value="">All Months</option>
-                    {wpMonthOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-3">
-                  <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Month</label>
-                  <select className="form-select" style={{ fontSize: 13 }} value={filterToMonth} onChange={e => setFilterToMonth(e.target.value)}>
-                    <option value="">All Months</option>
-                    {wpMonthOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-2">
+                <div className="col-md-5">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
                   <DateInput
                     className="form-control"
@@ -1134,7 +1106,7 @@ export default function ProfilePage() {
                     onErrorChange={setFromDateError}
                   />
                 </div>
-                <div className="col-md-2">
+                <div className="col-md-5">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
                   <DateInput
                     className="form-control"

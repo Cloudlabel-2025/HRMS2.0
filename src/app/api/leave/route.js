@@ -12,6 +12,7 @@ import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
 import { buildEmployeeContext, evaluateEligibility } from '@/lib/leave/eligibility';
 import { calculatePeriodAllowance } from '@/lib/leave/accrual';
 import { getLinkedTypes, CLASSIFICATION_WORKFLOW } from '@/lib/leave/linked-types';
+import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
 
 function getActiveWorkflow(policy, typeCode) {
   const typeConfig = policy?.leaveTypeConfigs?.find(config => config.code === typeCode);
@@ -606,10 +607,12 @@ export async function POST(req) {
     }
 
     await auditLog('Leave Applied', 'Leave', user._id, `Applied for ${days} days of ${typeConfig.name} (${from} to ${to})`, 'low', ip, null, user._id);
-    if (balanceWarning) {
-      await auditLog('Leave Balance Exhausted', 'Leave', user._id, `${days} day(s) of ${typeConfig.name} applied with only ${balanceWarning.available} available — paid in full, no LOP`, 'medium', ip, null, user._id).catch(() => {});
-    }
-    return ok({ ...leave.toObject(), balanceWarning }, 201);
+    await reconcileLeaveAndPayroll(user._id, user, policy);
+    const refreshed = await Leave.findById(leave._id).lean();
+    balanceWarning = refreshed.unpaidDays > 0 ? { typeCode, typeName: typeConfig.name, paidInFull: false,
+      available: refreshed.paidDays, requestedDays: days, shortfallDays: refreshed.unpaidDays,
+      message: `${refreshed.paidDays} paid day(s), ${refreshed.unpaidDays} LOP day(s), based on the payroll-period allowance.` } : null;
+    return ok({ ...refreshed, balanceWarning }, 201);
   } catch (e) {
     console.error('[LEAVE POST ERROR]:', e);
     return fail(e.message || 'An error occurred processing leave request', 500);

@@ -1,6 +1,6 @@
 import { calculateHoursWorked, computeWorkRowDuration, getShiftConfig } from './attendance-constants';
 import { calculateBreakDeduction } from './attendance-breaks';
-import { getShiftEndMinutes, resolveShift } from './shift-utils';
+import { getShiftEndMinutes, resolveShift, loadDayOverrides } from './shift-utils';
 import { isWorkingDay, getGlobalConfig, parseShiftStartTime } from './payroll-cycle';
 import { getAttendanceDate } from './attendance-date';
 import { Holiday, Employee } from './models/index';
@@ -152,6 +152,7 @@ export async function markAbsentEmployees(dateStr, options = {}) {
   const allShifts = await Shift.find({}).lean().catch(() => []);
   const shiftById = new Map((allShifts || []).map(s => [String(s._id), s]));
   const shiftByName = new Map((allShifts || []).map(s => [s.name, s]));
+  const dayOverrides = await loadDayOverrides(userIds);
 
   let count = 0;
 
@@ -173,9 +174,9 @@ export async function markAbsentEmployees(dateStr, options = {}) {
         if (sname && shiftByName.has(sname)) shiftDoc = shiftByName.get(sname);
         else if (sid || sname) shiftDoc = await resolveShift({ shiftId: emp.userId?.shiftId || emp.shiftId, shift: emp.shift || emp.userId?.shift }).catch(() => null);
       }
+      shiftDoc = dayOverrides.get(`${uid}|${dateStr}`) || shiftDoc;
       const cfg = getShiftConfig(shiftDoc, config);
-      const userToday = getAttendanceDate(now, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
-      if (dateStr === userToday) {
+      {
         let shiftStartMins = null;
         if (shiftDoc?.startTime) {
           const [sh, sm] = String(shiftDoc.startTime).split(':').map(Number);
@@ -190,9 +191,7 @@ export async function markAbsentEmployees(dateStr, options = {}) {
             shiftStartMins = 9 * 60;
           }
         }
-        let elapsed = now.getHours() * 60 + now.getMinutes() - shiftStartMins;
-        if (elapsed < -720) elapsed += 1440;
-        if (elapsed > 720) elapsed -= 1440;
+        const elapsed = Math.floor((now.getTime() - new Date(`${dateStr}T00:00:00`).getTime()) / 60000) - shiftStartMins;
         if (elapsed < (cfg.halfDayThreshold ?? 180)) continue; // not arrived yet — no DB write
       }
     } catch { /* on any shift-resolution failure, fall through and mark absent for past dates */ }

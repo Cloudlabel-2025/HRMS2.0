@@ -14,9 +14,12 @@ import {
   buildWorkingDateSet,
 } from '@/lib/payroll-cycle';
 import { classifyDayPay } from '@/lib/attendance-resolver';
-import { resolveShiftForDate } from '@/lib/shift-utils';
+import { createAttendanceShiftResolver, loadDayOverrides } from '@/lib/shift-utils';
+import { elapsedScheduleMinutes } from '@/lib/shift-schedule';
+import { getTzTime } from '@/lib/timezone';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
 import { getEmploymentStartDate, countUnpaidWorkingDays } from '@/lib/payroll-lop-utils';
+import { leavePaidFraction } from '@/lib/payroll-periods';
 
 const DEFAULT_LOP_CONFIG = {
   basis: 'working_days',
@@ -91,7 +94,7 @@ export async function GET(req) {
     if (!isAdmin) query.userId = user._id;
 
     const payrolls = await Payroll.find(query)
-      .populate('userId', 'name avatar department designation role')
+      .populate('userId', 'name avatar department designation role shift shiftId')
       .sort({ 'userId.name': 1 })
       .lean();
 
@@ -99,6 +102,9 @@ export async function GET(req) {
     const defaultRule = await PayrollRule.findOne({ isDefault: true }).lean();
 
     const details = {};
+    const shifts = await createAttendanceShiftResolver(payrolls.map(row => row.userId).filter(row => row?._id));
+    const dayOverrides = await loadDayOverrides(payrolls.map(payroll => payroll.userId?._id || payroll.userId));
+    const scheduleNow = await getTzTime();
 
     for (const payroll of payrolls) {
       const empId = payroll.userId?._id || payroll.userId;
@@ -128,11 +134,12 @@ export async function GET(req) {
       // Recompute late tiers from the frozen shift snapshot (same as the run
       // engine) so half/full escalation matches the stored lateLopDays.
       const byDate = new Map(records.map((r) => [r.date, { ...r }]));
-      const empDoc = { _id: empId, role: empRole };
+      const empDoc = payroll.userId?._id ? payroll.userId : { _id: empId, role: empRole };
       for (const d of orderedWorkingDates) {
         const record = byDate.get(d);
         if (!record?.clockIn || record.approvedHalfDayLeave || ['leave', 'holiday'].includes(record.status)) continue;
-        const shift = await resolveShiftForDate(empDoc, d).catch(() => null);
+        const shift = record.scheduleSnapshot?.startTime ? record.scheduleSnapshot
+          : shifts.forDate(empDoc, record.date) || shifts.current(empDoc);
         if (!shift?.startTime) continue;
         const cfg = getShiftConfig(shift, config);
         const [sh, sm] = String(shift.startTime).split(':').map(Number);
@@ -183,6 +190,9 @@ export async function GET(req) {
         const r = byDate.get(d);
         const covering = leavesByDate.get(d) || [];
         const coveredByLeave = covering.length > 0;
+        const override = dayOverrides.get(`${empId}|${d}`);
+        if (override && !r?.clockIn && !coveredByLeave
+          && elapsedScheduleMinutes(scheduleNow, d, override.startTime) < (override.halfDayThreshold ?? 180)) continue;
 
         // 1. Absent (no row, or absent with no clock-in) → Full day LOP.
         // A date covered by an approved leave is credited by the leave
@@ -227,15 +237,16 @@ export async function GET(req) {
         // leave which splits 0.5 presence + 0.5 leave; a half-day leave with
         // no clock-in leaves a 0.5 remainder that is also LOP).
         for (const leave of covering) {
-          if (!isUnpaidLeave(leave)) continue;
+          const unpaidFraction = 1 - leavePaidFraction(leave, d);
+          if (unpaidFraction <= 0) continue;
           const workedThatDay = clockedDates.has(d);
-          if (workedThatDay && !leave.halfDay) continue;
+          if (workedThatDay && !leave.halfDay && r?.status !== 'leave') continue;
           const halfDayCountsAsFull = leave.halfDay && lopConfig.countHalfDay === false;
           const credit = leave.halfDay && !halfDayCountsAsFull ? 0.5 : 1;
-          let dayLop = credit;
+          let dayLop = credit * unpaidFraction;
           // Remainder is LOP-only and only when the half-day credit did not
           // already cover the whole day (parity with the payroll engine).
-          if (leave.halfDay && !workedThatDay && !halfDayCountsAsFull) dayLop += 0.5;
+          if (leave.halfDay && !workedThatDay && isUnpaidLeave(leave) && !halfDayCountsAsFull) dayLop += 0.5;
           dayLop = round(dayLop);
           if (dayLop <= 0) continue;
           rows.push({
@@ -243,7 +254,7 @@ export async function GET(req) {
             day: dayNameOf(d),
             status: `leave (${leave.typeCode || leave.type || 'LOP'})`,
             clockIn: r?.clockIn || '',
-            lopType: 'Unpaid Leave',
+            lopType: leave.entitlementVersion === 1 && leave.isPaid !== false ? 'Excess Leave' : 'Unpaid Leave',
             quantum: dayLop >= 1 ? 'Full' : 'Half',
             dayLop,
             amount: round(salaryPerDay * dayLop),

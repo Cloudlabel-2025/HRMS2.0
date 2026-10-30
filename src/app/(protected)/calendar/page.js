@@ -7,6 +7,7 @@ import { useSettings } from '@/lib/settings';
 import AppShell from '@/components/AppShell';
 import DateInput from '@/components/DateInput';
 import ConfirmModal from '@/components/ConfirmModal';
+import DayShiftEditor from '@/components/DayShiftEditor';
 
 import { isSaturdayOff } from '@/lib/saturday-cycle';
 
@@ -539,6 +540,7 @@ export default function CalendarPage() {
                     </button>
                   </div>
                 </div>
+                {['super_admin', 'admin_full'].includes(user?.role) && <DayShiftEditor key={`${year}-${month}-${selectedDay}`} date={`${year}-${String(month + 1).padStart(2, '0')}-${String(selectedDay).padStart(2, '0')}`} />}
                 <div style={{ padding: '4px 8px' }}>
                   {selectedEvents.length === 0 && (
                     <div className="empty-state" style={{ padding: '20px 0' }}>

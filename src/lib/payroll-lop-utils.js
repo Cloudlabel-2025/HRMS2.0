@@ -3,6 +3,7 @@ import User from './models/User';
 import Attendance from './models/Attendance';
 import { Holiday, Leave } from './models/index';
 import { isWorkingDay } from './payroll-cycle';
+import { leavePaidFraction } from './payroll-periods';
 
 // UTC day part of a Date (join-guard errs toward inclusion — same as sync).
 function fmtDayUTC(d) {
@@ -84,7 +85,7 @@ export async function getEmploymentStartDate(userId) {
  */
 export async function countUnpaidWorkingDays(leave, config = {}, lopConfig = {}) {
   try {
-    if (!leave || !isUnpaidLeaveDoc(leave)) return 0;
+    if (!leave || (!isUnpaidLeaveDoc(leave) && !(leave.entitlementVersion === 1 && leave.unpaidDays > 0))) return 0;
     if (!leave.from || !leave.to || leave.from > leave.to) return 0;
     const [holidays, clocked] = await Promise.all([
       Holiday.find({ date: { $gte: leave.from, $lte: leave.to } }).lean().catch(() => []),
@@ -101,10 +102,11 @@ export async function countUnpaidWorkingDays(leave, config = {}, lopConfig = {})
       const workedThatDay = clockedDates.has(d);
       if (workedThatDay && !leave.halfDay) continue;
       const credit = leave.halfDay && !halfDayCountsAsFull ? 0.5 : 1;
-      unpaid += credit;
+      const fraction = 1 - leavePaidFraction(leave, d);
+      unpaid += credit * fraction;
       // Unpaid half-day leave on a day never clocked in: the remaining half
       // of the working day is neither worked nor covered — LOP remainder.
-      if (leave.halfDay && !workedThatDay && !halfDayCountsAsFull) unpaid += 0.5;
+      if (isUnpaidLeaveDoc(leave) && leave.halfDay && !workedThatDay && !halfDayCountsAsFull) unpaid += 0.5;
     }
     return Math.round(unpaid * 100) / 100;
   } catch {

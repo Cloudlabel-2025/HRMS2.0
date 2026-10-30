@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node --use-system-ca node_modules/next/dist/bin/next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node --use-system-ca node_modules/next/dist/bin/next start",
     "mobile:sync": "npx cap sync",
     "mobile:open": "npx cap open android"
   },

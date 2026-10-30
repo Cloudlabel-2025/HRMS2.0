@@ -26,8 +26,9 @@ export function parseHm(timeStr) {
 }
 
 /** Minutes elapsed since shift start, wraparound-aware (±12h). */
-export function elapsedSinceShiftStart(now, shiftStartMins) {
+export function elapsedSinceShiftStart(now, shiftStartMins, date) {
   if (shiftStartMins === null || shiftStartMins === undefined) return 0;
+  if (date) return (now - new Date(`${date}T00:00:00`)) / 60000 - shiftStartMins;
   let elapsed = now.getHours() * 60 + now.getMinutes() - shiftStartMins;
   if (elapsed < -720) elapsed += 1440;
   if (elapsed > 720) elapsed -= 1440;
@@ -184,14 +185,13 @@ export function deriveAbsenceKind({
   }
 
   // 4/5. No clock-in: threshold-gated not_arrived vs absent.
-  const today = shiftAwareToday(now, shiftDoc);
-  const elapsed = elapsedSinceShiftStart(now, shiftStartMins);
+  const elapsed = elapsedSinceShiftStart(now, shiftStartMins, date);
   const coversShift = permission?.startTime
     ? permissionCoversShiftStart(permission.startTime, shiftStartMins, lateThreshold)
     : false;
   const permissionStatus = permission?.status === 'approved' ? 'approved' : permission?.status === 'pending' ? 'pending' : null;
 
-  if (date === today && elapsed <= halfDayThreshold) {
+  if (elapsed <= halfDayThreshold) {
     // Not arrived yet — boundary is inclusive: exactly at the threshold
     // still counts as not-arrived, only strictly past it is absent.
     // Permission badge persists even if the permission window (e.g.

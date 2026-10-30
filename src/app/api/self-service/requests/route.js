@@ -163,7 +163,7 @@ export async function POST(req) {
       // Earliest bookable date is the earlier of the calendar today and the
       // employee's shift-aware today, so overnight shifts can still book
       // their live shift day. Shift times anchor post-midnight windows.
-      const dayInfo = await getShiftDayInfo(user._id);
+      const dayInfo = await getShiftDayInfo(user._id, date);
       const maxDate = addDaysStr(dayInfo.minDate, MAX_PERMISSION_ADVANCE_DAYS);
       const windowCheck = validatePermissionWindow({
         date, startTime, endTime, now: dayInfo.now,

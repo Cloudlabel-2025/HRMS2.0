@@ -86,6 +86,7 @@ const PayrollSchema = new mongoose.Schema({
   cycleLabel:{ type: String },
   runId: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
   status:     { type: String, enum: ['pending','draft','approved','finalized'], default: 'pending' },
+  leaveRecalculationRequired: { type: Boolean, default: false },
   processedBy:{ type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   processedAt:{ type: Date, default: null },
   approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },

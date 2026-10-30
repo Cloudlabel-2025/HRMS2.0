@@ -8,7 +8,7 @@ import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payrol
 import { getShiftAwareToday } from '@/lib/shift-today';
 import { getTzTime } from '@/lib/timezone';
 import { checkAndApplyAutoLogout } from '@/lib/attendance-utils';
-import { resolveShift, resolveShiftForDate, getShiftEndMinutes } from '@/lib/shift-utils';
+import { resolveRecordShift, createAttendanceShiftResolver, getShiftEndMinutes } from '@/lib/shift-utils';
 import { getShiftConfig, computeWorkRowDuration, closeExtraActiveRows, diffMins, calculateHoursWorked } from '@/lib/attendance-constants';
 import { resolveDayStatus } from '@/lib/attendance-resolver';
 import { reconcilePermissionWorkProgress } from '@/lib/permission-work';
@@ -199,11 +199,12 @@ export async function GET(req) {
     // Not-arrived derivation (display-only, never persisted) is applied
     // after resolveShiftForRow is defined — see below.
 
-    const clockedUsers = raw.filter(r => r.clockIn && r.userId?._id).map(r => r.userId);
-    const uniqueUsers = [...new Map(clockedUsers.map(u => [u._id.toString(), u])).values()];
+    const reportUsers = raw.filter(r => r.userId?._id).map(r => r.userId);
+    const uniqueUsers = [...new Map([...syncUids.map(_id => ({ _id })), ...reportUsers].map(u => [u._id.toString(), u])).values()];
+    const shifts = await createAttendanceShiftResolver(uniqueUsers);
     const shiftByUserId = {};
     for (const u of uniqueUsers) {
-      const sd = await resolveShift(u);
+      const sd = shifts.current(u);
       if (sd) shiftByUserId[u._id.toString()] = sd;
     }
 
@@ -212,12 +213,13 @@ export async function GET(req) {
     // Cached per user+date to avoid N+1 query blowup on Vercel.
     const _histShiftCache = new Map();
     const resolveShiftForRow = async (rec) => {
+      if (rec.scheduleSnapshot?.startTime) return { ...rec.scheduleSnapshot, _id: rec.shiftId };
       const uid = rec.userId?._id?.toString() || '';
       if (rec.date && rec.userId?._id) {
         const key = uid + '|' + rec.date;
         if (!_histShiftCache.has(key)) {
           try {
-            const hist = await resolveShiftForDate(rec.userId, rec.date, { fallbackToCurrent: false });
+            const hist = shifts.forDate(rec.userId, rec.date);
             _histShiftCache.set(key, hist || null);
           } catch { _histShiftCache.set(key, null); }
         }
@@ -249,10 +251,10 @@ export async function GET(req) {
         for (const u of missingUsers || []) {
           if (isEmployer(u.role)) continue;
           let shiftDoc = null;
-          try { shiftDoc = await resolveShift(u); } catch { shiftDoc = null; }
+          try { shiftDoc = shifts.forDate(u, _calToday) || shifts.current(u); } catch { shiftDoc = null; }
           const halfDayThreshold = Number(shiftDoc?.halfDayThreshold ?? 180) || 180;
           const shiftStartMins = resolveShiftStartMins(shiftDoc, u.shift);
-          const elapsed = elapsedSinceShiftStart(now, shiftStartMins);
+          const elapsed = elapsedSinceShiftStart(now, shiftStartMins, _calToday);
           if (elapsed < halfDayThreshold) {
             raw.push({
               _id: `notarrived_${u._id}_${_calToday}`,
@@ -283,7 +285,7 @@ export async function GET(req) {
         const shiftDoc = await resolveShiftForRow(rec);
         const halfDayThreshold = Number(shiftDoc?.halfDayThreshold ?? 180) || 180;
         const shiftStartMins = resolveShiftStartMins(shiftDoc, rec.userId?.shift);
-        const elapsed = elapsedSinceShiftStart(now, shiftStartMins);
+        const elapsed = elapsedSinceShiftStart(now, shiftStartMins, rec.date);
         if (elapsed < halfDayThreshold) {
           rec.notArrived = true;
           rec.displayStatus = 'not_arrived';
@@ -519,7 +521,10 @@ export async function GET(req) {
       }
     }
 
-    for (const rec of raw) rec.workProgress = reconcileBreakWorkProgress(rec);
+    for (const rec of raw) {
+      rec.workProgress = reconcileBreakWorkProgress(rec);
+      rec.effectiveShift = await resolveShiftForRow(rec);
+    }
     return ok(raw);
   } catch (e) {
     return fail(e.message, 500);
@@ -694,7 +699,8 @@ export async function PUT(req) {
     // desynchronise the flag from the actual breaks on the record.
     if (body.breaks) {
       const targetUser = await User.findById(targetUserId).select('shift shiftId').lean();
-      const shiftDoc = await resolveShift(targetUser);
+      const stored = await Attendance.findOne({ userId: targetUserId, date: today }).select('date scheduleSnapshot shiftId').lean();
+      const shiftDoc = await resolveRecordShift(targetUser, stored || { date: today });
       const cfg = await getGlobalConfig();
       const shiftCfg = getShiftConfig(shiftDoc, cfg);
 

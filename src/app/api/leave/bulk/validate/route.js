@@ -1,3 +1,4 @@
+import { payrollPeriod } from '@/lib/payroll-periods';
 import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
@@ -351,8 +352,8 @@ export async function POST(req) {
           // 8. Period cap + overall availability (paid split preview)
           if (typeConfig.isPaid && targetUser) {
             try {
-              const yr = new Date(`${from}T00:00:00`).getFullYear();
-              const bal = await UserLeaveBalance.findOne({ userId: targetUser._id, cycleStart: new Date(yr, 0, 1) }).lean();
+              const yr = payrollPeriod(from, config).year;
+              const bal = await UserLeaveBalance.findOne({ userId: targetUser._id, cycleStart: new Date(payrollPeriod(from, config).yearStart + 'T00:00:00Z') }).lean();
               if (bal) {
                 const entry = (bal.balances || []).find(b => b.typeCode === typeCode);
                 if (entry) {

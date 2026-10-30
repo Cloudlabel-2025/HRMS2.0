@@ -96,8 +96,6 @@ export default function EmployeeProfilePage() {
   const [wpLoading, setWpLoading] = useState(false);
   const [expandedCycle, setExpandedCycle] = useState(null);
   const [expandedDate, setExpandedDate] = useState(null);
-  const [filterFromMonth, setFilterFromMonth] = useState('');
-  const [filterToMonth, setFilterToMonth] = useState('');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
   const [showTimer, setShowTimer] = useState(false);
@@ -257,23 +255,11 @@ export default function EmployeeProfilePage() {
     setExpandedDate(prev => prev === dateId ? null : dateId);
   };
   const resetWpFilters = () => {
-    setFilterFromMonth('');
-    setFilterToMonth('');
     setFilterFromDate('');
     setFilterToDate('');
   };
-  const wpMonthOptions = useMemo(() => {
-    const seen = new Set();
-    const opts = [];
-    for (const cycle of wpCycles) {
-      if (!seen.has(cycle.key)) { seen.add(cycle.key); opts.push({ key: cycle.key, label: cycle.label }); }
-    }
-    return opts;
-  }, [wpCycles]);
   const filteredCycles = useMemo(() => {
     let filtered = wpCycles;
-    if (filterFromMonth) filtered = filtered.filter(c => c.key >= filterFromMonth);
-    if (filterToMonth) filtered = filtered.filter(c => c.key <= filterToMonth);
     if (filterFromDate || filterToDate) {
       filtered = filtered.map(c => {
         const dates = c.dates.filter(d => {
@@ -285,7 +271,7 @@ export default function EmployeeProfilePage() {
       }).filter(c => c.dates.length > 0);
     }
     return filtered;
-  }, [wpCycles, filterFromMonth, filterToMonth, filterFromDate, filterToDate]);
+  }, [wpCycles, filterFromDate, filterToDate]);
   const totalEntryCount = useMemo(() => {
     let count = 0;
     for (const c of filteredCycles) for (const d of c.dates) count += d.workProgress?.length || 0;
@@ -339,7 +325,7 @@ export default function EmployeeProfilePage() {
         await downloadWorkProgressExcel(
           filteredCycles,
           data?.employee?.name || 'Employee',
-          { fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate },
+          { fromDate: filterFromDate, toDate: filterToDate },
           {
             role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
             department: data?.employee?.department || '',
@@ -358,7 +344,7 @@ export default function EmployeeProfilePage() {
     const job = startWorkProgressExportJob({
       employeeId: id,
       employeeName: data?.employee?.name || 'Employee',
-      filters: { fromMonth: filterFromMonth, toMonth: filterToMonth, fromDate: filterFromDate, toDate: filterToDate },
+      filters: { fromDate: filterFromDate, toDate: filterToDate },
       employeeMeta: {
         role: ROLE_LABELS[data?.employee?.role] || data?.employee?.role || '',
         department: data?.employee?.department || '',
@@ -1099,25 +1085,11 @@ export default function EmployeeProfilePage() {
             </div>
             <div style={{ padding: '14px 20px' }}>
               <div className="row g-3 align-items-end">
-                <div className="col-md-3">
-                  <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Month</label>
-                  <select className="form-select" style={{ fontSize: 13 }} value={filterFromMonth} onChange={e => setFilterFromMonth(e.target.value)}>
-                    <option value="">All Months</option>
-                    {wpMonthOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-3">
-                  <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Month</label>
-                  <select className="form-select" style={{ fontSize: 13 }} value={filterToMonth} onChange={e => setFilterToMonth(e.target.value)}>
-                    <option value="">All Months</option>
-                    {wpMonthOptions.map(opt => <option key={opt.key} value={opt.key}>{opt.label}</option>)}
-                  </select>
-                </div>
-                <div className="col-md-2">
+                <div className="col-md-5">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
                   <DateInput className="form-control" style={{ fontSize: 13 }} value={filterFromDate} onChange={e => setFilterFromDate(e.target.value)} />
                 </div>
-                <div className="col-md-2">
+                <div className="col-md-5">
                   <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
                   <DateInput className="form-control" style={{ fontSize: 13 }} value={filterToDate} onChange={e => setFilterToDate(e.target.value)} />
                 </div>

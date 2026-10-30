@@ -8,6 +8,7 @@ async function tryRefresh() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
+      signal: AbortSignal.timeout(15000),
     });
     try {
       await res.json();
@@ -25,6 +26,7 @@ async function tryRefresh() {
 }
 
 async function request(url, options = {}, retry = true) {
+  const { timeoutMs = 30000, ...fetchOptions } = options;
   const isFormData = options.body instanceof FormData;
   const headers = {
     ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
@@ -33,7 +35,18 @@ async function request(url, options = {}, retry = true) {
   if (typeof window !== 'undefined' && window.__impersonatedUser?._id) {
     headers['X-Impersonate'] = window.__impersonatedUser._id;
   }
-  const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
+  let res;
+  try {
+    res = await fetch(url, {
+      ...fetchOptions, headers, credentials: 'same-origin',
+      // Bound page reads; writes retain their existing completion behavior.
+      signal: options.signal || (timeoutMs > 0 && (!options.method || options.method === 'GET')
+        ? AbortSignal.timeout(timeoutMs) : undefined),
+    });
+  } catch (error) {
+    if (error.name === 'TimeoutError') throw new Error('The server took too long to respond. Please try again.');
+    throw error;
+  }
 
   // Auto-refresh on 401 then retry once
   if (res.status === 401 && retry) {
@@ -68,7 +81,7 @@ async function request(url, options = {}, retry = true) {
 }
 
 export const api = {
-  get:    (url)        => request(url),
+  get:    (url, options) => request(url, options),
   post:   (url, body)  => request(url, { method: 'POST',   body: body instanceof FormData ? body : JSON.stringify(body) }),
   put:    (url, body)  => request(url, { method: 'PUT',    body: body instanceof FormData ? body : JSON.stringify(body) }),
   patch:  (url, body)  => request(url, { method: 'PATCH',  body: body instanceof FormData ? body : JSON.stringify(body) }),

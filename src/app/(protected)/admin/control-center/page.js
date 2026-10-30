@@ -38,6 +38,7 @@ export default function ControlCenterPage() {
 
   // Data states
   const [policies, setPolicies] = useState([]);
+  const [payrollPeriod, setPayrollPeriod] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [selectedPolicyId, setSelectedPolicyId] = useState('');
   const [currentPolicy, setCurrentPolicy] = useState(null);
@@ -98,6 +99,7 @@ export default function ControlCenterPage() {
     try {
       const res = await api.get('/api/admin/control-center/policies');
       const loadedPolicies = res.policies || [];
+      setPayrollPeriod(res.payrollPeriod || null);
       const loadedEmps = res.employees || [];
       setPolicies(loadedPolicies);
       setEmployees(loadedEmps);
@@ -585,11 +587,18 @@ export default function ControlCenterPage() {
                             {cfg.balanceMode !== 'linked' && <div className="col-12">
                               <fieldset className="border rounded-3 p-3" style={{ background: '#f8fafc' }}>
                                 <legend className="float-none w-auto px-2 mb-2" style={{ fontSize: 13, fontWeight: 700 }}>Leave entitlement</legend>
+                                <div className="alert alert-info small py-2">
+                                  Months, quarters and years follow the payroll start/end days.
+                                  {payrollPeriod && <div>Current quarter: {payrollPeriod.quarterStart} to {payrollPeriod.quarterEnd}</div>}
+                                  {['SL', 'CL', 'EL'].includes(cfg.code) && <div><strong>{cfg.code === 'EL' ? '3 days per quarter · unused Earned Leave carries forward.' : '1.5 days per quarter · unused leave expires at quarter-end.'}</strong></div>}
+                                  <div>Leave beyond the available allowance is LOP, including paid leave types. Rejected and cancelled requests do not consume allowance.</div>
+                                </div>
                                 <div className="row g-3">
                                   <div className="col-12">
                                     <label htmlFor={`credit-frequency-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Credit frequency</label>
                                     <select
                                       id={`credit-frequency-${idx}`}
+                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
                                       className="form-select"
                                       value={cfg.creditSchedule || 'upfront'}
                                       onChange={e => updateLeaveType(idx, { creditSchedule: e.target.value, accrualMode: e.target.value })}
@@ -601,6 +610,7 @@ export default function ControlCenterPage() {
                                     <label htmlFor={`days-per-credit-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Days per {getCreditSchedule(cfg.creditSchedule).unit}</label>
                                     <input
                                       id={`days-per-credit-${idx}`}
+                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
                                       type="number"
                                       min="0"
                                       step="0.01"
@@ -613,6 +623,7 @@ export default function ControlCenterPage() {
                                     <label htmlFor={`annual-entitlement-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Annual total (days)</label>
                                     <input
                                       id={`annual-entitlement-${idx}`}
+                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
                                       type="number"
                                       min="0"
                                       step="0.01"

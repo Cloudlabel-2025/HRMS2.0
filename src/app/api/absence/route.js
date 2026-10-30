@@ -1,4 +1,5 @@
 import { connectDB } from '@/lib/db';
+import { loadDayOverrides } from '@/lib/shift-utils';
 import { Absence, Employee, Leave, Holiday, Shift, ShiftChange, SelfServiceRequest } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
@@ -97,6 +98,7 @@ export async function GET(req) {
     }
 
     const rosterIdObjs = roster.map((r) => r.uid);
+    const dayOverrides = await loadDayOverrides(rosterIdObjs);
     const rosterById = new Map(roster.map((r) => [r.uid, r]));
 
     // ── Batch loads (no N+1) ──
@@ -143,6 +145,8 @@ export async function GET(req) {
     // Fall back to a frozen snapshot, then the current roster shift.
     const shiftForDate = (r, date) => {
       const att = attByKey.get(`${r.uid}|${date}`);
+      if (att?.scheduleSnapshot?.startTime) return { ...att.scheduleSnapshot, _id: att.shiftId };
+      if (dayOverrides.has(`${r.uid}|${date}`)) return dayOverrides.get(`${r.uid}|${date}`);
       const changes = historyByUser.get(r.uid) || [];
       const applied = changes.filter(c => c.effectiveDate <= date);
       if (applied.length) {

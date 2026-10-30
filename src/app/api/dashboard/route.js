@@ -12,6 +12,8 @@ import { computeWorkRowDuration } from '@/lib/attendance-constants';
 import { getAttendanceDate } from '@/lib/attendance-date';
 import { deriveAbsenceKind } from '@/lib/absence-status';
 import { getTzTime } from '@/lib/timezone';
+import { loadDayOverrides } from '@/lib/shift-utils';
+import { scheduleDayAt } from '@/lib/shift-schedule';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -104,6 +106,7 @@ export async function GET(req) {
     ]);
     const shiftById = new Map((shiftDocs || []).map((s) => [String(s._id), s]));
     const shiftByName = new Map((shiftDocs || []).map((s) => [s.name, s]));
+    const dayOverrides = await loadDayOverrides(monitoredIds);
 
     const attByKey = new Map();
     for (const record of attendanceRecords || []) attByKey.set(`${String(record.userId)}|${record.date}`, record);
@@ -151,8 +154,10 @@ export async function GET(req) {
       const uDoc = employee.userId || {};
       const sid = uDoc.shiftId || employee.shiftId;
       const sname = employee.shift || uDoc.shift;
-      const shiftDoc = (sid && shiftById.get(String(sid))) || (sname && shiftByName.get(sname)) || null;
-      const empToday = getAttendanceDate(nowTz, shiftDoc?.startTime || null, shiftDoc?.endTime || null);
+      const normalShift = (sid && shiftById.get(String(sid))) || (sname && shiftByName.get(sname)) || null;
+      const resolved = scheduleDayAt(nowTz, tzToday, dayOverrides.get(`${id}|${tzToday}`) || normalShift, dayOverrides.get(`${id}|${tzYest}`) || normalShift);
+      const shiftDoc = resolved.shift;
+      const empToday = resolved.date;
       const record = attByKey.get(`${id}|${empToday}`) || null;
       const leave = leaveByKey.get(`${id}|${empToday}`) || null;
       const perm = permByKey.get(`${id}|${empToday}`)

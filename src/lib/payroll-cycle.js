@@ -1,5 +1,6 @@
 import { SystemConfig, Holiday } from '@/lib/models/index';
 import { isSaturdayOff } from '@/lib/saturday-cycle';
+import { cycleRange, cycleMonth } from './payroll-periods';
 
 export async function getGlobalConfig() {
   const doc = await SystemConfig.findOne({ key: 'global_config' }).lean();
@@ -149,29 +150,18 @@ export async function getWorkingDayCalendar(fromDate, toDate, config = {}) {
 }
 
 export function getCycleRange(payrollStartDay, payrollEndDay, year, month) {
-  const prevM = month === 0 ? 11 : month - 1;
-  const prevY = month === 0 ? year - 1 : year;
-  const fromDate = `${prevY}-${String(prevM + 1).padStart(2, '0')}-${String(payrollStartDay).padStart(2, '0')}`;
-  const toDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(payrollEndDay).padStart(2, '0')}`;
-  return { fromDate, toDate };
+  return cycleRange(payrollStartDay, payrollEndDay, year, month);
 }
 
 export function getCycleMonth(dateStr, payrollStartDay) {
-  const d = new Date(dateStr);
-  const day = d.getDate();
-  const month = d.getMonth();
-  const year = d.getFullYear();
-  if (day >= payrollStartDay) {
-    const nextMonth = new Date(year, month + 1, 1);
-    return { year: nextMonth.getFullYear(), month: nextMonth.getMonth() };
-  }
-  return { year, month };
+  return cycleMonth(String(dateStr).slice(0, 10), payrollStartDay);
 }
 
 export function getCycleLabel(year, month, payrollStartDay, payrollEndDay) {
   const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const prevMonth = month === 0 ? 11 : month - 1;
-  return `${names[prevMonth]} ${payrollStartDay} – ${names[month]} ${payrollEndDay}, ${year}`;
+  const range = getCycleRange(payrollStartDay, payrollEndDay, year, month);
+  const [fy, fm, fd] = range.fromDate.split('-').map(Number), [ty, tm, td] = range.toDate.split('-').map(Number);
+  return `${names[fm - 1]} ${fd}${fy !== ty ? `, ${fy}` : ''} – ${names[tm - 1]} ${td}, ${ty}`;
 }
 
 export function getCycleCalendarStats(fromDate, toDate, config = {}) {

@@ -5,7 +5,7 @@ import { Shift } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { getTzTime } from '@/lib/timezone';
-import { getShiftEndMinutes } from '@/lib/shift-utils';
+import { getShiftEndMinutes, createAttendanceShiftResolver } from '@/lib/shift-utils';
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { getShiftConfig, calculateHoursWorked } from '@/lib/attendance-constants';
 import { calculateBreakDeduction } from '@/lib/attendance-breaks';
@@ -27,14 +27,13 @@ export async function POST(req) {
 
     const now = await getTzTime();
     const globalConfig = await getGlobalConfig();
-    const shiftCfg = getShiftConfig(shiftDoc, globalConfig);
-    const endMins = getShiftEndMinutes(shiftDoc, shiftCfg);
 
     const users = await User.find({
-      $or: [{ shiftId: shiftDoc._id }, { shift: shiftDoc.name }],
       status: 'active',
       role: { $ne: 'super_admin' },
-    }).select('_id').lean();
+    }).select('_id shift shiftId').lean();
+    const resolver = await createAttendanceShiftResolver(users);
+    const usersById = new Map(users.map(item => [String(item._id), item]));
     const userIds = users.map(u => u._id);
     if (userIds.length === 0) return ok({ message: 'No employees are assigned to this shift.', count: 0, records: [] });
 
@@ -48,6 +47,12 @@ export async function POST(req) {
     let count = 0;
     const ended = [];
     for (const record of records) {
+      const employee = usersById.get(String(record.userId));
+      const effective = record.scheduleSnapshot?.startTime ? { ...record.scheduleSnapshot, _id: record.shiftId }
+        : resolver.forDate(employee, record.date) || resolver.current(employee);
+      if (!effective || (String(effective._id) !== String(shiftDoc._id) && (effective._id || effective.name !== shiftDoc.name))) continue;
+      const shiftCfg = getShiftConfig(effective, globalConfig);
+      const endMins = getShiftEndMinutes(effective, shiftCfg);
       const [ih, im] = record.clockIn.split(':').map(Number);
       const clockInMins = ih * 60 + im;
       const recordDateMs = new Date(record.date + 'T00:00:00').getTime();

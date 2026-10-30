@@ -3,7 +3,7 @@
 const DAYS_UNUSED = null; // day label arrives precomputed from the API
 
 const safeName = (value) =>
-  String(value || 'employee').replace(/[\\/:*?"<>|]+/g, '_').trim().slice(0, 31) || 'employee';
+  String(value || 'employee').replace(/[\\/:*?"<>|\[\]\x00-\x1f]+/g, '_').trim().slice(0, 31).replace(/^'+|'+$/g, '') || 'employee';
 
 function uniqueSheetName(base, used) {
   const name = safeName(base);
@@ -12,8 +12,11 @@ function uniqueSheetName(base, used) {
     return name;
   }
   let idx = 2;
-  while (used.has(`${name} (${idx})`.slice(0, 31).toLowerCase())) idx++;
-  const candidate = `${name} (${idx})`.slice(0, 31);
+  let candidate;
+  do {
+    const suffix = ` (${idx++})`;
+    candidate = `${name.slice(0, 31 - suffix.length)}${suffix}`;
+  } while (used.has(candidate.toLowerCase()));
   used.add(candidate.toLowerCase());
   return candidate;
 }
@@ -92,7 +95,7 @@ export async function buildPayrollExcel(report) {
   const periodLabel = cycleLabel || month || '—';
   const rangeLabel = fromDate || toDate ? `${fromDate || '—'} to ${toDate || '—'}` : periodLabel;
   const generatedAt = new Date().toLocaleString();
-  const usedNames = new Set();
+  const usedNames = new Set(['summary', 'history']);
 
   // ── Summary sheet (always first) ──────────────────────────────────────────
   const summaryHeaders = [

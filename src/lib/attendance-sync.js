@@ -2,6 +2,9 @@ import { Holiday, Leave } from './models/index';
 import mongoose from 'mongoose';
 import User from './models/User';
 import Attendance from './models/Attendance';
+import { loadDayOverrides } from './shift-utils';
+import { elapsedScheduleMinutes } from './shift-schedule';
+import { getTzTime } from './timezone';
 import { isWorkingDay } from './payroll-cycle';
 import { isWorkedDay } from './attendance-stats';
 
@@ -125,6 +128,8 @@ export async function syncCalendarRowsForUsers({
   const overrideSet = new Set((holidays || []).filter(h => typeof h !== 'string' && h.workingDayOverride).map(h => h.date));
   const dates = eachDateStr(fromDate, toDate).filter(d => d <= today);
   if (!dates.length || !uids.length) return { inserted: 0, updated: 0, skipped: 0 };
+  const dayOverrides = await loadDayOverrides(uids);
+  const scheduleNow = dayOverrides.size ? (now || await getTzTime()) : null;
 
   const [rows, approvedLeaves] = await Promise.all([
     Attendance.find({ userId: { $in: uids }, date: { $gte: fromDate, $lte: toDate } })
@@ -230,6 +235,11 @@ export async function syncCalendarRowsForUsers({
       // source counts as work.
       const hasWork = isWorkedDay(ex);
       const lv = leaveByDate.get(d);
+      const override = dayOverrides.get(`${uid}|${d}`);
+      if (override && !hasWork && !lv && kind === 'working'
+        && elapsedScheduleMinutes(scheduleNow, d, override.startTime) < (override.halfDayThreshold ?? 180)) {
+        skipped++; continue;
+      }
 
       if (kind !== 'working') {
         const nwd = kind === 'holiday' ? 'holiday' : 'weekly_off';

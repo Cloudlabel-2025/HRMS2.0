@@ -113,8 +113,6 @@ export default function WorkProgressPage() {
   const [toast, setToast] = useState({ msg: '', type: 'success' });
 
   // Filters
-  const [filterFromMonth, setFilterFromMonth] = useState('');
-  const [filterToMonth, setFilterToMonth] = useState('');
   const [filterFromDate, setFilterFromDate] = useState('');
   const [filterToDate, setFilterToDate] = useState('');
   const [fromDateError, setFromDateError] = useState('');
@@ -164,8 +162,6 @@ export default function WorkProgressPage() {
   };
 
   const resetFilters = () => {
-    setFilterFromMonth('');
-    setFilterToMonth('');
     setFilterFromDate('');
     setFilterToDate('');
     setFromDateError('');
@@ -185,29 +181,11 @@ export default function WorkProgressPage() {
   }, [filterFromDate, filterToDate, dataBounds, formatDate]);
   const dateFiltersInvalid = Boolean(fromDateError || toDateError || dateRangeError);
 
-  // Build available month options from data
-  const monthOptions = useMemo(() => {
-    const seen = new Set();
-    const opts = [];
-    for (const cycle of cycles) {
-      if (!seen.has(cycle.key)) {
-        seen.add(cycle.key);
-        opts.push({ key: cycle.key, label: cycle.label });
-      }
-    }
-    return opts;
-  }, [cycles]);
 
   // Apply filters
   const filteredCycles = useMemo(() => {
     let filtered = cycles;
 
-    if (filterFromMonth) {
-      filtered = filtered.filter(c => c.key >= filterFromMonth);
-    }
-    if (filterToMonth) {
-      filtered = filtered.filter(c => c.key <= filterToMonth);
-    }
 
     // Date-level filtering
     if (filterFromDate || filterToDate) {
@@ -222,7 +200,7 @@ export default function WorkProgressPage() {
     }
 
     return filtered;
-  }, [cycles, filterFromMonth, filterToMonth, filterFromDate, filterToDate]);
+  }, [cycles, filterFromDate, filterToDate]);
 
   const totalEntryCount = useMemo(() => {
     let count = 0;
@@ -325,25 +303,7 @@ export default function WorkProgressPage() {
       {/* Filters */}
       <FilterCard>
         <div className="row g-3 align-items-end">
-          <div className="col-md-3">
-            <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Month</label>
-            <select className="form-select" style={{ fontSize: 13 }} value={filterFromMonth} onChange={e => setFilterFromMonth(e.target.value)}>
-              <option value="">All Months</option>
-              {monthOptions.map(opt => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-3">
-            <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Month</label>
-            <select className="form-select" style={{ fontSize: 13 }} value={filterToMonth} onChange={e => setFilterToMonth(e.target.value)}>
-              <option value="">All Months</option>
-              {monthOptions.map(opt => (
-                <option key={opt.key} value={opt.key}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-2">
+          <div className="col-md-5">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>From Date</label>
             <DateInput
               className="form-control"
@@ -357,7 +317,7 @@ export default function WorkProgressPage() {
               onErrorChange={setFromDateError}
             />
           </div>
-          <div className="col-md-2">
+          <div className="col-md-5">
             <label className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>To Date</label>
             <DateInput
               className="form-control"
