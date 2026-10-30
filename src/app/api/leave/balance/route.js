@@ -1,9 +1,8 @@
 import { getGlobalConfig } from '@/lib/payroll-cycle';
 import { payrollPeriod, payrollDay } from '@/lib/payroll-periods';
 import { leaveBalanceDisplay } from '@/lib/leave/balance-display';
-import Leave from '@/lib/models/Leave';
 import { getTzDateStr } from '@/lib/timezone';
-import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
+import { reconcileEntitlements, reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
 import dbConnect from '@/lib/db';
 import { UserLeaveBalance, LeavePolicy } from '@/lib/models/index';
 import User from '@/lib/models/User';
@@ -254,20 +253,18 @@ export async function GET(req) {
       return fail(`No active leave policy found. User role=${targetUser.role}, dept="${userDepartment}", empType="${employmentType}", activePolicies=${allPolicies.length}. Check server logs for [LEAVE DEBUG] details.`, 400);
     }
 
-    const balance = await getOrCreateBalance(targetUserId, policy);
-    if (!balance) return fail('No leave balance could be loaded for this employee.', 404);
-
-    // Populate type details
-    const populated = await UserLeaveBalance.findById(balance._id).lean();
-
+    // Page reads calculate a current view without locking the employee,
+    // writing balances/audits, or rerunning payroll. Mutation paths reconcile.
     const { buildEmployeeContext } = require('@/lib/leave/eligibility');
-    const employeeContext = await buildEmployeeContext(targetUserId);
+    const [populated, employeeContext, payrollConfig, today] = await Promise.all([
+      reconcileEntitlements(targetUserId, { preview: true, policy }),
+      buildEmployeeContext(targetUserId), getGlobalConfig(), getTzDateStr(),
+    ]);
+    if (populated.skipped) return fail('No leave balance could be loaded for this employee.', 404);
 
     const eligibleBalances = [];
-    const payrollConfig = await getGlobalConfig();
-    const currentPeriod = payrollPeriod(await getTzDateStr(), payrollConfig);
-    const activeLeaves = await Leave.find({ userId: targetUserId, status: { $in: ['approved', 'pending'] }, from: { $lte: currentPeriod.yearEnd }, to: { $gte: currentPeriod.yearStart } })
-      .select('typeCode status classificationRequired classifiedAt payrollDaySplit').lean();
+    const currentPeriod = payrollPeriod(today, payrollConfig);
+    const activeLeaves = populated.leaveLedger;
     for (const b of populated.balances || []) {
       const typeCodeStr = b.typeCode || '';
       if (!typeCodeStr) continue;

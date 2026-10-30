@@ -44,7 +44,10 @@ export async function reconcileEntitlements(userId, { session = null, preview = 
     changes: changes.map(row => ({ leaveId: String(row.leave._id), typeCode: row.leave.typeCode, from: row.leave.from, to: row.leave.to, status: row.leave.status,
       oldPaidDays: row.leave.paidDays, oldUnpaidDays: row.leave.unpaidDays, paidDays: row.paidDays, unpaidDays: row.unpaidDays })),
     cycleStart: plan.cycleStart, cycleEnd: plan.cycleEnd, quarterStart: plan.quarterStart, quarterEnd: plan.quarterEnd, balances: plan.balances };
-  if (preview) return summary;
+  if (preview) return { ...summary, leaveLedger: plan.leaves.map(row => ({
+    typeCode: row.leave.typeCode, status: row.leave.status, classificationRequired: row.leave.classificationRequired,
+    classifiedAt: row.leave.classifiedAt, payrollDaySplit: row.payrollDaySplit,
+  })) };
   if (months.size) await Payroll.updateMany({ userId, month: { $in: [...months] } }, { $set: { leaveRecalculationRequired: true } }, { session });
   for (const row of changes) await Leave.updateOne({ _id: row.leave._id }, { $set: {
     paidDays: row.paidDays, unpaidDays: row.unpaidDays, payrollDaySplit: row.payrollDaySplit,
