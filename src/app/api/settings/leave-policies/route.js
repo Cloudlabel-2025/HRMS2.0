@@ -1,3 +1,4 @@
+import { canonicalizeLeaveTypes } from '@/lib/leave/types';
 import dbConnect from '@/lib/db';
 import { LeavePolicy } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -22,6 +23,8 @@ export async function POST(req) {
 
   await dbConnect();
   const body = await req.json();
+  if (Array.isArray(body.leaveTypeConfigs)) body.leaveTypeConfigs = canonicalizeLeaveTypes(body.leaveTypeConfigs);
+  if (Array.isArray(body.draftConfig?.leaveTypeConfigs)) body.draftConfig.leaveTypeConfigs = canonicalizeLeaveTypes(body.draftConfig.leaveTypeConfigs);
   if (!body.name?.trim()) return fail('Policy name is required', 400);
 
   const doc = await LeavePolicy.create(body);

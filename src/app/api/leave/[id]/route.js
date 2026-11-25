@@ -1,3 +1,4 @@
+import { canonicalLeaveCode } from '@/lib/leave/types';
 import { payrollPeriod } from '@/lib/payroll-periods';
 import { getGlobalConfig as entitlementConfig } from '@/lib/payroll-cycle';
 import { getTzDateStr as entitlementToday } from '@/lib/timezone';
@@ -121,6 +122,8 @@ export async function PUT(req, { params }) {
     await connectDB();
 
     const body = await req.json();
+    if (body.typeCode) body.typeCode = canonicalLeaveCode(body.typeCode);
+    if (body.classifiedTypeCode) body.classifiedTypeCode = canonicalLeaveCode(body.classifiedTypeCode);
     const result = ActionSchema.safeParse(body);
     if (!result.success) {
       const msg = result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ');
@@ -138,7 +141,7 @@ export async function PUT(req, { params }) {
         const t = leave.type.toLowerCase();
         if (t.includes('casual')) leave.typeCode = 'CL';
         else if (t.includes('sick')) leave.typeCode = 'SL';
-        else if (t.includes('privilege') || t.includes('earned')) leave.typeCode = 'PL';
+        else if (t.includes('privilege') || t.includes('earned')) leave.typeCode = 'EL';
         else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') leave.typeCode = 'LOP';
         else if (t.includes('maternity')) leave.typeCode = 'ML';
         else if (t.includes('paternity')) leave.typeCode = 'PATL';

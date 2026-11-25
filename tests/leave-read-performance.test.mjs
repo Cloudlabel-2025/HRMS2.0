@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { buildEntitlementPlan } from '../src/lib/leave/entitlement-plan.js';
 import { payrollPeriod } from '../src/lib/payroll-periods.js';
+import * as leaveTypes from '../src/lib/leave/types.js';
 
 test('leave page preview returns current fractional balances without writes or payroll execution', async () => {
   const forbidden = () => { throw new Error('Page read attempted a database mutation'); };
@@ -23,6 +24,7 @@ test('leave page preview returns current fractional balances without writes or p
     '@/lib/timezone': { getTzDateStr: async () => '2026-10-30' },
     '@/lib/payroll-periods': { payrollPeriod },
     './entitlement-plan': { buildEntitlementPlan },
+    './types': leaveTypes,
     mongoose: { default: { connection: { transaction: forbidden } } },
   };
   const context = vm.createContext({ console });

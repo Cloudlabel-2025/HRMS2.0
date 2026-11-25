@@ -16,6 +16,7 @@ import { syncCalendarRowsForUsers } from '@/lib/attendance-sync';
 import { reconcileLeaveAndPayroll } from '@/lib/leave/reconcile-entitlements';
 import { payrollPeriod } from '@/lib/payroll-periods';
 import { getTzDateStr } from '@/lib/timezone';
+import { calculateLeaveCalendar } from '@/lib/leave/calendar';
 
 export function assertSaturdayDate(dateStr) {
   const d = new Date(String(dateStr || '') + 'T00:00:00');
@@ -125,7 +126,7 @@ async function evaluateLeave(leave, config, holidays) {
   const typeConfig = policy.leaveTypeConfigs?.find(c => c.code === leave.typeCode);
   if (!typeConfig) return { ...base, skipped: true, reason: 'Leave type config not found' };
 
-  const newDays = countWorkingDaysInRange(leave.from, leave.to, config, holidays, {
+  const newDays = countWorkingDaysInRange(leave.from, leave.to, config, holidays, leave.calendarVersion === 1 ? {} : {
     countWeekends: !!policy.countWeekends,
     countHolidays: !!policy.countHolidays,
   });
@@ -159,6 +160,8 @@ async function evaluateLeave(leave, config, holidays) {
     ...base,
     oldDays: leave.days,
     newDays,
+    excludedDates: leave.calendarVersion === 1
+      ? calculateLeaveCalendar(leave.from, leave.to, config, holidays).excludedDates : undefined,
     oldPaidDays,
     newPaidDays,
     oldUnpaidDays: leave.unpaidDays ?? 0,
@@ -251,6 +254,7 @@ export async function applyLeaveDateImpact(dateStr, actor, ip = '') {
         throw e;
       }
       leave.days = change.newDays;
+      if (leave.calendarVersion === 1) leave.excludedDates = change.excludedDates;
       leave.paidDays = change.newPaidDays;
       leave.unpaidDays = change.newUnpaidDays;
       if (leave.status === 'approved' && (change.newPaidDays !== change.oldPaidDays || change.newUnpaidDays !== change.oldUnpaidDays)) {

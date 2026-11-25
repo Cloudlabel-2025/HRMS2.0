@@ -1,3 +1,5 @@
+import { canonicalLeaveCode } from '@/lib/leave/types';
+import { calculateLeaveCalendar } from '@/lib/leave/calendar';
 import { payrollPeriod } from '@/lib/payroll-periods';
 import { connectDB } from '@/lib/db';
 import { requireAuth } from '@/lib/middleware';
@@ -20,7 +22,7 @@ import { resolvePolicyForUser } from '@/app/api/leave/balance/route';
 import { Leave, Holiday, UserLeaveBalance } from '@/lib/models/index';
 import Attendance from '@/lib/models/Attendance';
 import EmpProfile from '@/lib/models/EmploymentProfile';
-import { getGlobalConfig, countWorkingDaysInRange, isWorkingDay } from '@/lib/payroll-cycle';
+import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 import { isEmployer } from '@/lib/permissions';
 import { uploadFile } from '@/lib/cloudinary';
 import { auditLog } from '@/lib/middleware';
@@ -97,7 +99,7 @@ export async function POST(req) {
         const warnings = [];
         const email = String(obj.employeeEmail ?? '').trim();
         const code = String(obj.employeeCode ?? '').trim();
-        const typeCode = String(obj.typeCode ?? '').trim().toUpperCase();
+        const typeCode = canonicalLeaveCode(obj.typeCode);
         const reason = String(obj.reason ?? '').trim();
 
         const resolved = await resolveBulkEmployee({ employeeEmail: email, employeeCode: code });
@@ -185,7 +187,7 @@ export async function POST(req) {
         const warnings = [];
         const email = String(obj.employeeEmail ?? '').trim();
         const code = String(obj.employeeCode ?? '').trim();
-        const typeCode = String(obj.typeCode ?? '').trim().toUpperCase();
+        const typeCode = canonicalLeaveCode(obj.typeCode);
         const reason = String(obj.reason ?? '').trim();
 
         const resolved = await resolveBulkEmployee({ employeeEmail: email, employeeCode: code });
@@ -306,17 +308,12 @@ export async function POST(req) {
 
         // Compute expected working days for preview
         let computedDays = null;
-        if (policy && isValidDateStr(from) && isValidDateStr(to) && !halfDay) {
+        if (policy && isValidDateStr(from) && isValidDateStr(to)) {
           try {
             const holidays = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
-            computedDays = countWorkingDaysInRange(from, to, config, holidays, {
-              countWeekends: !!policy.countWeekends,
-              countHolidays: !!policy.countHolidays,
-            });
-            if (computedDays <= 0) warnings.push('Dates contain only holidays/weekends (0 working days)');
-          } catch { /* non-fatal */ }
-        } else if (halfDay && isValidDateStr(from)) {
-          computedDays = 0.5;
+            computedDays = calculateLeaveCalendar(from, to, config, holidays, { halfDay }).days;
+            if (computedDays <= 0) errors.push('Dates contain only holidays/weekends or the half-day range is invalid');
+          } catch { errors.push('Could not verify the holiday calendar. Please retry validation.'); }
         }
 
         // ── Dynamic policy gates (mirror single POST /api/leave) ──

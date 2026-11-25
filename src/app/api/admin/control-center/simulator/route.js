@@ -1,3 +1,4 @@
+import { canonicalLeaveCode } from '@/lib/leave/types';
 import dbConnect from '@/lib/db';
 import User from '@/lib/models/User';
 import { Holiday, Leave } from '@/lib/models/index';
@@ -19,6 +20,7 @@ export async function POST(req) {
     }
 
     const body = await req.json();
+    if (body.typeCode) body.typeCode = canonicalLeaveCode(body.typeCode);
     const { targetUserId, typeCode = 'CL', from, to, halfDay = false, halfDayType, reason = 'Test simulation', documents = [] } = body;
 
     if (!from || !to) {

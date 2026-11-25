@@ -69,7 +69,7 @@ export async function POST(req) {
             accrualMode: 'monthly', prorateForNewJoiners: true, noticePeriodDays: 0,
             requireDocsIfConsecutiveDays: 0, eligibilityRules: [], useCustomWorkflow: false,
             approvalWorkflow: [], creditSchedule: 'quarterly', maxUsagePerPeriod: 3,
-            usagePeriod: 'quarterly', unusedPeriodRollover: false,
+            usagePeriod: 'quarterly', unusedPeriodRollover: true,
           },
         ],
       },

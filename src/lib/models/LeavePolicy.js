@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { canonicalizePolicy, canonicalizeLeaveTypes } from '../leave/types.js';
 
 const EligibilityRuleSchema = new mongoose.Schema({
   field:    { type: String, required: true },
@@ -95,6 +96,14 @@ const LeavePolicySchema = new mongoose.Schema({
   sandwichRule:           { type: Boolean, default: false },
   retroAdjustmentAllowed: { type: Boolean, default: true },
 }, { timestamps: true });
+
+LeavePolicySchema.pre('init', function (raw) {
+  Object.assign(raw, canonicalizePolicy(raw));
+});
+LeavePolicySchema.pre('validate', function () {
+  this.leaveTypeConfigs = canonicalizeLeaveTypes(this.leaveTypeConfigs || []);
+  if (this.draftConfig?.leaveTypeConfigs) this.draftConfig = canonicalizePolicy(this.toObject()).draftConfig;
+});
 
 LeavePolicySchema.pre('save', async function () {
   if (this.isDefault) {

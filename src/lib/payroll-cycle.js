@@ -1,5 +1,7 @@
 import { SystemConfig, Holiday } from '@/lib/models/index';
 import { isSaturdayOff } from '@/lib/saturday-cycle';
+import { isWorkingDay } from './leave/calendar.js';
+export { isWorkingDay } from './leave/calendar.js';
 import { cycleRange, cycleMonth } from './payroll-periods';
 
 export async function getGlobalConfig() {
@@ -25,40 +27,6 @@ export function getSaturdayOrdinal(year, month, day) {
     if (new Date(year, month, i).getDay() === 6) count++;
   }
   return count;
-}
-
-export function isWorkingDay(dateStr, config, holidays) {
-  const d = new Date(dateStr + 'T00:00:00');
-  const dayOfWeek = d.getDay();
-  if (dayOfWeek === 0) return false;
-
-  // Compensated working day: a Holiday row flagged workingDayOverride makes
-  // the date working even though a Holiday record exists (Saturdays only —
-  // enforced where the flag is written). Every other Holiday row still wins.
-  // Rows may be date strings or { date, workingDayOverride } objects.
-  const rows = Array.isArray(holidays) ? holidays : [];
-  const sameDate = (h) => (typeof h === 'string' ? h === dateStr : h?.date === dateStr);
-  if (rows.some(h => sameDate(h) && h?.workingDayOverride)) return true;
-  if (rows.some(sameDate)) return false;
-
-  // Saturday policy is authoritative (Settings → General → Saturday Working,
-  // changeable at any time, default 'alternate').
-  // 'all': every Saturday working unless explicit Holiday.
-  // 'none': no Saturday working.
-  // 'alternate' (default): Saturdays alternate continuously (leave, working,
-  // leave, …) and the alternation never resets at a payroll-cycle boundary,
-  // so a 5-Saturday cycle is L W L W L or W L W L W — never L W L W W.
-  // The exact phase is chosen by Settings → Alternate Saturday Pattern
-  // ('pattern1' / 'pattern2' mirrors, 'legacy' = old per-cycle 1st & 3rd).
-  // Automatic, no Holiday doc or generator run required (explicit Holiday
-  // docs still win).
-  if (dayOfWeek === 6) {
-    const mode = String(config?.saturdayWorking ?? 'alternate').toLowerCase();
-    if (mode === 'none') return false;
-    if (mode === 'alternate' && isSaturdayOff(dateStr, config)) return false;
-  }
-
-  return true;
 }
 
 /**

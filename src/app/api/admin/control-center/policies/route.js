@@ -1,3 +1,4 @@
+import { canonicalizeLeaveTypes } from '@/lib/leave/types';
 import dbConnect from '@/lib/db';
 import LeavePolicy from '@/lib/models/LeavePolicy';
 import User from '@/lib/models/User';
@@ -13,7 +14,7 @@ import { getTzDateStr } from '@/lib/timezone';
 const ALL_MASTER_LEAVE_TYPES = [
   { code: 'SL', name: 'Sick Leave', description: 'Medical recovery & health leave', annualAllocation: 10, isPaid: true, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 5, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: true, requireDocsIfConsecutiveDays: 2, genderRestriction: 'all', enabled: true, sortOrder: 1 },
   { code: 'CL', name: 'Casual Leave', description: 'Short notice leave for personal work', annualAllocation: 12, isPaid: true, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 3, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 2 },
-  { code: 'PL', name: 'Privilege / Earned Leave', description: 'Planned annual vacation leave', annualAllocation: 15, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 10, minGapDays: 7, noticePeriodDays: 7, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 3 },
+  { code: 'EL', name: 'Earned Leave', description: 'Earned leave with unused balance carried forward', annualAllocation: 12, creditSchedule: 'quarterly', accrualMode: 'quarterly', usagePeriod: 'quarterly', maxUsagePerPeriod: 3, unusedPeriodRollover: true, carryForwardAllowed: true, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 10, minGapDays: 7, noticePeriodDays: 7, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 3 },
   { code: 'LOP', name: 'Loss of Pay', description: 'Unpaid absence beyond allocated quota', annualAllocation: 0, isPaid: false, allowHalfDay: true, allowFirstHalf: true, allowSecondHalf: true, maxConsecutiveDays: 30, minGapDays: 0, noticePeriodDays: 0, requiresDocuments: false, requireDocsIfConsecutiveDays: 0, genderRestriction: 'all', enabled: true, sortOrder: 4 },
   { code: 'ML', name: 'Maternity Leave', description: 'Statutory leave for female employees for childbirth & care', annualAllocation: 180, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 180, minGapDays: 0, noticePeriodDays: 30, requiresDocuments: true, requireDocsIfConsecutiveDays: 1, genderRestriction: 'female', enabled: true, sortOrder: 5 },
   { code: 'PATL', name: 'Paternity Leave', description: 'Leave for male employees for child birth support', annualAllocation: 15, isPaid: true, allowHalfDay: false, allowFirstHalf: false, allowSecondHalf: false, maxConsecutiveDays: 15, minGapDays: 0, noticePeriodDays: 15, requiresDocuments: true, requireDocsIfConsecutiveDays: 1, genderRestriction: 'male', enabled: true, sortOrder: 6 },
@@ -45,7 +46,7 @@ function leaveTypeError(configs) {
   return linkedTypeError(configs);
 }
 
-const normalizeLeaveTypes = configs => configs.map(config => normalizeEntitlementType({ ...config, code: config.code.trim().toUpperCase(), name: config.name.trim() }));
+const normalizeLeaveTypes = configs => canonicalizeLeaveTypes(configs).map(config => normalizeEntitlementType({ ...config, code: config.code.trim().toUpperCase(), name: config.name.trim() }));
 
 export async function GET(req) {
   try {
@@ -181,7 +182,7 @@ export async function POST(req) {
     const defaultConfigs = leaveTypeConfigs.length > 0 ? leaveTypeConfigs : [
       { code: 'CL', name: 'Casual Leave', annualAllocation: 12, isPaid: true, allowHalfDay: true, enabled: true },
       { code: 'SL', name: 'Sick Leave', annualAllocation: 10, isPaid: true, allowHalfDay: true, requiresDocuments: true, requireDocsIfConsecutiveDays: 2, enabled: true },
-      { code: 'PL', name: 'Privilege Leave', annualAllocation: 15, isPaid: true, allowHalfDay: false, noticePeriodDays: 7, enabled: true },
+      { code: 'EL', name: 'Earned Leave', annualAllocation: 12, creditSchedule: 'quarterly', accrualMode: 'quarterly', usagePeriod: 'quarterly', maxUsagePerPeriod: 3, unusedPeriodRollover: true, carryForwardAllowed: true, isPaid: true, allowHalfDay: false, noticePeriodDays: 7, enabled: true },
       { code: 'LOP', name: 'Loss of Pay', annualAllocation: 0, isPaid: false, allowHalfDay: true, enabled: true },
     ];
 

@@ -11,6 +11,7 @@ import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 import { getTzDateStr } from '@/lib/timezone';
 import { buildEntitlementPlan } from './entitlement-plan';
 import { payrollPeriod } from '@/lib/payroll-periods';
+import { canonicalLeaveCode } from './types';
 
 export async function reconcileEntitlements(userId, { session = null, preview = false, policy: suppliedPolicy = null, actor = null } = {}) {
   if (!session && !preview) return mongoose.connection.transaction(tx => reconcileEntitlements(userId, { session: tx, actor, policy: suppliedPolicy }));
@@ -24,7 +25,7 @@ export async function reconcileEntitlements(userId, { session = null, preview = 
   if (!policy) return { skipped: true, reason: 'No assigned leave policy', userId: String(userId) };
   // Mixed policies need explicit review rather than charging a request under
   // another policy's entitlement.
-  if (leaves.some(row => ['approved', 'pending'].includes(row.status) && !['SL', 'CL', 'EL'].includes(row.typeCode) && row.policyId && String(row.policyId) !== String(policy._id))) {
+  if (leaves.some(row => ['approved', 'pending'].includes(row.status) && !['SL', 'CL', 'EL'].includes(canonicalLeaveCode(row.typeCode, row.type)) && row.policyId && String(row.policyId) !== String(policy._id))) {
     throw new Error(`${employee.name}: leave history spans multiple policies; reconcile policy assignment first.`);
   }
   const config = await getGlobalConfig(), today = await getTzDateStr();
@@ -32,12 +33,14 @@ export async function reconcileEntitlements(userId, { session = null, preview = 
   const adjustments = await LeaveBalanceAdjustment.find({ userId }).session(session).lean();
   const plan = buildEntitlementPlan({ leaves, policy, config, today, joined: employee.joinDate || employee.createdAt,
     adjustments,
-    isChargeDate: (date, p) => {
+    isChargeDate: (date, p, leave) => {
+      if (leave.calendarVersion === 1) return isWorkingDay(date, config, holidays);
       const holiday = holidays.some(row => row.date === date && !row.workingDayOverride);
       if (holiday) return !!p.countHolidays;
       return p.countWeekends || isWorkingDay(date, config, holidays);
     } });
-  const changes = plan.leaves.filter(row => row.leave.entitlementVersion !== 1 || row.paidDays !== row.leave.paidDays || row.unpaidDays !== row.leave.unpaidDays || JSON.stringify(row.payrollDaySplit) !== JSON.stringify((row.leave.payrollDaySplit || []).map(({ date, paidDays, unpaidDays }) => ({ date, paidDays, unpaidDays }))));
+  const storedTypes = new Map(leaves.map(leave => [String(leave._id), leave.typeCode]));
+  const changes = plan.leaves.filter(row => storedTypes.get(String(row.leave._id)) !== row.leave.typeCode || row.leave.entitlementVersion !== 1 || row.paidDays !== row.leave.paidDays || row.unpaidDays !== row.leave.unpaidDays || JSON.stringify(row.payrollDaySplit) !== JSON.stringify((row.leave.payrollDaySplit || []).map(({ date, paidDays, unpaidDays }) => ({ date, paidDays, unpaidDays }))));
   const months = new Set();
   for (const row of changes.filter(row => row.leave.status === 'approved')) for (const d of row.payrollDaySplit) months.add(payrollPeriod(d.date, config).monthKey);
   const summary = { userId: String(userId), name: employee.name, changed: changes.length, affectedMonths: [...months],
@@ -50,6 +53,7 @@ export async function reconcileEntitlements(userId, { session = null, preview = 
   })) };
   if (months.size) await Payroll.updateMany({ userId, month: { $in: [...months] } }, { $set: { leaveRecalculationRequired: true } }, { session });
   for (const row of changes) await Leave.updateOne({ _id: row.leave._id }, { $set: {
+    typeCode: row.leave.typeCode, type: row.leave.type,
     paidDays: row.paidDays, unpaidDays: row.unpaidDays, payrollDaySplit: row.payrollDaySplit,
     entitlementVersion: 1, balanceApplied: row.leave.status === 'approved',
   } }, { session });

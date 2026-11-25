@@ -1,3 +1,4 @@
+import { canonicalLeaveCode } from '@/lib/leave/types';
 import dbConnect from '@/lib/db';
 import { UserLeaveBalance } from '@/lib/models/index';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -16,7 +17,8 @@ export async function POST(req) {
   if (error) return error;
   if (!ADMIN_ROLES.includes(user.role)) return fail('Access denied', 403);
 
-  const { userId, typeCode, days, reason } = await req.json();
+  const { userId, typeCode: requestedTypeCode, days, reason } = await req.json();
+  const typeCode = canonicalLeaveCode(requestedTypeCode);
 
   if (!userId || !typeCode || days === undefined || !reason) {
     return fail('userId, typeCode, days, and reason are required', 400);

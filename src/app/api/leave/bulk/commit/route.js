@@ -1,3 +1,5 @@
+import { canonicalLeaveCode } from '@/lib/leave/types';
+import { calculateLeaveCalendar } from '@/lib/leave/calendar';
 import { payrollPeriod } from '@/lib/payroll-periods';
 import { connectDB } from '@/lib/db';
 import { requireAuth, auditLog } from '@/lib/middleware';
@@ -7,7 +9,7 @@ import { resolvePolicyForUser, getOrCreateBalanceForYear } from '@/app/api/leave
 import { Leave, Holiday, UserLeaveBalance, Document } from '@/lib/models/index';
 import User from '@/lib/models/User';
 import Attendance from '@/lib/models/Attendance';
-import { getGlobalConfig, countWorkingDaysInRange, isWorkingDay } from '@/lib/payroll-cycle';
+import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 import EmpProfile from '@/lib/models/EmploymentProfile';
@@ -83,7 +85,7 @@ export async function POST(req) {
       if (!['delta', 'overwrite'].includes(m)) return fail('mode must be delta or overwrite', 400);
 
       for (const r of rows) {
-        const d = r.data || {};
+        const d = { ...r.data, typeCode: canonicalLeaveCode(r.data?.typeCode) };
         const rowNum = r.rowNum ?? '?';
         try {
           const resolved = await resolveBulkEmployee({ employeeEmail: d.employeeEmail, employeeCode: d.employeeCode });
@@ -160,7 +162,7 @@ export async function POST(req) {
       const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
 
       for (const r of sorted) {
-        const d = r.data || {};
+        const d = { ...r.data, typeCode: canonicalLeaveCode(r.data?.typeCode) };
         const rowNum = r.rowNum ?? '?';
         try {
           const resolved = await resolveBulkEmployee({ employeeEmail: d.employeeEmail, employeeCode: d.employeeCode });
@@ -285,7 +287,7 @@ export async function POST(req) {
     const firstStepRoles = new Set();
 
     for (const r of sorted) {
-      const d = r.data || {};
+      const d = { ...r.data, typeCode: canonicalLeaveCode(r.data?.typeCode) };
       const rowNum = r.rowNum ?? '?';
       try {
         const status = leaveMode; // file-level mode wins over per-row status for consistency
@@ -316,6 +318,8 @@ export async function POST(req) {
         const halfDay = !!d.halfDay;
         const halfDayStartTime = halfDay ? (d.halfDayStartTime || null) : null;
         const halfDayEndTime = halfDay ? (d.halfDayEndTime || null) : null;
+        const holidays = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
+        const calendar = calculateLeaveCalendar(from, to, config, holidays, { halfDay });
         let days;
         if (halfDay) {
           if (from !== to) throw new Error('Half-day leave must be a single day (from = to)');
@@ -324,17 +328,10 @@ export async function POST(req) {
           if (d.halfDayType === 'second_half' && typeConfig.allowSecondHalf === false) throw new Error('Second Half is not enabled for this leave type');
           if (!!halfDayStartTime !== !!halfDayEndTime) throw new Error('halfDayStartTime and halfDayEndTime must both be filled or both blank');
           if (halfDayStartTime && halfDayEndTime && halfDayStartTime >= halfDayEndTime) throw new Error('halfDayStartTime must be before halfDayEndTime');
+          if (!calendar.days) throw new Error('Half-day leave cannot be applied on a holiday/weekend');
           days = 0.5;
         } else {
-          const holidays = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
-          days = countWorkingDaysInRange(from, to, config, holidays, {
-            countWeekends: !!policy.countWeekends,
-            countHolidays: !!policy.countHolidays,
-          });
-          if (typeConfig?.sandwichRule ?? policy.sandwichRule) {
-            const calDays = Math.ceil((new Date(to) - new Date(from)) / 86400000) + 1;
-            if (calDays > days && days > 0) days = calDays;
-          }
+          days = calendar.days;
           if (!(days > 0)) throw new Error('Dates contain only holidays/weekends');
         }
 
@@ -437,6 +434,7 @@ export async function POST(req) {
           typeCode: d.typeCode,
           type: typeConfig.name,
           from, to, days, paidDays, unpaidDays,
+          calendarVersion: 1, excludedDates: calendar.excludedDates,
           halfDay,
           halfDayType: halfDay ? d.halfDayType : null,
           halfDayStartTime,

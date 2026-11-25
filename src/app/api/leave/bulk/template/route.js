@@ -48,7 +48,7 @@ export async function GET(req) {
       ['Bulk Leave Balance — Instructions'],
       [''],
       ['1. Fill ONE of employeeEmail or employeeCode per row. If both are filled they must match the same person.'],
-      ['2. typeCode must exist in that employee\u2019s leave policy (e.g. CL, SL, PL).'],
+      ['2. typeCode must exist in that employee\u2019s leave policy (e.g. CL, SL, EL).'],
       ['3. allocated / used / pending / carriedForward are numbers >= 0. Leave blank = 0 (delta mode) or unchanged.'],
       ['4. mode=delta adds the numbers; mode=overwrite replaces them.'],
       ['5. cycleYear defaults to current year. reason is required (audit).'],

@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { canonicalizeLeaveRecord } from '../leave/types.js';
 
 const APPROVAL = { type: String, enum: ['pending', 'approved', 'rejected', 'held'], default: 'pending' };
 
@@ -15,6 +16,10 @@ const LeaveSchema = new mongoose.Schema({
   from:   { type: String, required: true },
   to:     { type: String, required: true },
   days:   { type: Number, required: true },
+  // Version 1 requests exclude every non-working date, regardless of legacy
+  // sandwich/count-holidays policy flags. Existing requests retain version 0.
+  calendarVersion: { type: Number, default: 0 },
+  excludedDates: [{ date: String, reason: String, _id: false }],
   paidDays: { type: Number, default: 0 },
   unpaidDays: { type: Number, default: 0 },
   // Snapshot of the policy's `isPaid` at creation time. A PAID leave type is
@@ -96,13 +101,20 @@ const LeaveSchema = new mongoose.Schema({
   smeId: { type: mongoose.Schema.Types.ObjectId, ref: 'SME', default: null },
 }, { timestamps: true });
 
+LeaveSchema.pre('init', function (raw) {
+  Object.assign(raw, canonicalizeLeaveRecord(raw));
+});
 LeaveSchema.pre('validate', function() {
+  const canonical = canonicalizeLeaveRecord(this.toObject());
+  for (const field of ['typeCode', 'type', 'requestedTypeCode', 'requestedTypeName', 'classificationOptions']) {
+    if (canonical[field] !== undefined) this[field] = canonical[field];
+  }
   if (!this.typeCode) {
     if (this.type) {
       const t = this.type.toLowerCase();
       if (t.includes('casual')) this.typeCode = 'CL';
       else if (t.includes('sick')) this.typeCode = 'SL';
-      else if (t.includes('privilege') || t.includes('earned')) this.typeCode = 'PL';
+      else if (t.includes('privilege') || t.includes('earned')) this.typeCode = 'EL';
       else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') this.typeCode = 'LOP';
       else if (t.includes('maternity')) this.typeCode = 'ML';
       else if (t.includes('paternity')) this.typeCode = 'PATL';

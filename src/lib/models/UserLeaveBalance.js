@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { mergeEarnedLeaveBalances } from '../leave/types.js';
 
 const PeriodUsageSchema = new mongoose.Schema({
   period:          { type: String, required: true }, // e.g., '2026-Q1', '2026-M04', '2026-H1'
@@ -27,5 +28,12 @@ const UserLeaveBalanceSchema = new mongoose.Schema({
 }, { timestamps: true, optimisticConcurrency: true });
 
 UserLeaveBalanceSchema.index({ userId: 1, cycleStart: -1 });
+
+UserLeaveBalanceSchema.pre('init', function (raw) {
+  if (raw.balances?.some(row => row.typeCode === 'PL')) raw.balances = mergeEarnedLeaveBalances(raw.balances);
+});
+UserLeaveBalanceSchema.pre('validate', function () {
+  if (this.balances.some(row => row.typeCode === 'PL')) this.balances = mergeEarnedLeaveBalances(this.balances);
+});
 
 export default mongoose.models.UserLeaveBalance || mongoose.model('UserLeaveBalance', UserLeaveBalanceSchema);

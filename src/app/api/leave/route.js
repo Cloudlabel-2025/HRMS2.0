@@ -1,3 +1,4 @@
+import { canonicalLeaveCode, canonicalizeLeaveRecord } from '@/lib/leave/types';
 import { connectDB } from '@/lib/db';
 import { Leave, LeavePolicy, EmpProfile, Holiday } from '@/lib/models/index';
 import User from '@/lib/models/User';
@@ -5,7 +6,8 @@ import { requireAuth, auditLog } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { CreateLeaveSchema, validateRequest } from '@/lib/validation';
 import { notify } from '@/lib/notify';
-import { getGlobalConfig, countWorkingDaysInRange } from '@/lib/payroll-cycle';
+import { getGlobalConfig } from '@/lib/payroll-cycle';
+import { calculateLeaveCalendar } from '@/lib/leave/calendar';
 import { resolvePolicyForUser, getOrCreateBalance } from '@/app/api/leave/balance/route';
 import { MANAGER_ROLES, isEmployer } from '@/lib/permissions';
 import { canApproveLeave, getDepartmentUserIds } from '@/lib/rbac';
@@ -90,14 +92,14 @@ export async function GET(req) {
       .sort({ createdAt: -1 })
       .lean();
 
-    leaves = leaves.map(leave => {
+    leaves = leaves.map(canonicalizeLeaveRecord).map(leave => {
       if (!leave.typeCode) {
         if (leave.type) {
           const t = leave.type.toLowerCase();
           let tc = leave.type;
           if (t.includes('casual')) tc = 'CL';
           else if (t.includes('sick')) tc = 'SL';
-          else if (t.includes('privilege') || t.includes('earned')) tc = 'PL';
+          else if (t.includes('privilege') || t.includes('earned')) tc = 'EL';
           else if (t.includes('loss') || t.includes('unpaid') || t === 'lop') tc = 'LOP';
           else if (t.includes('maternity')) tc = 'ML';
           else if (t.includes('paternity')) tc = 'PATL';
@@ -169,6 +171,8 @@ export async function POST(req) {
     await connectDB();
 
     const body = await req.json();
+    if (body.typeCode) body.typeCode = canonicalLeaveCode(body.typeCode);
+    if (body.classifiedTypeCode) body.classifiedTypeCode = canonicalLeaveCode(body.classifiedTypeCode);
     const ip = req.headers.get('x-forwarded-for') || '';
     const validation = validateRequest(CreateLeaveSchema, body);
     if (!validation.valid) {
@@ -186,10 +190,12 @@ export async function POST(req) {
       return config?.dateFormat === 'MM/DD/YYYY' ? `${m}/${d}/${y}` : config?.dateFormat === 'YYYY-MM-DD' ? `${y}-${m}-${d}` : `${d}/${m}/${y}`;
     };
 
-    // Calculate days
-    let fromDate = new Date(from);
-    let toDate = new Date(to);
-    let days = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+    const holidayDocs = await Holiday.find({ date: { $gte: from, $lte: to } }).lean();
+    const calendar = calculateLeaveCalendar(from, to, config, holidayDocs, { halfDay });
+    const days = calendar.days;
+    const fromDate = new Date(from);
+    if (halfDay && from !== to) return fail('Half-day leave must be a single day (from and to must match).', 400);
+    if (days <= 0) return fail('Requested leave dates consist only of holidays/weekends', 400);
 
     // Check date overlap
     const overlap = await Leave.findOne({
@@ -201,12 +207,6 @@ export async function POST(req) {
     if (overlap) {
       auditLog('Leave Apply Failed', 'Leave', user._id, `Date overlap with existing ${overlap.status} leave (${overlap.from} to ${overlap.to})`, 'low', ip, null, user._id);
       return fail(`You already have a ${overlap.status} leave from ${fmtDate(overlap.from)} to ${fmtDate(overlap.to)} that overlaps with the requested dates.`, 400);
-    }
-
-    // Holidays are excluded per-day when policy.countHolidays is false
-    // (handled in the days calc below); never reject the whole range.
-    if (halfDay && from !== to) {
-      return fail('Half-day leave must be a single day (from and to must match).', 400);
     }
 
     // A day can hold either a leave or a permission, never both.
@@ -237,6 +237,8 @@ export async function POST(req) {
       const leaveDays = halfDay ? 0.5 : days;
 
       const leave = await Leave.create({
+        calendarVersion: 1,
+        excludedDates: calendar.excludedDates,
         userId: user._id,
         typeCode,
         type: typeCode,
@@ -297,6 +299,8 @@ export async function POST(req) {
       if (typeConfig.balanceMode === 'linked') return fail('Linked leave requests require an employee leave balance profile', 400);
 
       const leave = await Leave.create({
+        calendarVersion: 1,
+        excludedDates: calendar.excludedDates,
         userId: user._id,
         type: typeConfig.name,
         typeCode,
@@ -420,47 +424,6 @@ export async function POST(req) {
       }
     }
 
-    // Calculate days using the SINGLE working calendar shared with payroll.
-    // Policy flags decide weekend/holiday inclusion; Saturdays follow the
-    // global saturdayWorking mode so leave and payroll agree (no phantom LOP).
-    fromDate = new Date(from);
-    toDate = new Date(to);
-
-    const holidayDocs = await Holiday.find({
-      date: {
-        $gte: `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}-${String(fromDate.getDate()).padStart(2, '0')}`,
-        $lte: `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, '0')}-${String(toDate.getDate()).padStart(2, '0')}`
-      }
-    });
-    const leaveConfig = await getGlobalConfig();
-    const fromStr = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}-${String(fromDate.getDate()).padStart(2, '0')}`;
-    const toStr = `${toDate.getFullYear()}-${String(toDate.getMonth() + 1).padStart(2, '0')}-${String(toDate.getDate()).padStart(2, '0')}`;
-
-    days = countWorkingDaysInRange(fromStr, toStr, leaveConfig, holidayDocs, {
-      countWeekends: !!policy.countWeekends,
-      countHolidays: !!policy.countHolidays,
-    });
-
-    // Sandwich rule: weekends/holidays sandwiched inside the span count as
-    // leave days even when the policy excludes them.
-    if (typeConfig?.sandwichRule ?? policy.sandwichRule) {
-      const calDays = Math.ceil((toDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
-      if (calDays > days && days > 0) days = calDays;
-    }
-
-    if (halfDay) {
-      const { isWorkingDay } = await import('@/lib/payroll-cycle');
-      const halfHolidays = await Holiday.find({ date: fromStr }).lean().catch(() => []);
-      if (!isWorkingDay(fromStr, leaveConfig, halfHolidays)) {
-        return fail('Half-day leave cannot be applied on a holiday/weekend', 400);
-      }
-      days = 0.5;
-    }
-
-    if (days <= 0) {
-      return fail('Requested leave dates consist only of holidays/weekends', 400);
-    }
-
     // Check advance notice requirement
     if (typeConfig.noticePeriodDays > 0) {
       const today = new Date();
@@ -569,10 +532,12 @@ export async function POST(req) {
     // via RETRO_LOP_ADJ in the next run instead of the current cycle.
     const todayLocal = new Date();
     const todayLocalStr = `${todayLocal.getFullYear()}-${String(todayLocal.getMonth() + 1).padStart(2, '0')}-${String(todayLocal.getDate()).padStart(2, '0')}`;
-    const isRetroactive = fromStr < todayLocalStr;
+    const isRetroactive = from < todayLocalStr;
 
     // Create leave record
     const leave = await Leave.create({
+      calendarVersion: 1,
+      excludedDates: calendar.excludedDates,
       userId: user._id,
       typeCode,
       type: typeConfig.name,

@@ -7,6 +7,7 @@ import DateInput from '@/components/DateInput';
 import Pagination from '@/components/Pagination';
 import ConfirmModal from '@/components/ConfirmModal';
 import { useSettings } from '@/lib/settings';
+import { calculateLeaveCalendar } from '@/lib/leave/calendar';
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -21,7 +22,7 @@ const EMPTY_FORM = { typeCode: '', from: '', to: '', reason: '', halfDay: false,
 // Saturated fallback so a type badge is never light-on-light (previously
 // '#e2e8f0' + white text looked transparent when the viewer's policy map
 // missed a cross-policy typeCode in All Leaves).
-const FALLBACK_TYPE_COLORS = { CL: '#3b82f6', SL: '#10b981', PL: '#f59e0b', LOP: '#ef4444', ML: '#ec4899', PATL: '#8b5cf6' };
+const FALLBACK_TYPE_COLORS = { CL: '#3b82f6', SL: '#10b981', EL: '#f59e0b', LOP: '#ef4444', ML: '#ec4899', PATL: '#8b5cf6' };
 
 function ApprovalBadge({ value, holdReason, actorName, at }) {
   const s = STATUS_STYLE[value] || STATUS_STYLE.pending;
@@ -71,6 +72,8 @@ export default function LeavePage() {
   const [selectedEmpId, setSelectedEmpId] = useState('');
   const [tab, setTab]               = useState('my');
   const [showModal, setShowModal]   = useState(false);
+  const [leaveCalendar, setLeaveCalendar] = useState(null);
+  const [calendarError, setCalendarError] = useState('');
   const [holdModal, setHoldModal]   = useState(null);
   const [holdReason, setHoldReason] = useState('');
   const [rejectModal, setRejectModal] = useState(null);
@@ -97,6 +100,24 @@ export default function LeavePage() {
     return '';
   }, [form.from, form.to]);
   const dateFieldsInvalid = Boolean(fromDateError || toDateError || dateRangeError);
+  const calendarPreview = useMemo(() => {
+    if (!leaveCalendar || !form.from || !form.to || dateFieldsInvalid) return null;
+    return calculateLeaveCalendar(form.from, form.to, leaveCalendar.config, leaveCalendar.holidays, { halfDay: form.halfDay });
+  }, [leaveCalendar, form.from, form.to, form.halfDay, dateFieldsInvalid]);
+
+  useEffect(() => {
+    if (!showModal) return;
+    let cancelled = false;
+    setLeaveCalendar(null);
+    setCalendarError('');
+    Promise.all([api.get('/api/settings?type=holidays'), api.get('/api/settings?type=config')])
+      .then(([holidays, configs]) => {
+        if (!Array.isArray(holidays) || !Array.isArray(configs)) throw new Error('Could not load the working calendar.');
+        if (!cancelled) setLeaveCalendar({ holidays, config: configs.find(row => row.key === 'global_config')?.value || {} });
+      })
+      .catch(error => { if (!cancelled) setCalendarError(error.message || 'Could not load the working calendar.'); });
+    return () => { cancelled = true; };
+  }, [showModal]);
   const fieldErrTimers = typeof window !== 'undefined' ? (window.__leaveErrTimers = window.__leaveErrTimers || {}) : {};
   const clearFErr = (k) => { if(fieldErrTimers[k]) { clearTimeout(fieldErrTimers[k]); delete fieldErrTimers[k]; } setFieldErrs(p => { const n={...p}; delete n[k]; return n; }); };
 
@@ -512,7 +533,15 @@ export default function LeavePage() {
                         </td>
                         <td style={{ fontSize: 13 }}>{formatDate(l.from)}</td>
                         <td style={{ fontSize: 13 }}>{formatDate(l.to)}</td>
-                        <td><span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span></td>
+                        <td>
+                          <span className="badge" style={{ background: '#f1f5f9', color: '#1e293b' }}>{l.days}d</span>
+                          {l.excludedDates?.length > 0 && (
+                            <details style={{ fontSize: 11, marginTop: 4 }}>
+                              <summary>{l.excludedDates.length} holiday date(s) excluded</summary>
+                              {l.excludedDates.map(day => <div key={day.date}>{formatDate(day.date)} — {day.reason}</div>)}
+                            </details>
+                          )}
+                        </td>
                         <td style={{ fontSize: 12, color: '#64748b', maxWidth: 140 }}>{l.reason}</td>
                         {isSme ? (
                           <td><ApprovalBadge value={l.adminApproval} holdReason={l.adminHoldReason} actorName={actorNameOf(l.adminApprovedBy)} at={l.adminApprovedAt} /></td>
@@ -710,6 +739,22 @@ export default function LeavePage() {
                     {!fieldErrs.to && dateRangeError && <div style={{ color:'#ef4444', fontSize:11, marginTop:3, display:'flex', alignItems:'center', gap:4 }}><i className="bi bi-exclamation-circle-fill" style={{ fontSize:10 }} />{dateRangeError}</div>}
                   </div>
                 </div>
+                <div className="mb-3" role="status" style={{ fontSize: 13 }}>
+                  {calendarError ? <span className="text-danger">{calendarError} Close and reopen this form to retry.</span>
+                    : !leaveCalendar ? 'Loading working calendar…'
+                    : calendarPreview && <>
+                      <strong>{calendarPreview.days} leave day(s)</strong> out of {calendarPreview.calendarDays} calendar day(s).
+                      {calendarPreview.excludedDates.length > 0 && (
+                        <details className="mt-1">
+                          <summary>{calendarPreview.excludedDates.length} holiday date(s) excluded from leave</summary>
+                          <ul className="mb-0 mt-1">
+                            {calendarPreview.excludedDates.map(day => <li key={day.date}>{formatDate(day.date)} — {day.reason}</li>)}
+                          </ul>
+                        </details>
+                      )}
+                      {calendarPreview.days === 0 && <div className="text-danger">Select at least one working day. Half-day leave must cover one working date.</div>}
+                    </>}
+                </div>
                 {(() => {
                   const selectedTypeConfig = balanceData?.policy?.leaveTypeConfigs?.find(
                     c => c.code === form.typeCode
@@ -803,7 +848,7 @@ export default function LeavePage() {
               </div>
               <div className="modal-footer">
                 <button className="btn btn-outline-secondary" onClick={() => { setShowModal(false); setFieldErrs({}); setFromDateError(''); setToDateError(''); }}>Cancel</button>
-                <button className="btn btn-primary" onClick={handleApply} disabled={saving || dateFieldsInvalid}>
+                <button className="btn btn-primary" onClick={handleApply} disabled={saving || dateFieldsInvalid || !calendarPreview || calendarPreview.days <= 0}>
                   {saving ? <><span className="spinner-border spinner-border-sm me-2" />Submitting...</> : 'Submit Application'}
                 </button>
               </div>

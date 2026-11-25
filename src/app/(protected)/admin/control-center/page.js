@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { CREDIT_SCHEDULES, getCreditSchedule, getDaysPerCredit, getAnnualEntitlement } from '@/lib/leave/credit-schedule';
 import { linkedTypeError } from '@/lib/leave/linked-types';
+import { canonicalLeaveCode } from '@/lib/leave/types';
 
 const LEAVE_SYMBOLS = [
   ['bi-calendar-check', 'Calendar check'],
@@ -48,6 +49,8 @@ export default function ControlCenterPage() {
   const [newType, setNewType] = useState({ code: '', name: '', annualAllocation: 0 });
   const [typeError, setTypeError] = useState('');
   const [removeType, setRemoveType] = useState(null);
+  const [migrationPreview, setMigrationPreview] = useState(null);
+  const [migrating, setMigrating] = useState(false);
 
   // Simulation state
   const [simForm, setSimForm] = useState({
@@ -131,6 +134,27 @@ export default function ControlCenterPage() {
     if (found) setCurrentPolicy(editablePolicy(found));
   };
 
+  const previewEarnedMigration = async () => {
+    setMigrating(true);
+    try {
+      const preview = await api.get('/api/settings/migrate-earned-leave');
+      if (!preview.total) showToast('All leave records already use Earned Leave.');
+      else setMigrationPreview(preview);
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setMigrating(false); }
+  };
+
+  const applyEarnedMigration = async () => {
+    setMigrating(true);
+    try {
+      const result = await api.post('/api/settings/migrate-earned-leave', {});
+      setMigrationPreview(null);
+      showToast(`Earned Leave migration completed: ${result.counts.leaves} leave requests updated.`);
+      await loadData(selectedPolicyId);
+    } catch (error) { showToast(error.message, 'error'); }
+    finally { setMigrating(false); }
+  };
+
   const updateLeaveType = (index, changes) => {
     setCurrentPolicy(policy => ({
       ...policy,
@@ -158,8 +182,8 @@ export default function ControlCenterPage() {
   };
 
   const handleAddType = () => {
-    const code = newType.code.trim().toUpperCase();
-    const name = newType.name.trim();
+    const code = canonicalLeaveCode(newType.code, newType.name);
+    const name = code === 'EL' ? 'Earned Leave' : newType.name.trim();
     if (!code || !name) return setTypeError('Enter a code and name for the leave type.');
     const linkedError = linkedTypeError([...(currentPolicy?.leaveTypeConfigs || []), { ...newType, code, name }]);
     if (linkedError) return setTypeError(linkedError);
@@ -378,6 +402,11 @@ export default function ControlCenterPage() {
                       </div>
 
                       <div className="d-flex gap-2">
+                        {['super_admin', 'admin_full'].includes(user?.role) && (
+                          <button className="btn btn-outline-secondary" onClick={previewEarnedMigration} disabled={saving || migrating}>
+                            {migrating ? 'Checking…' : 'Migrate Privilege Leave'}
+                          </button>
+                        )}
                         <button className="btn btn-outline-secondary" onClick={() => handleSavePolicy('save_draft')} disabled={saving} style={{ borderRadius: 8, padding: '8px 16px', fontWeight: 600 }}>
                           {saving ? <span className="spinner-border spinner-border-sm me-2" /> : <i className="bi bi-file-earmark-diff me-2" />}
                           Save Staged Draft
@@ -590,7 +619,7 @@ export default function ControlCenterPage() {
                                 <div className="alert alert-info small py-2">
                                   Months, quarters and years follow the payroll start/end days.
                                   {payrollPeriod && <div>Current quarter: {payrollPeriod.quarterStart} to {payrollPeriod.quarterEnd}</div>}
-                                  {['SL', 'CL', 'EL'].includes(cfg.code) && <div><strong>{cfg.code === 'EL' ? '3 days per quarter · unused Earned Leave carries forward.' : '1.5 days per quarter · unused leave expires at quarter-end.'}</strong></div>}
+                                  {['SL', 'CL', 'EL'].includes(cfg.code) && <div><strong>{cfg.code === 'EL' ? 'Earned Leave follows the assigned credit frequency; unused balance carries forward.' : '1.5 days per quarter · unused leave expires at quarter-end.'}</strong></div>}
                                   <div>Leave beyond the available allowance is LOP, including paid leave types. Rejected and cancelled requests do not consume allowance.</div>
                                 </div>
                                 <div className="row g-3">
@@ -598,7 +627,7 @@ export default function ControlCenterPage() {
                                     <label htmlFor={`credit-frequency-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Credit frequency</label>
                                     <select
                                       id={`credit-frequency-${idx}`}
-                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
+                                      disabled={['SL', 'CL'].includes(cfg.code)}
                                       className="form-select"
                                       value={cfg.creditSchedule || 'upfront'}
                                       onChange={e => updateLeaveType(idx, { creditSchedule: e.target.value, accrualMode: e.target.value })}
@@ -610,7 +639,7 @@ export default function ControlCenterPage() {
                                     <label htmlFor={`days-per-credit-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Days per {getCreditSchedule(cfg.creditSchedule).unit}</label>
                                     <input
                                       id={`days-per-credit-${idx}`}
-                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
+                                      disabled={['SL', 'CL'].includes(cfg.code)}
                                       type="number"
                                       min="0"
                                       step="0.01"
@@ -623,7 +652,7 @@ export default function ControlCenterPage() {
                                     <label htmlFor={`annual-entitlement-${idx}`} className="form-label" style={{ fontSize: 12, fontWeight: 600 }}>Annual total (days)</label>
                                     <input
                                       id={`annual-entitlement-${idx}`}
-                                      disabled={['SL', 'CL', 'EL'].includes(cfg.code)}
+                                      disabled={['SL', 'CL'].includes(cfg.code)}
                                       type="number"
                                       min="0"
                                       step="0.01"
@@ -778,7 +807,7 @@ export default function ControlCenterPage() {
                       >
                         <option value="SL">SL — Sick Leave</option>
                         <option value="CL">CL — Casual Leave</option>
-                        <option value="PL">PL — Privilege Leave</option>
+                        <option value="EL">EL — Earned Leave</option>
                         <option value="LOP">LOP — Loss of Pay</option>
                       </select>
                     </div>
@@ -993,6 +1022,15 @@ export default function ControlCenterPage() {
         </>
       )}
 
+      <ConfirmModal open={!!migrationPreview} title="Move Privilege Leave to Earned Leave?"
+        confirmText="Migrate Records" confirming={migrating}
+        onClose={() => { if (!migrating) setMigrationPreview(null); }} onConfirm={applyEarnedMigration}>
+        <p>This updates {migrationPreview?.counts.leaves || 0} leave requests, {migrationPreview?.counts.leavepolicies || 0} policies,
+          {' '}{migrationPreview?.counts.userleavebalances || 0} balance records and {migrationPreview?.counts.leavebalanceadjustments || 0} adjustments.</p>
+        <p>Existing Earned Leave rules take precedence. Taken and pending Privilege Leave usage moves to Earned Leave without adding a second allowance.</p>
+        <p className="mb-0 text-secondary">Request dates, approval status and recorded paid/unpaid days are preserved. Each update is audited. Unsaved policy edits are not included.</p>
+      </ConfirmModal>
+
       <ConfirmModal
         open={!!deletePolicy}
         title="Delete leave policy?"
@@ -1065,7 +1103,7 @@ export default function ControlCenterPage() {
               <button className="btn-close" onClick={() => setShowCreateModal(false)} />
             </div>
             <p style={{ fontSize: 13, color: '#64748b', marginBottom: 20 }}>
-              Define a new leave policy rule-set. Standard leave types (CL, SL, PL, LOP) will be initialized automatically.
+              Define a new leave policy rule-set. Standard leave types (CL, SL, EL, LOP) will be initialized automatically.
             </p>
 
             <form onSubmit={handleCreatePolicy}>

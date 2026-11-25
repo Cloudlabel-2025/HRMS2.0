@@ -1,3 +1,5 @@
+import { canonicalLeaveCode } from './leave/types.js';
+
 // Date-only payroll boundaries. UTC arithmetic avoids duplicate IST/UTC cycles.
 export function payrollDay(value, fallback) {
   const n = Number(/^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? String(value).slice(8) : value);
@@ -39,8 +41,16 @@ export function normalizeEntitlementType(type) {
   // Mongoose subdocuments keep persisted fields behind getters; spreading
   // them directly drops code/name/enabled and hides the balance in the UI.
   type = typeof type?.toObject === 'function' ? type.toObject() : type;
-  const code = String(type.code || '').toUpperCase();
+  const code = canonicalLeaveCode(type.code, type.name);
   if (!['SL', 'CL', 'EL'].includes(code)) return type;
+  if (code === 'EL') {
+    const schedule = type.creditSchedule ?? type.accrualMode ?? 'quarterly';
+    return { ...type, code, name: 'Earned Leave', annualAllocation: type.annualAllocation ?? 12,
+      creditSchedule: schedule, accrualMode: type.accrualMode ?? schedule,
+      usagePeriod: type.usagePeriod ?? (schedule === 'upfront' ? 'annual' : schedule),
+      maxUsagePerPeriod: type.maxUsagePerPeriod ?? 0,
+      unusedPeriodRollover: true, carryForwardAllowed: type.carryForwardAllowed ?? true };
+  }
   const earned = code === 'EL';
   return { ...type, annualAllocation: earned ? 12 : 6, creditSchedule: 'quarterly', accrualMode: 'quarterly',
     usagePeriod: 'quarterly', maxUsagePerPeriod: earned ? 3 : 1.5,
