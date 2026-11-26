@@ -69,7 +69,7 @@ export function AuthProvider({ children }) {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, clientTime: new Date().toISOString() }),
     });
     const json = await res.json();
     if (!res.ok) return { success: false, error: json.error || 'Login failed' };

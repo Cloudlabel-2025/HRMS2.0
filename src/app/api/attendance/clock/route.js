@@ -7,7 +7,7 @@ import { ok, fail } from '@/lib/jwt';
 import { ClockInOutSchema, validateRequest } from '@/lib/validation';
 import { getGlobalConfig, parseShiftStartTime, isWorkingDay } from '@/lib/payroll-cycle';
 import { getAttendanceDate } from '@/lib/attendance-date';
-import { getTzTime, toTzLocal } from '@/lib/timezone';
+import { toTzLocal } from '@/lib/timezone';
 import { checkAndApplyAutoLogout, finalizeDayWork } from '@/lib/attendance-utils';
 import { resolveShiftAtTime, resolveRecordShift, getShiftEndMinutes } from '@/lib/shift-utils';
 import { snapshotShift } from '@/lib/shift-schedule';
@@ -41,23 +41,9 @@ export async function POST(req) {
     const geo = body.geo;
     let deductionBreakdown;
     const ip = req.headers.get('x-forwarded-for') || '';
-    // Server time is authoritative. Client time is accepted only within 5m
-    // drift (offline tolerance); larger skew falls back to server time and
-    // is audited to prevent late-evasion via spoofed wall clocks.
-    const serverNow = await getTzTime();
-    let now = serverNow;
-    const clientNow = body.clientTime ? new Date(body.clientTime) : null;
-    if (clientNow && !isNaN(clientNow.getTime())) {
-      try {
-        const clientLocal = await toTzLocal(clientNow);
-        const driftMs = Math.abs(clientLocal.getTime() - serverNow.getTime());
-        if (driftMs <= 5 * 60 * 1000) {
-          now = clientLocal;
-        } else {
-          auditLog('Clock Time Skew', 'Attendance', user._id, `Client time drift ${Math.round(driftMs / 60000)}m rejected; server time used`, 'medium', ip, null, user._id);
-        }
-      } catch { now = serverNow; }
-    }
+    // Use the validated device timestamp for both clock-in and clock-out,
+    // expressed in the company timezone used by shift schedules.
+    const now = await toTzLocal(new Date(validation.data.clientTime));
     const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0'); // 'HH:MM'
 
     // Lazy fallback: apply any due scheduled shift changes for this user before

@@ -23,6 +23,7 @@ const EmailSchema = z.string().email('Invalid email format').toLowerCase().trim(
 const PasswordSchema = z.string().min(8, 'Password must be at least 8 characters');
 const DateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be YYYY-MM-DD');
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const ClientTimeSchema = z.string().datetime({ offset: true, message: 'A valid device timestamp with timezone is required' });
 
 function toDateStr(d) {
   return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
@@ -34,6 +35,7 @@ function toDateStr(d) {
 export const LoginSchema = z.object({
   email: EmailSchema,
   password: z.string().min(1, 'Password required'),
+  clientTime: ClientTimeSchema,
 }).strict();
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -351,7 +353,7 @@ export const CreateLeaveSchema = z.object({
 export const ClockInOutSchema = z.object({
   action: z.enum(['in', 'out']),
   reason: z.string().optional(),
-  clientTime: z.string().optional(),
+  clientTime: ClientTimeSchema,
 }).strict();
 
 export const AttendanceRegularizeSchema = z.object({

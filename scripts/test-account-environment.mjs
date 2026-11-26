@@ -14,6 +14,7 @@ let writes = 0;
 let createdUser;
 const query = value => ({ select: async () => value });
 const model = {
+  exists: async () => null,
   findOne: async () => null,
   findById: () => query(null),
   findOneAndUpdate: async () => ({}),
@@ -47,7 +48,7 @@ const stubs = {
   },
   'validation.js': { LoginSchema: {}, validateRequest: (_schema, data) => ({ valid: true, data }) },
   'payroll-cycle.js': { parseShiftStartTime: () => {} },
-  'shift-utils.js': { resolveShift: () => {} },
+  'shift-utils.js': { resolveShift: () => {}, resolveShiftForDate: () => {} },
   'half-day-window.js': { resolveHalfDaySplitMins: () => {}, evaluateHalfDayGate: () => {} },
   'sse.js': { subscribeAttendance: () => { throw new Error('Unexpected attendance subscription'); } },
 };
