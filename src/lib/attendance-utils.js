@@ -11,6 +11,7 @@ import { Leave } from './models/index';
 import { notify } from './notify';
 import { connectDB } from './db';
 import { getTzTime } from '@/lib/timezone';
+import { isBeforeEmployment } from './employment-start';
 
 export { toMinutes, diffMins } from './attendance-constants';
 
@@ -150,10 +151,11 @@ export async function markAbsentEmployees(dateStr, options = {}) {
   if (dateStr > calToday) return 0;
 
   const employees = await Employee.find({ status: 'active' })
-    .populate('userId', 'name teamLeadId teamAdminId role shift shiftId')
+    .populate('userId', 'name teamLeadId teamAdminId role shift shiftId joinDate createdAt')
     .lean();
 
-  const activeEmployees = employees.filter(e => e.userId?.role && e.userId.role !== 'super_admin');
+  const activeEmployees = employees.filter(e => e.userId?.role && e.userId.role !== 'super_admin'
+    && !isBeforeEmployment(dateStr, { ...e.userId, joinDate: e.userId.joinDate || e.joinDate }));
 
   if (activeEmployees.length === 0) return 0;
 

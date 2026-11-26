@@ -3,6 +3,7 @@ import Attendance from '@/lib/models/Attendance';
 import { requireAuth } from '@/lib/middleware';
 import { fail } from '@/lib/jwt';
 import { leaveDayWeight, isHalfDayLeave } from '@/lib/attendance-stats';
+import { isBeforeEmployment } from '@/lib/employment-start';
 
 export async function GET(req) {
   try {
@@ -25,11 +26,11 @@ export async function GET(req) {
     if (status) query.status = status;
 
     let records = await Attendance.find(query)
-      .populate('userId', 'name email department designation shift role')
+      .populate('userId', 'name email department designation shift role joinDate createdAt')
       .sort({ date: -1 })
       .lean();
 
-    records = records.filter(r => r.userId?.role !== 'super_admin');
+    records = records.filter(r => r.userId?.role !== 'super_admin' && !isBeforeEmployment(r.date, r.userId));
 
     if (department) {
       records = records.filter(r => r.userId?.department === department);

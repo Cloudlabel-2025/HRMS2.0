@@ -21,6 +21,7 @@ import { isEmployer } from '@/lib/permissions';
 import { notify } from '@/lib/notify';
 import { publishAttendance } from '@/lib/sse';
 import { reconcileBreakWorkProgress } from '@/lib/break-work-progress';
+import { isBeforeEmployment } from '@/lib/employment-start';
 
 // Throttle for the read-path calendar sync (Step: self-healing register).
 // Keyed by range + roster size so rapid refreshes don't re-issue bulkWrites.
@@ -151,9 +152,12 @@ export async function GET(req) {
     }
 
     let raw = await Attendance.find(query)
-      .populate('userId', 'name avatar department role shift shiftId')
+      .populate('userId', 'name avatar department role shift shiftId joinDate createdAt')
       .sort({ date: -1 })
       .lean();
+
+    // Exclude old phantom rows too; they must not affect displays or totals.
+    raw = raw.filter(rec => !isBeforeEmployment(rec.date, rec.userId));
 
     // Permission lifecycle (read-path self-heal): materialise the
     // type:'permission' workProgress row for TODAY's open records so the
@@ -248,9 +252,10 @@ export async function GET(req) {
       const todayKeys = new Set(raw.filter(r => r.date === _calToday).map(r => String(r.userId?._id || r.userId)));
       const missingUids = syncUids.filter(uid => !todayKeys.has(String(uid)));
       if (missingUids.length && inRange && isWorkingDay(_calToday, config, holidayDocs)) {
-        const missingUsers = await User.find({ _id: { $in: missingUids } }).select('name avatar department role shift shiftId').lean().catch(() => []);
+        const missingUsers = await User.find({ _id: { $in: missingUids } }).select('name avatar department role shift shiftId joinDate createdAt').lean().catch(() => []);
         for (const u of missingUsers || []) {
           if (isEmployer(u.role)) continue;
+          if (isBeforeEmployment(_calToday, u)) continue;
           let shiftDoc = null;
           try { shiftDoc = shifts.forDate(u, _calToday) || shifts.current(u); } catch { shiftDoc = null; }
           const halfDayThreshold = Number(shiftDoc?.halfDayThreshold ?? 180) || 180;

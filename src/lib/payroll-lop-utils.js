@@ -4,12 +4,7 @@ import Attendance from './models/Attendance';
 import { Holiday, Leave } from './models/index';
 import { isWorkingDay } from './payroll-cycle';
 import { leavePaidFraction } from './payroll-periods';
-
-// UTC day part of a Date (join-guard errs toward inclusion — same as sync).
-function fmtDayUTC(d) {
-  const n = d instanceof Date ? d : new Date(d);
-  return n.getUTCFullYear() + '-' + String(n.getUTCMonth() + 1).padStart(2, '0') + '-' + String(n.getUTCDate()).padStart(2, '0');
-}
+import { employmentStartDay } from './employment-start';
 
 export function eachDateStr(fromDate, toDate) {
   const out = [];
@@ -33,8 +28,8 @@ export function isUnpaidLeaveDoc(leave) {
 }
 
 /**
- * Employment-start guard: earliest of (account creation, first clock-in,
- * first approved leave). Mirrors attendance-sync so pre-joining dates can
+ * Employment-start guard: recorded joining date, with legacy account/activity
+ * fallbacks. Mirrors attendance-sync so pre-joining dates can
  * never become phantom absences / LOP in payroll counts.
  *
  * @returns {string|null} 'YYYY-MM-DD' or null when unknown (no restriction).
@@ -45,7 +40,7 @@ export async function getEmploymentStartDate(userId) {
     let objectId = null;
     try { objectId = new mongoose.Types.ObjectId(uid); } catch { objectId = null; }
     const [userDoc, firstClocks, firstLeaves] = await Promise.all([
-      User.findById(objectId || uid).select('createdAt').lean().catch(() => null),
+      User.findById(objectId || uid).select('joinDate createdAt').lean().catch(() => null),
       objectId
         ? Attendance.aggregate([
             { $match: { userId: objectId, clockIn: { $ne: null } } },
@@ -57,13 +52,10 @@ export async function getEmploymentStartDate(userId) {
           { $group: { _id: null, first: { $min: '$from' } } },
         ]).catch(() => []),
     ]);
-    const candidates = [
-      userDoc?.createdAt ? fmtDayUTC(userDoc.createdAt) : null,
+    return employmentStartDay(userDoc, [
       firstClocks?.[0]?.first || null,
       firstLeaves?.[0]?.first || null,
-    ].filter((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
-    if (!candidates.length) return null;
-    return candidates.sort()[0];
+    ]);
   } catch {
     return null; // guard is best-effort; unknown start = no restriction
   }

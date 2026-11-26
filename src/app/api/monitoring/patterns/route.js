@@ -8,6 +8,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess, getDepartmentUserIds } from '@/lib/rbac';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
+import { isBeforeEmployment } from '@/lib/employment-start';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const toDate = date => new Date(`${date}T00:00:00`);
@@ -34,7 +35,7 @@ export async function GET(req) {
       Attendance.find({ userId: { $in: ids }, date: { $gte: startDate, $lte: endDate } }).select('userId date status lateFlag halfDayThresholdExceeded clockIn shiftId shiftName shiftStartTime shiftEndTime shiftLateThreshold approvedHalfDayLeave permission leaveOverride nonWorkingDayType').lean(),
       Leave.find({ userId: { $in: ids }, status: 'approved', from: { $lte: endDate }, to: { $gte: startDate } }).select('userId from to').lean(),
       Holiday.find({ date: { $gte: addDays(startDate, -1), $lte: addDays(endDate, 1) } }).select('date workingDayOverride').lean(),
-      User.find({ _id: { $in: ids } }).select('_id shift shiftId').lean(),
+      User.find({ _id: { $in: ids } }).select('_id shift shiftId joinDate createdAt').lean(),
       Shift.find({}).lean(),
       ShiftChange.find({ status: 'applied', userIds: { $in: ids }, effectiveDate: { $lte: endDate } }).sort({ effectiveDate: -1, appliedAt: -1, createdAt: -1 }).lean(),
     ]);
@@ -88,6 +89,7 @@ export async function GET(req) {
     const absentDates = new Map();
     for (const record of attendance) {
       const userId = record.userId.toString();
+      if (isBeforeEmployment(record.date, userById.get(userId))) continue;
       let status = record.status;
       let lateFlag = !!record.lateFlag;
       let halfDayThresholdExceeded = !!record.halfDayThresholdExceeded;

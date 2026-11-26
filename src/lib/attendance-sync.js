@@ -7,12 +7,7 @@ import { elapsedScheduleMinutes } from './shift-schedule';
 import { getTzTime } from './timezone';
 import { isWorkingDay } from './payroll-cycle';
 import { isWorkedDay } from './attendance-stats';
-
-// UTC day part of a Date (join-guard errs toward inclusion).
-function fmtDay(d) {
-  const n = d instanceof Date ? d : new Date(d);
-  return n.getUTCFullYear() + '-' + String(n.getUTCMonth() + 1).padStart(2, '0') + '-' + String(n.getUTCDate()).padStart(2, '0');
-}
+import { employmentStartDay } from './employment-start';
 
 function eachDateStr(fromDate, toDate) {  const out = [];
   for (
@@ -164,14 +159,14 @@ export async function syncCalendarRowsForUsers({
 
   // Employment-start guard: never materialise rows before the employee
   // existed, so pre-joining dates can never become phantom absences.
-  // startDate = earliest of (account creation, first clock-in, first leave).
+  // Explicit joinDate takes precedence over account creation or activity.
   const startByUser = new Map();
   try {
     const objectIds = uids.map(id => {
       try { return new mongoose.Types.ObjectId(id); } catch { return null; }
     }).filter(Boolean);
     const [users, firstClocks, firstLeaves] = await Promise.all([
-      User.find({ _id: { $in: uids } }).select('createdAt').lean().catch(() => []),
+      User.find({ _id: { $in: uids } }).select('joinDate createdAt').lean().catch(() => []),
       objectIds.length
         ? Attendance.aggregate([
             { $match: { userId: { $in: objectIds }, clockIn: { $ne: null } } },
@@ -187,12 +182,11 @@ export async function syncCalendarRowsForUsers({
     const firstLeaveByUser = new Map((firstLeaves || []).map(r => [String(r._id), r.first]));
     for (const u of users || []) {
       const k = String(u._id);
-      const candidates = [
-        u.createdAt ? fmtDay(u.createdAt) : null,
+      const start = employmentStartDay(u, [
         firstClockByUser.get(k) || null,
         firstLeaveByUser.get(k) || null,
-      ].filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
-      if (candidates.length) startByUser.set(k, candidates.sort()[0]);
+      ]);
+      if (start) startByUser.set(k, start);
     }
   } catch { /* guard is best-effort; missing start date = no restriction */ }
 

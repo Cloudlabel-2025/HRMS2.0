@@ -14,6 +14,7 @@ import { deriveAbsenceKind } from '@/lib/absence-status';
 import { getTzTime } from '@/lib/timezone';
 import { loadDayOverrides } from '@/lib/shift-utils';
 import { scheduleDayAt } from '@/lib/shift-schedule';
+import { isBeforeEmployment } from '@/lib/employment-start';
 
 export async function GET(req) {
   const { user, error } = await requireAuth(req);
@@ -82,8 +83,8 @@ export async function GET(req) {
       ? { status: 'active', role: { $ne: 'super_admin' } }
       : { [role === 'team_lead' ? 'teamLeadId' : 'teamAdminId']: user._id, status: 'active', role: { $ne: 'super_admin' } };
     const monitoredEmployees = await Employee.find(employeeFilter)
-      .populate('userId', 'shift shiftId identityId profileId')
-      .select('userId name department shift shiftId')
+      .populate('userId', 'shift shiftId identityId profileId joinDate createdAt')
+      .select('userId name department shift shiftId joinDate')
       .lean();
     const monitoredIds = monitoredEmployees
       .map((employee) => employee.userId?._id || employee.userId)
@@ -158,6 +159,7 @@ export async function GET(req) {
       const resolved = scheduleDayAt(nowTz, tzToday, dayOverrides.get(`${id}|${tzToday}`) || normalShift, dayOverrides.get(`${id}|${tzYest}`) || normalShift);
       const shiftDoc = resolved.shift;
       const empToday = resolved.date;
+      if (isBeforeEmployment(empToday, { joinDate: uDoc.joinDate || employee.joinDate, createdAt: uDoc.createdAt })) continue;
       const record = attByKey.get(`${id}|${empToday}`) || null;
       const leave = leaveByKey.get(`${id}|${empToday}`) || null;
       const perm = permByKey.get(`${id}|${empToday}`)

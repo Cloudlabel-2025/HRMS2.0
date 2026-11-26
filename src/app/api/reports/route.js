@@ -10,6 +10,7 @@ import { requireAuth } from '@/lib/middleware';
 import { ok, fail } from '@/lib/jwt';
 import { hasAccess, getAccessibleDepartments, getManagedUserIds } from '@/lib/rbac';
 import { leaveDayWeight, isHalfDayLeave } from '@/lib/attendance-stats';
+import { isBeforeEmployment } from '@/lib/employment-start';
 
 const REPORT_TYPES = new Set(['attendance', 'leave', 'payroll', 'tasks', 'performance', 'finance', 'lifecycle']);
 
@@ -60,12 +61,13 @@ export async function GET(req) {
 
     if (type === 'attendance') {
       const records = await Attendance.find({ userId: { $in: userIds }, date: { $regex: `^${month}` } })
-        .populate('userId', 'name department');
+        .populate('userId', 'name department joinDate createdAt');
 
       const byUser = {};
       for (const r of records) {
         const id = r.userId?._id?.toString();
         if (!id) continue;
+        if (isBeforeEmployment(r.date, r.userId)) continue;
         if (!byUser[id]) byUser[id] = { name: r.userId.name, dept: r.userId.department, present: 0, late: 0, absent: 0, leave: 0, halfDay: 0 };
         if (r.status === 'present') byUser[id].present++;
         else if (r.status === 'late') byUser[id].late++;

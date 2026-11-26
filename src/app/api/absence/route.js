@@ -10,6 +10,7 @@ import { getGlobalConfig, isWorkingDay } from '@/lib/payroll-cycle';
 import { getTzTime } from '@/lib/timezone';
 import { deriveAbsenceKind } from '@/lib/absence-status';
 import { determineStatus, getShiftConfig } from '@/lib/attendance-constants';
+import { employmentStartDay } from '@/lib/employment-start';
 
 function lastDayOfMonth(month) {
   const [y, m] = month.split('-').map(Number);
@@ -48,11 +49,12 @@ export async function GET(req) {
 
     // ── Roster: Employee primary + User fallback (mirrors /api/employees) ──
     let employees = await Employee.find({ status: 'active' })
-      .populate({ path: 'userId', match: { status: 'active', role: { $ne: 'super_admin' } }, select: '_id name role shift shiftId identityId profileId department' })
-      .select('userId name department designation shift shiftId')
+      .populate({ path: 'userId', match: { status: 'active', role: { $ne: 'super_admin' } }, select: '_id name role shift shiftId identityId profileId department joinDate createdAt' })
+      .select('userId name department designation shift shiftId joinDate')
       .lean();
     let roster = employees.filter((e) => e.userId).map((e) => ({
       uid: String(e.userId._id),
+      employmentStart: employmentStartDay({ ...e.userId, joinDate: e.userId.joinDate || e.joinDate }),
       name: e.name || e.userId?.name || '',
       avatar: '',
       department: e.department || e.userId?.department || '',
@@ -66,13 +68,14 @@ export async function GET(req) {
     const rosterIds = new Set(roster.map((r) => r.uid));
     // Merge active users missing from Employee collection so nobody is invisible.
     const extraUsers = await User.find({ status: 'active', role: { $ne: 'super_admin' } })
-      .select('_id name avatar department designation shift shiftId identityId profileId')
+      .select('_id name avatar department designation shift shiftId identityId profileId joinDate createdAt')
       .lean();
     for (const u of extraUsers) {
       const uid = String(u._id);
       if (rosterIds.has(uid)) continue;
       roster.push({
         uid,
+        employmentStart: employmentStartDay(u),
         name: u.name || '',
         avatar: u.avatar || '',
         department: u.department || '',
@@ -231,6 +234,7 @@ export async function GET(req) {
     for (const r of roster) {
       for (const date of dates) {
         if (date > calToday) continue; // future dates are never absent/not-arrived
+        if (r.employmentStart && date < r.employmentStart) continue;
         const shiftDoc = shiftForDate(r, date);
         if (!isWorkingDay(date, config, holidays || [])) continue;
         const key = `${r.uid}|${date}`;
@@ -306,6 +310,7 @@ export async function GET(req) {
       if (a.date > calToday) continue;
       seen.add(key);
       const r = rosterById.get(uid);
+      if (r.employmentStart && a.date < r.employmentStart) continue;
       records.push({
         _id: String(a._id),
         userId: { _id: uid, name: r?.name || a.userId?.name || '', avatar: r?.avatar || a.userId?.avatar || '', department: r?.department || a.userId?.department || '' },
